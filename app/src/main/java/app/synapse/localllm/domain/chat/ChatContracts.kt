@@ -4,6 +4,7 @@ import app.synapse.localllm.domain.ids.AttachmentId
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.ChatThreadId
 import java.time.Instant
+import kotlinx.coroutines.flow.Flow
 
 enum class ConversationRole {
     SYSTEM,
@@ -73,3 +74,17 @@ data class ConversationTurnReceipt(
     val assistantMessageId: ChatMessageId,
     val submittedAt: Instant,
 )
+
+interface ConversationRepository {
+    suspend fun ensureDefaultThread(): ChatThreadRecord
+
+    fun observeMessages(threadId: ChatThreadId): Flow<List<ChatMessageRecord>>
+
+    suspend fun submitUserMessage(command: SubmitUserMessageCommand): ConversationTurnReceipt
+
+    suspend fun appendAssistantToken(messageId: ChatMessageId, token: String)
+
+    suspend fun completeAssistantMessage(messageId: ChatMessageId)
+
+    suspend fun failAssistantMessage(messageId: ChatMessageId, reason: String)
+}

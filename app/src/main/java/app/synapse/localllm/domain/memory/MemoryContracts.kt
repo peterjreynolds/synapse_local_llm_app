@@ -68,7 +68,7 @@ data class MemoryWriteDecision(
 data class MemoryWriteReceipt(
     val id: ReceiptId,
     val outcome: MemoryWriteOutcome,
-    val traceEventId: TraceEventId,
+    val traceEventId: TraceEventId?,
     val memoryObjectId: MemoryObjectId?,
     val memoryVersionId: MemoryVersionId?,
     val decidedAt: Instant,
