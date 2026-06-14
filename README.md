@@ -21,12 +21,27 @@ Termux startup from Synapse requires:
 
 ## Build
 
-This machine currently needs a JDK and Android SDK before Gradle can build the APK.
+This workspace was validated with a user-local JDK and Android SDK at:
 
-Once installed:
+```sh
+~/.local/share/synapse-android-toolchain
+```
+
+For a fresh shell on this machine:
+
+```sh
+export TOOLCHAIN_ROOT="$HOME/.local/share/synapse-android-toolchain"
+export JAVA_HOME="$TOOLCHAIN_ROOT/jdk-17"
+export ANDROID_SDK_ROOT="$TOOLCHAIN_ROOT/android-sdk"
+export ANDROID_HOME="$ANDROID_SDK_ROOT"
+export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+```
+
+Then run:
 
 ```sh
 ./gradlew test
+./gradlew ktlintCheck lintDebug
 ./gradlew assembleDebug
 ```
 

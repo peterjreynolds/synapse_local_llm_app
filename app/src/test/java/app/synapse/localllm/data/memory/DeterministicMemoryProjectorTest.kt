@@ -1,7 +1,7 @@
 package app.synapse.localllm.data.memory
 
-import app.synapse.localllm.domain.chat.ChatMessageId
 import app.synapse.localllm.domain.chat.ConversationRole
+import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.TraceEventId
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.SurfacePolicy

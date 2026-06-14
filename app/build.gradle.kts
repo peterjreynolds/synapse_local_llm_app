@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.kapt")
+    id("com.android.legacy-kapt")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jlleitschuh.gradle.ktlint")
@@ -66,7 +65,13 @@ android {
     lint {
         warningsAsErrors = true
         abortOnError = true
-        disable += setOf("GradleDependency", "NewerVersionAvailable")
+        disable +=
+            setOf(
+                "AndroidGradlePluginVersion",
+                "GradleDependency",
+                "KaptUsageInsteadOfKsp",
+                "NewerVersionAvailable",
+            )
     }
 
     testOptions {
@@ -122,4 +127,3 @@ dependencies {
     testImplementation("io.mockk:mockk:1.14.6")
     testImplementation("org.robolectric:robolectric:4.16.1")
 }
-

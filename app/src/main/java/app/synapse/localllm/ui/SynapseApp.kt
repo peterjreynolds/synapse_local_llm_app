@@ -37,9 +37,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Chat
+import androidx.compose.material.icons.automirrored.rounded.Send
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
@@ -47,10 +49,8 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -279,7 +279,7 @@ private fun SynapseTopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = { onPanelSelected(SynapsePanel.CHAT) }) {
-            Icon(Icons.Rounded.Chat, contentDescription = "Chat")
+            Icon(Icons.AutoMirrored.Rounded.Chat, contentDescription = "Chat")
         }
         Text(
             text = "Synapse",
@@ -442,7 +442,7 @@ private fun MessageBubble(
                         }
                         if (speechPlaybackEnabled && message.body.isNotBlank()) {
                             IconButton(onClick = { onSpeak(message.body) }) {
-                                Icon(Icons.Rounded.VolumeUp, contentDescription = "Speak")
+                                Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = "Speak")
                             }
                         }
                     }
@@ -514,7 +514,11 @@ private fun ComposerBar(
                         .background(MaterialTheme.colorScheme.primary),
                 ) {
                     Icon(
-                        imageVector = if (state.isSending) Icons.Rounded.Stop else Icons.Rounded.Send,
+                        imageVector = if (state.isSending) {
+                            Icons.Rounded.Stop
+                        } else {
+                            Icons.AutoMirrored.Rounded.Send
+                        },
                         contentDescription = if (state.isSending) "Stop" else "Send",
                         tint = MaterialTheme.colorScheme.onPrimary,
                     )

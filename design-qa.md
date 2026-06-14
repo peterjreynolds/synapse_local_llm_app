@@ -15,22 +15,34 @@ Reference:
 
 ## Blocker
 
-This host has no Java, Gradle installation, Android SDK, `sdkmanager`, `adb`,
-Kotlin compiler, or emulator. `./gradlew tasks --all` stops at:
+The local JDK and Android SDK are now installed under:
 
-```text
-ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
+```sh
+~/.local/share/synapse-android-toolchain
 ```
 
-Because the app cannot be built or launched here, I cannot capture an Android
-screenshot and compare it against the reference image on this machine.
+The app builds locally, but this host has no connected Android phone or emulator.
+Because the app cannot be launched here, I cannot capture an Android screenshot
+and compare it against the reference image on this machine.
+
+## Validation Completed
+
+```sh
+./gradlew test
+./gradlew ktlintCheck lintDebug
+./gradlew assembleDebug
+```
+
+Debug APK:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
 
 ## Required QA When Toolchain Exists
 
-1. Install JDK 17+ and Android SDK platform 36.
-2. Run `./gradlew test`.
-3. Run `./gradlew assembleDebug`.
-4. Install on the S25 Ultra with `adb install app/build/outputs/apk/debug/app-debug.apk`.
-5. Capture the empty chat screen and compare it against the reference image for
+1. Connect the S25 Ultra with USB debugging or start an Android emulator.
+2. Install with `adb install app/build/outputs/apk/debug/app-debug.apk`.
+3. Capture the empty chat screen and compare it against the reference image for
    top-bar spacing, empty-state alignment, bottom composer size, keyboard
    handling, and text clipping.

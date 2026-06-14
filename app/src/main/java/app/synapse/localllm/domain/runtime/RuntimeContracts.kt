@@ -1,11 +1,14 @@
 package app.synapse.localllm.domain.runtime
 
+import android.annotation.SuppressLint
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.ids.ReceiptId
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 
+@SuppressLint("SdCardPath")
 data class StartLlamaServerCommand(
+    // Termux RUN_COMMAND requires Termux app paths; Synapse Context paths would be wrong here.
     val commandPath: String = "/data/data/com.termux/files/usr/bin/bash",
     val workingDirectory: String = "/data/data/com.termux/files/home/llama.cpp/build",
     val arguments: List<String> = listOf("-lc", DEFAULT_LLAMA_SERVER_SCRIPT),

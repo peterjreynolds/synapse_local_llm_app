@@ -1,10 +1,10 @@
 package app.synapse.localllm.data.memory
 
-import app.synapse.localllm.domain.chat.ChatMessageId
 import app.synapse.localllm.domain.chat.ChatMessageRecord
-import app.synapse.localllm.domain.chat.ChatThreadId
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.MessageDeliveryState
+import app.synapse.localllm.domain.ids.ChatMessageId
+import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.ids.MemoryObjectId
 import app.synapse.localllm.domain.ids.MemoryVersionId
 import app.synapse.localllm.domain.memory.MemoryKind

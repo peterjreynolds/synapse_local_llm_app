@@ -84,7 +84,7 @@ class LlamaServerGateway(
             try {
                 httpClient.newCall(httpRequest).execute().use { response ->
                     val body = response.body
-                    if (!response.isSuccessful || body == null) {
+                    if (!response.isSuccessful) {
                         emit(
                             ChatStreamEvent.Failed(
                                 "llama-server chat request failed with HTTP ${response.code}.",
