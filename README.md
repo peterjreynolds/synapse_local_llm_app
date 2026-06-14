@@ -1,6 +1,8 @@
 # Synapse Local LLM App
 
-Synapse is a native Android chat UI for a phone-local `llama.cpp` model. V1 talks to `llama-server` on `127.0.0.1:8080`, can ask Termux to start that server, and keeps chat plus evidence-backed memory in app-local storage.
+Synapse is a native Android chat UI for a phone-local `llama.cpp` model.
+V1 talks to `llama-server` on `127.0.0.1:8080`, can ask Termux to start that
+server, and keeps chat plus evidence-backed memory in app-local storage.
 
 ## V1 Runtime
 
@@ -32,5 +34,7 @@ The debug APK will be under `app/build/outputs/apk/debug/`.
 
 ## Memory Safety
 
-Synapse memory uses one local truth: Room entities plus durable write/retrieval receipts. The local LLM may propose memories, but durable memory writes require source evidence and pass through the admission gate. When storage gets tight, Synapse pauses memory writes and keeps chat usable.
-
+Synapse memory uses one local truth: Room entities plus durable write/retrieval
+receipts. The local LLM may propose memories, but durable memory writes require
+source evidence and pass through the admission gate. When storage gets tight,
+Synapse pauses memory writes and keeps chat usable.
