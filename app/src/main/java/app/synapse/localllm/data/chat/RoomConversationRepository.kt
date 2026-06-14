@@ -36,6 +36,14 @@ class RoomConversationRepository(
             messages.map { message -> message.toDomain() }
         }
 
+    override suspend fun listRecentMessages(
+        threadId: ChatThreadId,
+        limit: Int,
+    ): List<ChatMessageRecord> =
+        chatDao.listRecentMessages(threadId.raw, limit)
+            .asReversed()
+            .map { message -> message.toDomain() }
+
     override suspend fun submitUserMessage(command: SubmitUserMessageCommand): ConversationTurnReceipt {
         val submittedAt = clock.now()
         val userMessageId = idFactory.createChatMessageId()

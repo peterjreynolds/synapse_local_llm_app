@@ -67,6 +67,7 @@ data class PendingAttachment(
     val uri: String,
     val byteCount: Long?,
     val kind: AttachmentKind,
+    val extractedText: String?,
 )
 
 data class ConversationTurnReceipt(
@@ -79,6 +80,8 @@ interface ConversationRepository {
     suspend fun ensureDefaultThread(): ChatThreadRecord
 
     fun observeMessages(threadId: ChatThreadId): Flow<List<ChatMessageRecord>>
+
+    suspend fun listRecentMessages(threadId: ChatThreadId, limit: Int): List<ChatMessageRecord>
 
     suspend fun submitUserMessage(command: SubmitUserMessageCommand): ConversationTurnReceipt
 

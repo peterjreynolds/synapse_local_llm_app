@@ -1,0 +1,273 @@
+package app.synapse.localllm.ui
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import app.synapse.localllm.application.SynapseTurnOutcome
+import app.synapse.localllm.di.SynapseApplicationGraph
+import app.synapse.localllm.domain.chat.PendingAttachment
+import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
+import app.synapse.localllm.domain.ids.MemoryObjectId
+import app.synapse.localllm.domain.runtime.RuntimeStatus
+import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
+import app.synapse.localllm.domain.settings.SynapseSettings
+import app.synapse.localllm.domain.storage.StorageThresholds
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+class SynapseViewModel(
+    private val graph: SynapseApplicationGraph,
+) : ViewModel() {
+    private val mutableUiState = MutableStateFlow(SynapseUiState())
+    val uiState: StateFlow<SynapseUiState> = mutableUiState
+
+    private var messageObservationJob: Job? = null
+    private var activeSendJob: Job? = null
+
+    init {
+        observeSettings()
+        observeStorageHealth()
+        bindDefaultThread()
+    }
+
+    fun updateComposer(text: String) {
+        mutableUiState.update { state -> state.copy(composerText = text) }
+    }
+
+    fun appendComposerText(text: String) {
+        mutableUiState.update { state ->
+            state.copy(composerText = (state.composerText + " " + text).trim())
+        }
+    }
+
+    fun addPendingAttachment(attachment: PendingAttachment) {
+        mutableUiState.update { state ->
+            state.copy(pendingAttachments = state.pendingAttachments + attachment)
+        }
+    }
+
+    fun removePendingAttachment(index: Int) {
+        mutableUiState.update { state ->
+            state.copy(pendingAttachments = state.pendingAttachments.filterIndexed { candidateIndex, _ ->
+                candidateIndex != index
+            })
+        }
+    }
+
+    fun selectPanel(panel: SynapsePanel) {
+        mutableUiState.update { state -> state.copy(activePanel = panel, lastNotice = null) }
+    }
+
+    fun clearNotice() {
+        mutableUiState.update { state -> state.copy(lastNotice = null) }
+    }
+
+    fun publishNotice(message: String) {
+        mutableUiState.update { state -> state.copy(lastNotice = message) }
+    }
+
+    fun sendComposerMessage() {
+        val snapshot = mutableUiState.value
+        val thread = snapshot.currentThread ?: return
+        val body = snapshot.composerText.trim()
+        if (body.isBlank() && snapshot.pendingAttachments.isEmpty()) return
+        if (snapshot.isSending) return
+
+        mutableUiState.update { state ->
+            state.copy(
+                composerText = "",
+                pendingAttachments = emptyList(),
+                isSending = true,
+                activePanel = SynapsePanel.CHAT,
+                lastNotice = null,
+            )
+        }
+
+        activeSendJob = viewModelScope.launch {
+            try {
+                val outcome = graph.turnCoordinator.sendUserTurn(
+                    command = SubmitUserMessageCommand(
+                        threadId = thread.id,
+                        body = body.ifBlank { "Attached context." },
+                        attachments = snapshot.pendingAttachments,
+                    ),
+                    settings = snapshot.settings,
+                )
+                mutableUiState.update { state ->
+                    state.copy(
+                        lastNotice = when (outcome) {
+                            is SynapseTurnOutcome.Completed -> null
+                            is SynapseTurnOutcome.Failed -> outcome.reason
+                        },
+                    )
+                }
+            } finally {
+                activeSendJob = null
+                mutableUiState.update { state -> state.copy(isSending = false) }
+            }
+        }
+    }
+
+    fun cancelActiveSend() {
+        activeSendJob?.cancel()
+        mutableUiState.update { state ->
+            state.copy(isSending = false, lastNotice = "Generation stopped.")
+        }
+    }
+
+    fun checkRuntimeStatus() {
+        viewModelScope.launch {
+            val settings = mutableUiState.value.settings
+            val status = graph.localInferenceRuntime.checkRuntimeStatus(settings.baseUrl)
+            mutableUiState.update { state -> state.copy(runtimeStatus = status) }
+        }
+    }
+
+    fun startRuntime() {
+        viewModelScope.launch {
+            val receipt = graph.localInferenceRuntime.startRuntime(StartLlamaServerCommand())
+            mutableUiState.update { state ->
+                state.copy(
+                    runtimeStatus = RuntimeStatus.Starting(receipt),
+                    lastNotice = receipt.message,
+                )
+            }
+        }
+    }
+
+    fun updateMemorySearchQuery(query: String) {
+        mutableUiState.update { state -> state.copy(memorySearchQuery = query) }
+    }
+
+    fun searchMemory() {
+        val query = mutableUiState.value.memorySearchQuery
+        viewModelScope.launch {
+            val retrievalBundle = graph.memoryRepository.retrieveMemories(query = query, limit = 20)
+            mutableUiState.update { state ->
+                state.copy(memorySearchResults = retrievalBundle.refs)
+            }
+        }
+    }
+
+    fun tombstoneMemory(memoryObjectId: MemoryObjectId) {
+        viewModelScope.launch {
+            val receipt = graph.memoryRepository.tombstoneMemory(
+                memoryObjectId = memoryObjectId,
+                reason = "Deleted from Synapse memory screen.",
+            )
+            mutableUiState.update { state ->
+                state.copy(
+                    memorySearchResults = state.memorySearchResults
+                        .filterNot { memory -> memory.memoryObjectId == memoryObjectId },
+                    lastNotice = "Memory tombstoned: ${receipt.id.raw}",
+                )
+            }
+        }
+    }
+
+    fun updateSettingsDraft(draft: RuntimeSettingsDraft) {
+        mutableUiState.update { state -> state.copy(settingsDraft = draft) }
+    }
+
+    fun saveSettingsDraft() {
+        val draft = mutableUiState.value.settingsDraft
+        viewModelScope.launch {
+            graph.settingsStore.updateRuntimeSettings(
+                baseUrl = draft.baseUrl,
+                modelName = draft.modelName,
+                systemPrompt = draft.systemPrompt,
+                temperature = draft.temperature.toDoubleOrNull() ?: 0.7,
+                maxTokens = draft.maxTokens.toIntOrNull() ?: 768,
+            )
+            mutableUiState.update { state -> state.copy(lastNotice = "Runtime settings saved.") }
+            inspectStorageHealth()
+        }
+    }
+
+    fun updateMemoryWritesEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            graph.settingsStore.updateMemoryWritesEnabled(enabled)
+        }
+    }
+
+    fun updateSpeechPlaybackEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            graph.settingsStore.updateSpeechPlaybackEnabled(enabled)
+        }
+    }
+
+    fun inspectStorageHealth() {
+        viewModelScope.launch {
+            val settings = mutableUiState.value.settings
+            val snapshot = graph.storageHealthGovernor.inspectStorageHealth(settings.toStorageThresholds())
+            graph.storageHealthSnapshotRepository.persistStorageHealthSnapshot(snapshot)
+            mutableUiState.update { state -> state.copy(storageHealthSnapshot = snapshot) }
+        }
+    }
+
+    private fun observeSettings() {
+        viewModelScope.launch {
+            graph.settingsStore.settingsFlow.collect { settings ->
+                mutableUiState.update { state ->
+                    state.copy(
+                        settings = settings,
+                        settingsDraft = settings.toDraft(),
+                    )
+                }
+                inspectStorageHealth()
+            }
+        }
+    }
+
+    private fun observeStorageHealth() {
+        viewModelScope.launch {
+            graph.storageHealthSnapshotRepository.observeLatestStorageHealth().collect { snapshot ->
+                mutableUiState.update { state -> state.copy(storageHealthSnapshot = snapshot) }
+            }
+        }
+    }
+
+    private fun bindDefaultThread() {
+        viewModelScope.launch {
+            val thread = graph.conversationRepository.ensureDefaultThread()
+            mutableUiState.update { state -> state.copy(currentThread = thread) }
+            messageObservationJob?.cancel()
+            messageObservationJob = launch {
+                graph.conversationRepository.observeMessages(thread.id).collect { messages ->
+                    mutableUiState.update { state -> state.copy(messages = messages) }
+                }
+            }
+        }
+    }
+
+    private fun SynapseSettings.toDraft(): RuntimeSettingsDraft =
+        RuntimeSettingsDraft(
+            baseUrl = baseUrl,
+            modelName = modelName,
+            systemPrompt = systemPrompt,
+            temperature = temperature.toString(),
+            maxTokens = maxTokens.toString(),
+        )
+
+    private fun SynapseSettings.toStorageThresholds(): StorageThresholds =
+        StorageThresholds(
+            memoryDatabaseWarningBytes = memoryDatabaseWarningBytes,
+            attachmentCacheWarningBytes = attachmentCacheWarningBytes,
+            minimumFreeStorageBytes = minimumFreeStorageBytes,
+        )
+}
+
+class SynapseViewModelFactory(
+    private val graph: SynapseApplicationGraph,
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(SynapseViewModel::class.java)) {
+            return modelClass.cast(SynapseViewModel(graph))
+                ?: throw IllegalArgumentException("Unable to create SynapseViewModel.")
+        }
+        throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}.")
+    }
+}

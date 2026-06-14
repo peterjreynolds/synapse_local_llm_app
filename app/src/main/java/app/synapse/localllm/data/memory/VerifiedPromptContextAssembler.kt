@@ -1,6 +1,8 @@
 package app.synapse.localllm.data.memory
 
 import app.synapse.localllm.domain.chat.ConversationRole
+import app.synapse.localllm.domain.chat.ChatMessageRecord
+import app.synapse.localllm.domain.chat.MessageDeliveryState
 import app.synapse.localllm.domain.memory.PromptContextAssembler
 import app.synapse.localllm.domain.memory.RetrievalBundle
 import app.synapse.localllm.domain.runtime.ModelChatMessage
@@ -8,6 +10,7 @@ import app.synapse.localllm.domain.runtime.ModelChatMessage
 class VerifiedPromptContextAssembler : PromptContextAssembler {
     override suspend fun assemblePromptMessages(
         userMessage: String,
+        priorMessages: List<ChatMessageRecord>,
         retrievalBundle: RetrievalBundle,
         systemPrompt: String,
     ): List<ModelChatMessage> {
@@ -20,19 +23,31 @@ class VerifiedPromptContextAssembler : PromptContextAssembler {
                 append(retrievalBundle.promptBlock)
             }
         }
+        val recentMessages = priorMessages
+            .filter { message -> message.deliveryState == MessageDeliveryState.COMPLETE }
+            .filter { message -> message.role == ConversationRole.USER || message.role == ConversationRole.ASSISTANT }
+            .takeLast(RECENT_MESSAGE_LIMIT)
+            .map { message ->
+                ModelChatMessage(
+                    role = message.role,
+                    content = message.body,
+                )
+            }
+
         return listOf(
             ModelChatMessage(
                 role = ConversationRole.SYSTEM,
                 content = systemContent,
             ),
-            ModelChatMessage(
+        ) + recentMessages + ModelChatMessage(
                 role = ConversationRole.USER,
                 content = userMessage,
-            ),
-        )
+            )
     }
 
     private companion object {
+        const val RECENT_MESSAGE_LIMIT = 8
+
         const val MEMORY_USE_POLICY =
             "Use verified local memory only when directly relevant. " +
                 "Do not expose memory IDs unless the user asks for diagnostics."

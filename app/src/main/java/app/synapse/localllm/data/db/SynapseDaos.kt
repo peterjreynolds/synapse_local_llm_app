@@ -37,6 +37,16 @@ interface ChatDao {
 
     @Query(
         """
+        SELECT * FROM chat_messages
+        WHERE threadId = :threadId
+        ORDER BY createdAtEpochMillis DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun listRecentMessages(threadId: String, limit: Int): List<ChatMessageEntity>
+
+    @Query(
+        """
         UPDATE chat_messages
         SET body = :body,
             deliveryState = :deliveryState,
