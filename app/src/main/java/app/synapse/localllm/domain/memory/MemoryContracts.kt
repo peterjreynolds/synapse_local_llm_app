@@ -1,0 +1,141 @@
+package app.synapse.localllm.domain.memory
+
+import app.synapse.localllm.domain.chat.ChatMessageId
+import app.synapse.localllm.domain.chat.ConversationRole
+import app.synapse.localllm.domain.ids.MemoryObjectId
+import app.synapse.localllm.domain.ids.MemoryVersionId
+import app.synapse.localllm.domain.ids.ReceiptId
+import app.synapse.localllm.domain.ids.TraceEventId
+import app.synapse.localllm.domain.runtime.ModelChatMessage
+import app.synapse.localllm.domain.storage.StorageHealthSnapshot
+import java.time.Instant
+
+enum class MemoryKind {
+    TRACE,
+    GIST,
+    PREFERENCE,
+    COMMITMENT,
+    PROCEDURE,
+    RELATIONSHIP,
+    ARCHIVE,
+}
+
+enum class MemoryStatus {
+    ACTIVE,
+    ARCHIVED,
+    SUPERSEDED,
+    CONFLICTED,
+    TOMBSTONED,
+}
+
+enum class SurfacePolicy {
+    PROMPT_VISIBLE,
+    USER_REVIEW_ONLY,
+    INTERNAL_ONLY,
+}
+
+enum class MemoryWriteOutcome {
+    TRACE_ONLY,
+    DURABLE_MEMORY_WRITTEN,
+    REJECTED,
+    PAUSED_FOR_STORAGE,
+}
+
+data class TraceEventRecord(
+    val id: TraceEventId,
+    val sourceMessageId: ChatMessageId,
+    val role: ConversationRole,
+    val text: String,
+    val observedAt: Instant,
+)
+
+data class MemoryClaimCandidate(
+    val kind: MemoryKind,
+    val text: String,
+    val confidence: Double,
+    val sourceTraceEventIds: List<TraceEventId>,
+    val surfacePolicy: SurfacePolicy,
+    val reasonCodes: List<String>,
+)
+
+data class MemoryWriteDecision(
+    val outcome: MemoryWriteOutcome,
+    val candidate: MemoryClaimCandidate?,
+    val reason: String,
+    val storageHealthSnapshot: StorageHealthSnapshot?,
+)
+
+data class MemoryWriteReceipt(
+    val id: ReceiptId,
+    val outcome: MemoryWriteOutcome,
+    val traceEventId: TraceEventId,
+    val memoryObjectId: MemoryObjectId?,
+    val memoryVersionId: MemoryVersionId?,
+    val decidedAt: Instant,
+    val reason: String,
+)
+
+data class MemoryObjectRecord(
+    val id: MemoryObjectId,
+    val kind: MemoryKind,
+    val status: MemoryStatus,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+)
+
+data class MemoryVersionRecord(
+    val id: MemoryVersionId,
+    val memoryObjectId: MemoryObjectId,
+    val text: String,
+    val confidence: Double,
+    val surfacePolicy: SurfacePolicy,
+    val sourceTraceEventIds: List<TraceEventId>,
+    val createdAt: Instant,
+)
+
+data class RetrievedMemoryRef(
+    val memoryObjectId: MemoryObjectId,
+    val memoryVersionId: MemoryVersionId,
+    val kind: MemoryKind,
+    val text: String,
+    val confidence: Double,
+    val reasonCodes: List<String>,
+)
+
+data class RetrievalBundle(
+    val retrievedAt: Instant,
+    val refs: List<RetrievedMemoryRef>,
+    val promptBlock: String,
+)
+
+interface MemoryProjector {
+    fun extractMemoryCandidates(traceEvent: TraceEventRecord): List<MemoryClaimCandidate>
+}
+
+interface MemoryAdmissionGate {
+    fun decideMemoryWrite(
+        candidate: MemoryClaimCandidate,
+        storageHealthSnapshot: StorageHealthSnapshot,
+    ): MemoryWriteDecision
+}
+
+interface MemoryRepository {
+    suspend fun appendTraceEvent(traceEvent: TraceEventRecord): TraceEventId
+
+    suspend fun persistMemoryDecision(
+        traceEvent: TraceEventRecord,
+        decision: MemoryWriteDecision,
+    ): MemoryWriteReceipt
+
+    suspend fun tombstoneMemory(memoryObjectId: MemoryObjectId, reason: String): MemoryWriteReceipt
+
+    suspend fun retrieveMemories(query: String, limit: Int): RetrievalBundle
+}
+
+interface PromptContextAssembler {
+    suspend fun assemblePromptMessages(
+        userMessage: String,
+        retrievalBundle: RetrievalBundle,
+        systemPrompt: String,
+    ): List<ModelChatMessage>
+}
