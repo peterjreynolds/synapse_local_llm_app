@@ -84,6 +84,10 @@ interface LocalInferenceRuntime {
 }
 
 const val DEFAULT_LLAMA_SERVER_SCRIPT =
-    "cd ~/llama.cpp/build && " +
-        "./bin/llama-server -m ../hardcore.gguf -c 2048 -t 6 " +
-        "--host 127.0.0.1 --port 8080 > /dev/null 2>&1 &"
+    "cd ~/llama.cpp/build || exit 1; " +
+        "command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock; " +
+        "if ! curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then " +
+        "nohup ./bin/llama-server -m ../hardcore.gguf -c 2048 -t 6 " +
+        "--host 127.0.0.1 --port 8080 " +
+        "> ~/synapse-llama-server.log 2>&1 < /dev/null & " +
+        "fi"

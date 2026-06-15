@@ -226,19 +226,6 @@ private fun SynapseScreen(
                     onRuntimeStart = onRuntimeStart,
                 )
             },
-            bottomBar = {
-                if (state.activePanel == SynapsePanel.CHAT) {
-                    ComposerBar(
-                        state = state,
-                        onComposerChanged = onComposerChanged,
-                        onSend = onSend,
-                        onStop = onStop,
-                        onAttach = onAttach,
-                        onRemoveAttachment = onRemoveAttachment,
-                        onStartSpeech = onStartSpeech,
-                    )
-                }
-            },
         ) { innerPadding ->
             Column(
                 modifier = Modifier
@@ -253,6 +240,7 @@ private fun SynapseScreen(
                 when (state.activePanel) {
                     SynapsePanel.CHAT ->
                         ChatPanel(
+                            modifier = Modifier.imePadding(),
                             messages = state.messages,
                             speechPlaybackEnabled = state.settings.speechPlaybackEnabled,
                             onSpeak = onSpeak,
@@ -277,6 +265,18 @@ private fun SynapseScreen(
                         )
                 }
             }
+        }
+        if (state.activePanel == SynapsePanel.CHAT) {
+            ComposerBar(
+                state = state,
+                onComposerChanged = onComposerChanged,
+                onSend = onSend,
+                onStop = onStop,
+                onAttach = onAttach,
+                onRemoveAttachment = onRemoveAttachment,
+                onStartSpeech = onStartSpeech,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
         if (state.isThreadDrawerOpen) {
             ThreadDrawerOverlay(
@@ -528,6 +528,7 @@ private fun NoticeBanner(
 
 @Composable
 private fun ChatPanel(
+    modifier: Modifier = Modifier,
     messages: List<ChatMessageRecord>,
     speechPlaybackEnabled: Boolean,
     onSpeak: (String) -> Unit,
@@ -541,9 +542,14 @@ private fun ChatPanel(
         listState.animateScrollToItem(messages.lastIndex)
     }
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         state = listState,
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            top = 18.dp,
+            end = 16.dp,
+            bottom = 112.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(messages, key = { message -> message.id.raw }) { message ->
@@ -645,9 +651,10 @@ private fun ComposerBar(
     onAttach: () -> Unit,
     onRemoveAttachment: (Int) -> Unit,
     onStartSpeech: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .imePadding()
             .navigationBarsPadding()
