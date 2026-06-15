@@ -31,6 +31,14 @@ class RoomConversationRepository(
         chatDao.findLatestThread()?.toDomain()
             ?: createDefaultThread()
 
+    override suspend fun createThread(): ChatThreadRecord =
+        persistNewThread(title = "New chat")
+
+    override fun observeThreads(): Flow<List<ChatThreadRecord>> =
+        chatDao.observeThreads().map { threads ->
+            threads.map { thread -> thread.toDomain() }
+        }
+
     override fun observeMessages(threadId: ChatThreadId): Flow<List<ChatMessageRecord>> =
         chatDao.observeMessages(threadId.raw).map { messages ->
             messages.map { message -> message.toDomain() }
@@ -51,6 +59,15 @@ class RoomConversationRepository(
 
         database.withTransaction {
             val currentThread = chatDao.findThread(command.threadId.raw)
+            val submittedAtEpochMillis = submittedAt.toEpochMilli()
+            chatDao.insertThreadIfAbsent(
+                ChatThreadEntity(
+                    id = command.threadId.raw,
+                    title = buildThreadTitle(command.body),
+                    createdAtEpochMillis = currentThread?.createdAtEpochMillis ?: submittedAtEpochMillis,
+                    updatedAtEpochMillis = submittedAtEpochMillis,
+                ),
+            )
             chatDao.upsertMessage(
                 ChatMessageEntity(
                     id = userMessageId.raw,
@@ -58,8 +75,8 @@ class RoomConversationRepository(
                     role = ConversationRole.USER.name,
                     body = command.body,
                     deliveryState = MessageDeliveryState.COMPLETE.name,
-                    createdAtEpochMillis = submittedAt.toEpochMilli(),
-                    completedAtEpochMillis = submittedAt.toEpochMilli(),
+                    createdAtEpochMillis = submittedAtEpochMillis,
+                    completedAtEpochMillis = submittedAtEpochMillis,
                     failureReason = null,
                 ),
             )
@@ -70,7 +87,7 @@ class RoomConversationRepository(
                     role = ConversationRole.ASSISTANT.name,
                     body = "",
                     deliveryState = MessageDeliveryState.STREAMING.name,
-                    createdAtEpochMillis = submittedAt.toEpochMilli() + 1,
+                    createdAtEpochMillis = submittedAtEpochMillis + 1,
                     completedAtEpochMillis = null,
                     failureReason = null,
                 ),
@@ -85,18 +102,14 @@ class RoomConversationRepository(
                         uri = pendingAttachment.uri,
                         byteCount = pendingAttachment.byteCount,
                         kind = pendingAttachment.kind.name,
-                        createdAtEpochMillis = submittedAt.toEpochMilli(),
+                        createdAtEpochMillis = submittedAtEpochMillis,
                     )
                 },
             )
-            chatDao.upsertThread(
-                ChatThreadEntity(
-                    id = command.threadId.raw,
-                    title = buildThreadTitle(command.body),
-                    createdAtEpochMillis = currentThread?.createdAtEpochMillis
-                        ?: submittedAt.toEpochMilli(),
-                    updatedAtEpochMillis = submittedAt.toEpochMilli(),
-                ),
+            chatDao.updateThreadSummary(
+                threadId = command.threadId.raw,
+                title = buildThreadTitle(command.body),
+                updatedAtEpochMillis = submittedAtEpochMillis,
             )
         }
 
@@ -143,14 +156,18 @@ class RoomConversationRepository(
     }
 
     private suspend fun createDefaultThread(): ChatThreadRecord {
+        return persistNewThread(title = "Synapse")
+    }
+
+    private suspend fun persistNewThread(title: String): ChatThreadRecord {
         val now = clock.now()
         val thread = ChatThreadEntity(
             id = idFactory.createChatThreadId().raw,
-            title = "Synapse",
+            title = title,
             createdAtEpochMillis = now.toEpochMilli(),
             updatedAtEpochMillis = now.toEpochMilli(),
         )
-        chatDao.upsertThread(thread)
+        chatDao.insertThreadIfAbsent(thread)
         return thread.toDomain()
     }
 

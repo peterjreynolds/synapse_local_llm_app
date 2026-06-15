@@ -14,8 +14,25 @@ interface ChatDao {
     @Query("SELECT * FROM chat_threads WHERE id = :threadId LIMIT 1")
     suspend fun findThread(threadId: String): ChatThreadEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertThread(thread: ChatThreadEntity)
+    @Query("SELECT * FROM chat_threads ORDER BY updatedAtEpochMillis DESC")
+    fun observeThreads(): Flow<List<ChatThreadEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertThreadIfAbsent(thread: ChatThreadEntity): Long
+
+    @Query(
+        """
+        UPDATE chat_threads
+        SET title = :title,
+            updatedAtEpochMillis = :updatedAtEpochMillis
+        WHERE id = :threadId
+        """,
+    )
+    suspend fun updateThreadSummary(
+        threadId: String,
+        title: String,
+        updatedAtEpochMillis: Long,
+    )
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMessage(message: ChatMessageEntity)

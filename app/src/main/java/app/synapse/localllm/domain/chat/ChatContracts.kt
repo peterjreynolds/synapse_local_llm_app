@@ -79,6 +79,10 @@ data class ConversationTurnReceipt(
 interface ConversationRepository {
     suspend fun ensureDefaultThread(): ChatThreadRecord
 
+    suspend fun createThread(): ChatThreadRecord
+
+    fun observeThreads(): Flow<List<ChatThreadRecord>>
+
     fun observeMessages(threadId: ChatThreadId): Flow<List<ChatMessageRecord>>
 
     suspend fun listRecentMessages(threadId: ChatThreadId, limit: Int): List<ChatMessageRecord>
