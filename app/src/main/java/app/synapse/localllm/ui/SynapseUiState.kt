@@ -29,6 +29,8 @@ data class SynapseUiState(
     ),
     val runtimeStatus: RuntimeStatus = RuntimeStatus.Unknown,
     val currentThread: ChatThreadRecord? = null,
+    val threads: List<ChatThreadRecord> = emptyList(),
+    val isThreadDrawerOpen: Boolean = false,
     val messages: List<ChatMessageRecord> = emptyList(),
     val composerText: String = "",
     val pendingAttachments: List<PendingAttachment> = emptyList(),

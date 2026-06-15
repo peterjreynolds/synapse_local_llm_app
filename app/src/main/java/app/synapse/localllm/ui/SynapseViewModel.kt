@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.application.SynapseTurnOutcome
 import app.synapse.localllm.di.SynapseApplicationGraph
+import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.MemoryObjectId
@@ -30,6 +31,7 @@ class SynapseViewModel(
     init {
         observeSettings()
         observeStorageHealth()
+        observeThreads()
         bindDefaultThread()
     }
 
@@ -59,6 +61,25 @@ class SynapseViewModel(
 
     fun selectPanel(panel: SynapsePanel) {
         mutableUiState.update { state -> state.copy(activePanel = panel, lastNotice = null) }
+    }
+
+    fun openThreadDrawer() {
+        mutableUiState.update { state -> state.copy(isThreadDrawerOpen = true) }
+    }
+
+    fun closeThreadDrawer() {
+        mutableUiState.update { state -> state.copy(isThreadDrawerOpen = false) }
+    }
+
+    fun createNewThread() {
+        viewModelScope.launch {
+            val thread = graph.conversationRepository.createThread()
+            bindThread(thread)
+        }
+    }
+
+    fun selectThread(thread: ChatThreadRecord) {
+        bindThread(thread)
     }
 
     fun clearNotice() {
@@ -230,15 +251,35 @@ class SynapseViewModel(
         }
     }
 
+    private fun observeThreads() {
+        viewModelScope.launch {
+            graph.conversationRepository.observeThreads().collect { threads ->
+                mutableUiState.update { state -> state.copy(threads = threads) }
+            }
+        }
+    }
+
     private fun bindDefaultThread() {
         viewModelScope.launch {
             val thread = graph.conversationRepository.ensureDefaultThread()
-            mutableUiState.update { state -> state.copy(currentThread = thread) }
-            messageObservationJob?.cancel()
-            messageObservationJob = launch {
-                graph.conversationRepository.observeMessages(thread.id).collect { messages ->
-                    mutableUiState.update { state -> state.copy(messages = messages) }
-                }
+            bindThread(thread)
+        }
+    }
+
+    private fun bindThread(thread: ChatThreadRecord) {
+        mutableUiState.update { state ->
+            state.copy(
+                currentThread = thread,
+                activePanel = SynapsePanel.CHAT,
+                isThreadDrawerOpen = false,
+                messages = emptyList(),
+                lastNotice = null,
+            )
+        }
+        messageObservationJob?.cancel()
+        messageObservationJob = viewModelScope.launch {
+            graph.conversationRepository.observeMessages(thread.id).collect { messages ->
+                mutableUiState.update { state -> state.copy(messages = messages) }
             }
         }
     }

@@ -12,6 +12,7 @@ import android.speech.tts.TextToSpeech
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,26 +34,28 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,6 +69,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,13 +81,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import app.synapse.localllm.R
 import app.synapse.localllm.domain.chat.AttachmentKind
 import app.synapse.localllm.domain.chat.ChatMessageRecord
+import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.MessageDeliveryState
 import app.synapse.localllm.domain.chat.PendingAttachment
@@ -147,6 +155,10 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         },
         onSpeak = speak,
         onPanelSelected = viewModel::selectPanel,
+        onThreadDrawerOpen = viewModel::openThreadDrawer,
+        onThreadDrawerClose = viewModel::closeThreadDrawer,
+        onCreateThread = viewModel::createNewThread,
+        onThreadSelected = viewModel::selectThread,
         onRuntimeCheck = viewModel::checkRuntimeStatus,
         onRuntimeStart = viewModel::startRuntime,
         onMemoryQueryChanged = viewModel::updateMemorySearchQuery,
@@ -172,6 +184,10 @@ private fun SynapseScreen(
     onStartSpeech: () -> Unit,
     onSpeak: (String) -> Unit,
     onPanelSelected: (SynapsePanel) -> Unit,
+    onThreadDrawerOpen: () -> Unit,
+    onThreadDrawerClose: () -> Unit,
+    onCreateThread: () -> Unit,
+    onThreadSelected: (ChatThreadRecord) -> Unit,
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
     onMemoryQueryChanged: (String) -> Unit,
@@ -190,9 +206,9 @@ private fun SynapseScreen(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF02040A),
-                        Color(0xFF02040A),
-                        Color(0xFF071A37),
+                        Color(0xFF050505),
+                        Color(0xFF050505),
+                        Color(0xFF06120B),
                     ),
                 ),
             ),
@@ -205,6 +221,7 @@ private fun SynapseScreen(
                 SynapseTopBar(
                     state = state,
                     onPanelSelected = onPanelSelected,
+                    onThreadDrawerOpen = onThreadDrawerOpen,
                     onRuntimeCheck = onRuntimeCheck,
                     onRuntimeStart = onRuntimeStart,
                 )
@@ -261,6 +278,14 @@ private fun SynapseScreen(
                 }
             }
         }
+        if (state.isThreadDrawerOpen) {
+            ThreadDrawerOverlay(
+                state = state,
+                onClose = onThreadDrawerClose,
+                onCreateThread = onCreateThread,
+                onThreadSelected = onThreadSelected,
+            )
+        }
     }
 }
 
@@ -268,6 +293,7 @@ private fun SynapseScreen(
 private fun SynapseTopBar(
     state: SynapseUiState,
     onPanelSelected: (SynapsePanel) -> Unit,
+    onThreadDrawerOpen: () -> Unit,
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
 ) {
@@ -275,37 +301,190 @@ private fun SynapseTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(WindowInsets.safeDrawing.asPaddingValues())
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = { onPanelSelected(SynapsePanel.CHAT) }) {
-            Icon(Icons.AutoMirrored.Rounded.Chat, contentDescription = "Chat")
+        IconButton(
+            onClick = onThreadDrawerOpen,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                Icons.Rounded.Menu,
+                contentDescription = "Recent chats",
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
         }
+        Icon(
+            painter = painterResource(R.drawable.synapse_guild_mark),
+            contentDescription = null,
+            tint = Color.Unspecified,
+            modifier = Modifier.size(24.dp),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
         Text(
             text = "Synapse",
-            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = state.runtimeStatus.toRuntimeLabel(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        IconButton(onClick = onRuntimeStart) {
-            Icon(Icons.Rounded.PlayArrow, contentDescription = "Start llama-server")
+        IconButton(
+            onClick = onRuntimeStart,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                Icons.Rounded.PlayArrow,
+                contentDescription = "Start llama-server",
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
         }
-        IconButton(onClick = onRuntimeCheck) {
-            Icon(Icons.Rounded.ErrorOutline, contentDescription = "Check runtime")
+        IconButton(
+            onClick = onRuntimeCheck,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                Icons.Rounded.ErrorOutline,
+                contentDescription = "Check runtime",
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
         }
-        IconButton(onClick = { onPanelSelected(SynapsePanel.MEMORY) }) {
-            Icon(Icons.Rounded.Memory, contentDescription = "Memory")
+        IconButton(
+            onClick = { onPanelSelected(SynapsePanel.MEMORY) },
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                Icons.Rounded.Memory,
+                contentDescription = "Memory",
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
         }
-        IconButton(onClick = { onPanelSelected(SynapsePanel.SETTINGS) }) {
-            Icon(Icons.Rounded.Settings, contentDescription = "Settings")
+        IconButton(
+            onClick = { onPanelSelected(SynapsePanel.SETTINGS) },
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                Icons.Rounded.Settings,
+                contentDescription = "Settings",
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThreadDrawerOverlay(
+    state: SynapseUiState,
+    onClose: () -> Unit,
+    onCreateThread: () -> Unit,
+    onThreadSelected: (ChatThreadRecord) -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.56f))
+                .clickable(onClick = onClose),
+        )
+        Surface(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(0.86f),
+            color = Color(0xFF070907),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shadowElevation = 12.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(WindowInsets.safeDrawing.asPaddingValues())
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Recent chats",
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    IconButton(onClick = onClose) {
+                        Icon(
+                            Icons.Rounded.Close,
+                            contentDescription = "Close recent chats",
+                            tint = MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
+                }
+                Button(
+                    onClick = onCreateThread,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("New chat")
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    items(state.threads, key = { thread -> thread.id.raw }) { thread ->
+                        ThreadDrawerRow(
+                            thread = thread,
+                            selected = thread.id == state.currentThread?.id,
+                            onThreadSelected = onThreadSelected,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThreadDrawerRow(
+    thread: ChatThreadRecord,
+    selected: Boolean,
+    onThreadSelected: (ChatThreadRecord) -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clickable { onThreadSelected(thread) },
+        color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = thread.title,
+                modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -357,8 +536,13 @@ private fun ChatPanel(
         EmptyChat()
         return
     }
+    val listState = rememberLazyListState()
+    LaunchedEffect(messages.size, messages.lastOrNull()?.body) {
+        listState.animateScrollToItem(messages.lastIndex)
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = listState,
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -382,10 +566,10 @@ private fun EmptyChat() {
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(
-            imageVector = Icons.Rounded.AutoAwesome,
+            painter = painterResource(R.drawable.synapse_guild_mark),
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(42.dp),
+            tint = Color.Unspecified,
+            modifier = Modifier.size(54.dp),
         )
         Spacer(modifier = Modifier.height(22.dp))
         Text(
@@ -409,7 +593,7 @@ private fun MessageBubble(
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
-            color = if (isUser) Color(0xFF123C36) else MaterialTheme.colorScheme.surface,
+            color = if (isUser) Color(0xFF10351A) else MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
             shape = RoundedCornerShape(
                 topStart = 22.dp,
@@ -479,7 +663,7 @@ private fun ComposerBar(
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(32.dp),
-            color = Color(0xFF171A20),
+            color = Color(0xFF111411),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
