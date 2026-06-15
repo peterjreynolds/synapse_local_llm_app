@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.synapse.localllm.domain.settings.DEFAULT_SYSTEM_PROMPT
 import app.synapse.localllm.domain.settings.SynapseSettings
+import app.synapse.localllm.domain.settings.normalizeSystemPrompt
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -23,7 +24,7 @@ class SynapseSettingsStore(context: Context) {
             SynapseSettings(
                 baseUrl = preferences[BASE_URL] ?: "http://127.0.0.1:8080",
                 modelName = preferences[MODEL_NAME] ?: "local-llama",
-                systemPrompt = preferences[SYSTEM_PROMPT] ?: DEFAULT_SYSTEM_PROMPT,
+                systemPrompt = normalizeSystemPrompt(preferences[SYSTEM_PROMPT]),
                 temperature = preferences[TEMPERATURE] ?: 0.7,
                 maxTokens = preferences[MAX_TOKENS] ?: 768,
                 memoryWritesEnabled = preferences[MEMORY_WRITES_ENABLED] ?: true,
@@ -47,7 +48,7 @@ class SynapseSettingsStore(context: Context) {
         dataStore.edit { preferences ->
             preferences[BASE_URL] = baseUrl.trim().removeSuffix("/")
             preferences[MODEL_NAME] = modelName.trim().ifBlank { "local-llama" }
-            preferences[SYSTEM_PROMPT] = systemPrompt.trim().ifBlank { DEFAULT_SYSTEM_PROMPT }
+            preferences[SYSTEM_PROMPT] = normalizeSystemPrompt(systemPrompt)
             preferences[TEMPERATURE] = temperature.coerceIn(0.0, 2.0)
             preferences[MAX_TOKENS] = maxTokens.coerceIn(64, 4096)
         }
