@@ -5,6 +5,9 @@ The app can run an embedded ARM64 `llama.cpp` runtime directly in the APK, or
 fall back to a Termux `llama-server` on `127.0.0.1:8080`. Chat and
 evidence-backed memory stay in app-local storage.
 
+The active product roadmap is tracked in
+[`docs/canonical-master-plan.md`](docs/canonical-master-plan.md).
+
 ## Embedded Runtime
 
 The APK includes native `llama.cpp` libraries for `arm64-v8a`, but it does not
