@@ -116,6 +116,19 @@ kapt {
     correctErrorTypes = true
 }
 
+val publishDebugSynapseApk by tasks.registering(Copy::class) {
+    dependsOn("packageDebug")
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+    into(layout.buildDirectory.dir("outputs/apk/synapse"))
+    rename { "Synapse-AI.apk" }
+}
+
+afterEvaluate {
+    tasks.named("assembleDebug") {
+        finalizedBy(publishDebugSynapseApk)
+    }
+}
+
 ktlint {
     android.set(true)
     ignoreFailures.set(false)
