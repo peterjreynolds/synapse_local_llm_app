@@ -8,13 +8,13 @@ plugins {
 
 android {
     namespace = "app.synapse.localllm"
-    compileSdk = 36
+    compileSdk = 37
     ndkVersion = "29.0.13113456"
 
     defaultConfig {
         applicationId = "app.synapse.localllm"
         minSdk = 31
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
 
