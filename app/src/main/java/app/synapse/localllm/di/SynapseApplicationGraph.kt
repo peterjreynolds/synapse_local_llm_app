@@ -5,7 +5,9 @@ import androidx.room.Room
 import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
+import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.memory.DeterministicMemoryProjector
 import app.synapse.localllm.data.memory.EvidenceBackedMemoryAdmissionGate
@@ -20,6 +22,7 @@ import app.synapse.localllm.data.settings.SynapseSettingsStore
 import app.synapse.localllm.data.storage.AndroidStorageHealthGovernor
 import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
 import app.synapse.localllm.domain.chat.ConversationRepository
+import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.memory.MemoryAdmissionGate
 import app.synapse.localllm.domain.memory.MemoryProjector
@@ -41,7 +44,10 @@ class SynapseApplicationGraph private constructor(context: Context) {
         applicationContext,
         SynapseDatabase::class.java,
         DATABASE_NAME,
-    ).addMigrations(SYNAPSE_DATABASE_MIGRATION_1_2).build()
+    ).addMigrations(
+        SYNAPSE_DATABASE_MIGRATION_1_2,
+        SYNAPSE_DATABASE_MIGRATION_2_3,
+    ).build()
 
     val settingsStore = SynapseSettingsStore(applicationContext)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
@@ -61,6 +67,12 @@ class SynapseApplicationGraph private constructor(context: Context) {
             memoryDao = database.memoryDao(),
             idFactory = idFactory,
             clock = clock,
+        )
+
+    val generationDiagnosticsRepository: GenerationDiagnosticsRepository =
+        RoomGenerationDiagnosticsRepository(
+            diagnosticsDao = database.diagnosticsDao(),
+            idFactory = idFactory,
         )
 
     val memoryProjector: MemoryProjector = DeterministicMemoryProjector()
@@ -99,6 +111,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
             storageHealthSnapshotRepository = storageHealthSnapshotRepository,
             promptContextAssembler = promptContextAssembler,
             localInferenceRuntime = localInferenceRuntime,
+            generationDiagnosticsRepository = generationDiagnosticsRepository,
             idFactory = idFactory,
             clock = clock,
         )

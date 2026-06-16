@@ -36,4 +36,14 @@ class AssistantVisibleTextFilterTest {
 
         assertEquals("Got it.", filtered.visibleDelta)
     }
+
+    @Test
+    fun reportsVisibleAndFilteredCharacterCounts() {
+        val filter = AssistantVisibleTextFilter()
+
+        filter.appendToken("<think>private</think>Visible answer.")
+
+        assertEquals("Visible answer.".length, filter.visibleCharacterCount)
+        assertTrue(filter.filteredCharacterCount > 0)
+    }
 }

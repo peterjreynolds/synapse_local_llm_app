@@ -43,7 +43,7 @@ class SynapseSettingsStore(context: Context) {
                 customInstructions = customInstructions,
                 systemPrompt = composeSystemPrompt(persona, customInstructions),
                 temperature = preferences[TEMPERATURE] ?: 0.7,
-                maxTokens = preferences[MAX_TOKENS] ?: 768,
+                maxTokens = preferences[MAX_TOKENS] ?: 256,
                 memoryWritesEnabled = preferences[MEMORY_WRITES_ENABLED] ?: true,
                 speechPlaybackEnabled = preferences[SPEECH_PLAYBACK_ENABLED] ?: true,
                 memoryDatabaseWarningBytes = preferences[MEMORY_DATABASE_WARNING_BYTES]
@@ -77,7 +77,7 @@ class SynapseSettingsStore(context: Context) {
                 normalizedCustomInstructions,
             )
             preferences[TEMPERATURE] = temperature.coerceIn(0.0, 2.0)
-            preferences[MAX_TOKENS] = maxTokens.coerceIn(64, 4096)
+            preferences[MAX_TOKENS] = maxTokens.coerceIn(1, 4096)
         }
     }
 

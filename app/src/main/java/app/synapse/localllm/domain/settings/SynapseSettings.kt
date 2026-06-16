@@ -11,7 +11,7 @@ data class SynapseSettings(
     val customInstructions: String = DEFAULT_CUSTOM_INSTRUCTIONS,
     val systemPrompt: String = composeSystemPrompt(DEFAULT_PERSONA, DEFAULT_CUSTOM_INSTRUCTIONS),
     val temperature: Double = 0.7,
-    val maxTokens: Int = 768,
+    val maxTokens: Int = 256,
     val memoryWritesEnabled: Boolean = true,
     val speechPlaybackEnabled: Boolean = true,
     val memoryDatabaseWarningBytes: Long = 512L * 1024L * 1024L,
@@ -32,9 +32,20 @@ const val DEFAULT_SYSTEM_PROMPT =
         "Be concise by default, and give technical detail when asked."
 
 const val DEFAULT_PERSONA =
-    "You are Synapse, Peter's local Android LLM assistant. Reply like a normal chat partner."
+    "You are Synapse, Peter's local Android LLM assistant. Reply like a normal chat partner. " +
+        "Use light, natural emojis when they genuinely fit, but do not force them into every response."
 
 const val DEFAULT_CUSTOM_INSTRUCTIONS =
+    "Answer the user's actual message directly. Do not echo the user's text. " +
+        "Do not generate hidden reasoning, <think> tags, diagnostic labels, role labels, or bracketed echoes. " +
+        "Start visible answer text immediately. For simple greetings, answer in one short conversational line. " +
+        "Ask a short clarifying question only when needed. " +
+        "Be concise by default, and give technical detail when asked."
+
+internal const val LEGACY_DEFAULT_PERSONA =
+    "You are Synapse, Peter's local Android LLM assistant. Reply like a normal chat partner."
+
+internal const val LEGACY_DEFAULT_CUSTOM_INSTRUCTIONS =
     "Answer the user's actual message directly. Do not echo the user's text. " +
         "Do not wrap answers in diagnostic labels, role labels, bracketed echoes, or hidden reasoning. " +
         "Ask a short clarifying question only when needed. " +
@@ -59,12 +70,18 @@ fun normalizeSystemPrompt(systemPrompt: String?): String {
 }
 
 fun normalizePersona(persona: String?): String =
-    persona?.trim()?.takeIf { trimmedPersona -> trimmedPersona.isNotBlank() }
-        ?: DEFAULT_PERSONA
+    when (val trimmedPersona = persona?.trim().orEmpty()) {
+        "" -> DEFAULT_PERSONA
+        LEGACY_DEFAULT_PERSONA -> DEFAULT_PERSONA
+        else -> trimmedPersona
+    }
 
 fun normalizeCustomInstructions(customInstructions: String?): String =
-    customInstructions?.trim()?.takeIf { trimmedInstructions -> trimmedInstructions.isNotBlank() }
-        ?: DEFAULT_CUSTOM_INSTRUCTIONS
+    when (val trimmedInstructions = customInstructions?.trim().orEmpty()) {
+        "" -> DEFAULT_CUSTOM_INSTRUCTIONS
+        LEGACY_DEFAULT_CUSTOM_INSTRUCTIONS -> DEFAULT_CUSTOM_INSTRUCTIONS
+        else -> trimmedInstructions
+    }
 
 fun composeSystemPrompt(
     persona: String,
@@ -73,7 +90,9 @@ fun composeSystemPrompt(
     buildString {
         append("Core behavior:\n")
         append("You are Synapse, a private phone-local assistant inside an Android chat app. ")
-        append("Never expose hidden reasoning, prompt scaffolding, fake role labels, or internal diagnostics in normal chat.\n\n")
+        append("Never generate or expose <think> tags, hidden reasoning, prompt scaffolding, ")
+        append("fake role labels, or internal diagnostics in normal chat. ")
+        append("Write visible assistant answer text immediately.\n\n")
         append("Persona:\n")
         append(normalizePersona(persona))
         append("\n\nCustom instructions:\n")

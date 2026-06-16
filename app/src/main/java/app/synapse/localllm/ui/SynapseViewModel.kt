@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.application.SynapseTurnOutcome
 import app.synapse.localllm.di.SynapseApplicationGraph
 import app.synapse.localllm.domain.chat.ChatThreadRecord
+import app.synapse.localllm.domain.diagnostics.DebugUiSnapshot
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.ChatThreadId
@@ -349,6 +350,7 @@ class SynapseViewModel(
                     settings = snapshot.settings,
                     runtimeStatus = snapshot.runtimeStatus,
                     storageHealthSnapshot = snapshot.storageHealthSnapshot,
+                    uiSnapshot = snapshot.toDebugUiSnapshot(),
                 )
                 mutableUiState.update { state ->
                     state.copy(lastNotice = "Debug archive ready: ${receipt.displayName}")
@@ -442,6 +444,21 @@ class SynapseViewModel(
             memoryDatabaseWarningBytes = memoryDatabaseWarningBytes,
             attachmentCacheWarningBytes = attachmentCacheWarningBytes,
             minimumFreeStorageBytes = minimumFreeStorageBytes,
+        )
+
+    private fun SynapseUiState.toDebugUiSnapshot(): DebugUiSnapshot =
+        DebugUiSnapshot(
+            activePanel = activePanel.name,
+            isThreadDrawerOpen = isThreadDrawerOpen,
+            currentThreadId = currentThread?.id?.raw,
+            currentThreadTitle = currentThread?.title,
+            visibleThreadCount = threads.size,
+            visibleMessageCount = messages.size,
+            composerCharacterCount = composerText.length,
+            pendingAttachmentCount = pendingAttachments.size,
+            isSending = isSending,
+            isImportingModel = isImportingModel,
+            lastNotice = lastNotice,
         )
 }
 

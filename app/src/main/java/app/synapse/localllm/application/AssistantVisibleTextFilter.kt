@@ -4,6 +4,12 @@ class AssistantVisibleTextFilter {
     private var rawAssistantText = ""
     private var emittedVisibleText = ""
 
+    val visibleCharacterCount: Int
+        get() = emittedVisibleText.length
+
+    val filteredCharacterCount: Int
+        get() = (rawAssistantText.length - emittedVisibleText.length).coerceAtLeast(0)
+
     fun appendToken(token: String): AssistantVisibleTextFilterResult {
         rawAssistantText += token
         val nextVisibleText = sanitizeAssistantText(rawAssistantText)

@@ -6,6 +6,10 @@ import app.synapse.localllm.domain.chat.ConversationRepository
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
+import app.synapse.localllm.domain.diagnostics.AssistantGenerationFinishedCommand
+import app.synapse.localllm.domain.diagnostics.AssistantGenerationStartedCommand
+import app.synapse.localllm.domain.diagnostics.AssistantGenerationStopReason
+import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.memory.MemoryAdmissionGate
@@ -23,6 +27,7 @@ import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageHealthGovernor
 import app.synapse.localllm.domain.storage.StorageThresholds
 import app.synapse.localllm.domain.time.SynapseClock
+import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
 
@@ -35,6 +40,7 @@ class SynapseTurnCoordinator(
     private val storageHealthSnapshotRepository: RoomStorageHealthSnapshotRepository,
     private val promptContextAssembler: PromptContextAssembler,
     private val localInferenceRuntime: LocalInferenceRuntime,
+    private val generationDiagnosticsRepository: GenerationDiagnosticsRepository,
     private val idFactory: SynapseIdFactory,
     private val clock: SynapseClock,
 ) {
@@ -69,31 +75,98 @@ class SynapseTurnCoordinator(
             temperature = settings.temperature,
             maxTokens = settings.maxTokens,
         )
+        val generationTraceId = generationDiagnosticsRepository.recordAssistantGenerationStarted(
+            AssistantGenerationStartedCommand(
+                assistantMessageId = turnReceipt.assistantMessageId,
+                backend = settings.runtimeBackend,
+                modelName = settings.modelName,
+                promptMessageCount = promptMessages.size,
+                promptCharacterCount = promptMessages.sumOf { message -> message.content.length },
+                retrievedMemoryCount = retrievalBundle.refs.size,
+                maxTokens = settings.maxTokens,
+                temperature = settings.temperature,
+                startedAt = clock.now(),
+            ),
+        )
+
+        var rawTokenEvents = 0
+        var rawCharacterCount = 0
+        var firstRawTokenAt: Instant? = null
+        var firstVisibleTokenAt: Instant? = null
+        var stopReason: AssistantGenerationStopReason? = null
+        var finalFailureReason: String? = null
+        var generationFinishedRecorded = false
+        val visibleTextFilter = AssistantVisibleTextFilter()
+
+        suspend fun recordGenerationFinishedOnce() {
+            if (generationFinishedRecorded) return
+            generationFinishedRecorded = true
+            generationDiagnosticsRepository.recordAssistantGenerationFinished(
+                AssistantGenerationFinishedCommand(
+                    traceId = generationTraceId,
+                    completedAt = clock.now(),
+                    rawTokenEvents = rawTokenEvents,
+                    rawCharacterCount = rawCharacterCount,
+                    visibleCharacterCount = visibleTextFilter.visibleCharacterCount,
+                    filteredCharacterCount = visibleTextFilter.filteredCharacterCount,
+                    firstRawTokenAt = firstRawTokenAt,
+                    firstVisibleTokenAt = firstVisibleTokenAt,
+                    stopReason = stopReason ?: if (finalFailureReason == null) {
+                        AssistantGenerationStopReason.COMPLETED
+                    } else {
+                        AssistantGenerationStopReason.FAILED
+                    },
+                    failureReason = finalFailureReason,
+                ),
+            )
+        }
 
         val failureReason = try {
             var streamFailureReason: String? = null
-            val visibleTextFilter = AssistantVisibleTextFilter()
             localInferenceRuntime.streamChatCompletion(completionRequest).collect { streamEvent ->
                 when (streamEvent) {
                     is ChatStreamEvent.Token -> {
+                        rawTokenEvents += 1
+                        rawCharacterCount += streamEvent.text.length
+                        if (firstRawTokenAt == null) {
+                            firstRawTokenAt = clock.now()
+                        }
                         val filteredToken = visibleTextFilter.appendToken(streamEvent.text)
-                        if (filteredToken.visibleDelta.isNotBlank()) {
+                        if (filteredToken.visibleDelta.isNotEmpty()) {
+                            if (firstVisibleTokenAt == null) {
+                                firstVisibleTokenAt = clock.now()
+                            }
                             conversationRepository.appendAssistantToken(
                                 messageId = turnReceipt.assistantMessageId,
                                 token = filteredToken.visibleDelta,
                             )
                         }
                         if (filteredToken.shouldStopGeneration) {
+                            stopReason = AssistantGenerationStopReason.FILTER_STOPPED
                             localInferenceRuntime.cancelActiveGeneration()
                             throw AssistantOutputCompletedEarly()
                         }
                     }
 
-                    is ChatStreamEvent.Completed ->
-                        conversationRepository.completeAssistantMessage(turnReceipt.assistantMessageId)
+                    is ChatStreamEvent.Completed -> {
+                        if (visibleTextFilter.visibleCharacterCount == 0) {
+                            streamFailureReason = EMPTY_VISIBLE_OUTPUT_REASON
+                            finalFailureReason = EMPTY_VISIBLE_OUTPUT_REASON
+                            stopReason = AssistantGenerationStopReason.EMPTY_VISIBLE_OUTPUT
+                            conversationRepository.failAssistantMessage(
+                                messageId = turnReceipt.assistantMessageId,
+                                reason = EMPTY_VISIBLE_OUTPUT_REASON,
+                            )
+                        } else {
+                            stopReason = AssistantGenerationStopReason.COMPLETED
+                            conversationRepository.completeAssistantMessage(turnReceipt.assistantMessageId)
+                        }
+                    }
 
                     is ChatStreamEvent.Failed -> {
                         streamFailureReason = streamEvent.reason
+                        finalFailureReason = streamEvent.reason
+                        stopReason = AssistantGenerationStopReason.FAILED
                         conversationRepository.failAssistantMessage(
                             messageId = turnReceipt.assistantMessageId,
                             reason = streamEvent.reason,
@@ -103,15 +176,32 @@ class SynapseTurnCoordinator(
             }
             streamFailureReason
         } catch (_: AssistantOutputCompletedEarly) {
-            conversationRepository.completeAssistantMessage(turnReceipt.assistantMessageId)
-            null
+            if (visibleTextFilter.visibleCharacterCount == 0) {
+                finalFailureReason = EMPTY_VISIBLE_OUTPUT_REASON
+                stopReason = AssistantGenerationStopReason.EMPTY_VISIBLE_OUTPUT
+                conversationRepository.failAssistantMessage(
+                    messageId = turnReceipt.assistantMessageId,
+                    reason = EMPTY_VISIBLE_OUTPUT_REASON,
+                )
+                EMPTY_VISIBLE_OUTPUT_REASON
+            } else {
+                conversationRepository.completeAssistantMessage(turnReceipt.assistantMessageId)
+                null
+            }
         } catch (exception: CancellationException) {
+            finalFailureReason = STOPPED_BY_USER_REASON
+            stopReason = AssistantGenerationStopReason.CANCELLED
             conversationRepository.failAssistantMessage(
                 messageId = turnReceipt.assistantMessageId,
-                reason = "Stopped by user.",
+                reason = STOPPED_BY_USER_REASON,
             )
+            recordGenerationFinishedOnce()
             throw exception
         }
+        if (failureReason != null && finalFailureReason == null) {
+            finalFailureReason = failureReason
+        }
+        recordGenerationFinishedOnce()
 
         return if (failureReason == null) {
             SynapseTurnOutcome.Completed(turnReceipt.assistantMessageId)
@@ -211,6 +301,9 @@ class SynapseTurnCoordinator(
         const val RECENT_THREAD_MESSAGE_LIMIT = 8
         const val MEMORY_RETRIEVAL_LIMIT = 6
         const val MAX_TEXT_ATTACHMENT_PROMPT_CHARS = 12_000
+        const val STOPPED_BY_USER_REASON = "Stopped by user."
+        const val EMPTY_VISIBLE_OUTPUT_REASON =
+            "Model returned no visible answer text after hidden reasoning/output filtering."
     }
 }
 

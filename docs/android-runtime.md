@@ -22,6 +22,10 @@ Current embedded limits:
 - `arm64-v8a` only. This is intentional for the Samsung S25 Ultra target.
 - Text-only generation. Vision `mmproj` wiring is not implemented yet.
 - Context is fixed at 4096 tokens in the native wrapper.
+- Default chat responses use a smaller token budget for phone responsiveness;
+  users can raise the setting when they need long answers.
+- Generation traces record prompt size, token/event counts, visible/filtered
+  output counts, first-token timing, and stop reason for debug exports.
 - The first model load can take a while and Android may kill the process under
   heavy thermal or memory pressure.
 

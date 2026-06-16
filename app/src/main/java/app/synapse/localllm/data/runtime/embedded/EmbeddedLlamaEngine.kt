@@ -164,7 +164,7 @@ class EmbeddedLlamaEngine private constructor(
     companion object {
         private const val TAG = "EmbeddedLlamaEngine"
         private const val NATIVE_LIBRARY_NAME = "synapse-llama"
-        private const val MIN_PREDICT_TOKENS = 64
+        private const val MIN_PREDICT_TOKENS = 1
         private const val MAX_PREDICT_TOKENS = 4096
         private const val MIN_TEMPERATURE = 0.0f
         private const val MAX_TEMPERATURE = 2.0f

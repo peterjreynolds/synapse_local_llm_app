@@ -33,6 +33,7 @@ speech input, per-message playback, and no visible prompt scaffolding.
   multimodal runtime is added.
 - One-shot Android speech input through the system speech recognizer.
 - Full app-state debug ZIP export, excluding GGUF model files.
+- Persisted generation timing traces for diagnosing slow or blank local model responses.
 
 ## Remaining Major Tracks
 
@@ -136,7 +137,8 @@ to the device.
 
 - Keep `Export Debug ZIP` in Settings/Diagnostics.
 - Include database, settings, chats, memories, receipts, prompt metadata,
-  runtime state, model metadata, build/device info, and app-local logs.
+  runtime state, model metadata, build/device info, UI/window metrics,
+  readable database summaries, and generation timing traces.
 - Include app-private attachment/library/workspace metadata and small diagnostic
   manifests.
 - Exclude actual GGUF model weights by default.

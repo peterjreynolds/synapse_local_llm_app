@@ -22,6 +22,10 @@ from git and APK packaging. On the phone:
 Synapse validates the `GGUF` magic bytes and copies the model into app-private
 storage so native `llama.cpp` can open it by filesystem path.
 
+The default response budget is tuned for phone chat responsiveness. You can
+raise `Tokens` in Settings for long answers, but short everyday chat should not
+need a large budget.
+
 ## Termux Server Runtime
 
 The expected Termux server command is:
@@ -71,3 +75,10 @@ Synapse memory uses one local truth: Room entities plus durable write/retrieval
 receipts. The local LLM may propose memories, but durable memory writes require
 source evidence and pass through the admission gate. When storage gets tight,
 Synapse pauses memory writes and keeps chat usable.
+
+## Debug Archives
+
+Settings > Diagnostics > `Export Debug ZIP` creates a private troubleshooting
+archive that excludes GGUF model weights. It includes raw Room/DataStore state,
+readable database summaries, generation timing traces, runtime/model metadata,
+UI state, window metrics, and app-state file manifests.

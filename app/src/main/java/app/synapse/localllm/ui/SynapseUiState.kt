@@ -22,7 +22,7 @@ data class RuntimeSettingsDraft(
     val persona: String = "",
     val customInstructions: String = "",
     val temperature: String = "0.7",
-    val maxTokens: String = "768",
+    val maxTokens: String = "256",
 )
 
 data class SynapseUiState(

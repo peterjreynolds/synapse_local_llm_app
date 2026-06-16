@@ -42,6 +42,40 @@ data class ChatMessageEntity(
 )
 
 @Entity(
+    tableName = "assistant_generation_traces",
+    foreignKeys = [
+        ForeignKey(
+            entity = ChatMessageEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["assistantMessageId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("assistantMessageId"), Index("startedAtEpochMillis")],
+)
+data class AssistantGenerationTraceEntity(
+    @PrimaryKey val id: String,
+    val assistantMessageId: String,
+    val backend: String,
+    val modelName: String,
+    val promptMessageCount: Int,
+    val promptCharacterCount: Int,
+    val retrievedMemoryCount: Int,
+    val maxTokens: Int,
+    val temperature: Double,
+    val startedAtEpochMillis: Long,
+    val completedAtEpochMillis: Long?,
+    val rawTokenEvents: Int,
+    val rawCharacterCount: Int,
+    val visibleCharacterCount: Int,
+    val filteredCharacterCount: Int,
+    val firstRawTokenAtEpochMillis: Long?,
+    val firstVisibleTokenAtEpochMillis: Long?,
+    val stopReason: String?,
+    val failureReason: String?,
+)
+
+@Entity(
     tableName = "attachments",
     foreignKeys = [
         ForeignKey(

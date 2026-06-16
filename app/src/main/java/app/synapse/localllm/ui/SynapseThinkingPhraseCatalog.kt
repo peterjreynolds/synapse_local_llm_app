@@ -305,4 +305,4 @@ internal val SynapseThinkingPhrases =
     )
 
 internal const val THINKING_PHRASE_CHARACTER_DELAY_MILLIS = 24L
-internal const val THINKING_PHRASE_REST_MILLIS = 1_400L
+internal const val THINKING_PHRASE_REST_MILLIS = 3_000L

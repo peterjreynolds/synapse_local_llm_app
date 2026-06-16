@@ -167,6 +167,40 @@ interface ChatDao {
 }
 
 @Dao
+interface DiagnosticsDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAssistantGenerationTrace(trace: AssistantGenerationTraceEntity)
+
+    @Query(
+        """
+        UPDATE assistant_generation_traces
+        SET completedAtEpochMillis = :completedAtEpochMillis,
+            rawTokenEvents = :rawTokenEvents,
+            rawCharacterCount = :rawCharacterCount,
+            visibleCharacterCount = :visibleCharacterCount,
+            filteredCharacterCount = :filteredCharacterCount,
+            firstRawTokenAtEpochMillis = :firstRawTokenAtEpochMillis,
+            firstVisibleTokenAtEpochMillis = :firstVisibleTokenAtEpochMillis,
+            stopReason = :stopReason,
+            failureReason = :failureReason
+        WHERE id = :traceId
+        """,
+    )
+    suspend fun finishAssistantGenerationTrace(
+        traceId: String,
+        completedAtEpochMillis: Long,
+        rawTokenEvents: Int,
+        rawCharacterCount: Int,
+        visibleCharacterCount: Int,
+        filteredCharacterCount: Int,
+        firstRawTokenAtEpochMillis: Long?,
+        firstVisibleTokenAtEpochMillis: Long?,
+        stopReason: String,
+        failureReason: String?,
+    )
+}
+
+@Dao
 interface MemoryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertTraceEvent(traceEvent: TraceEventEntity): Long

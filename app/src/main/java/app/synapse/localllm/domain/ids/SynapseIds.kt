@@ -23,6 +23,9 @@ value class MemoryVersionId(val raw: String)
 @JvmInline
 value class ReceiptId(val raw: String)
 
+@JvmInline
+value class AssistantGenerationTraceId(val raw: String)
+
 class SynapseIdFactory {
     fun createChatThreadId(): ChatThreadId = ChatThreadId(createPrefixedUuid("thread"))
 
@@ -37,6 +40,9 @@ class SynapseIdFactory {
     fun createMemoryVersionId(): MemoryVersionId = MemoryVersionId(createPrefixedUuid("version"))
 
     fun createReceiptId(): ReceiptId = ReceiptId(createPrefixedUuid("receipt"))
+
+    fun createAssistantGenerationTraceId(): AssistantGenerationTraceId =
+        AssistantGenerationTraceId(createPrefixedUuid("generation"))
 
     private fun createPrefixedUuid(prefix: String): String = "$prefix-${UUID.randomUUID()}"
 }

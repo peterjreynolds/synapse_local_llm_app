@@ -23,6 +23,15 @@ class SynapseSettingsTest {
     }
 
     @Test
+    fun migratesOldDefaultPersonaAndInstructionsToCurrentDefaults() {
+        assertEquals(DEFAULT_PERSONA, normalizePersona(LEGACY_DEFAULT_PERSONA))
+        assertEquals(
+            DEFAULT_CUSTOM_INSTRUCTIONS,
+            normalizeCustomInstructions(LEGACY_DEFAULT_CUSTOM_INSTRUCTIONS),
+        )
+    }
+
+    @Test
     fun preservesCustomSystemPrompt() {
         val customPrompt = "You are Synapse. Answer conversationally."
 
@@ -38,5 +47,13 @@ class SynapseSettingsTest {
 
         assertTrue(prompt.contains("Persona:\nYou are direct."))
         assertTrue(prompt.contains("Custom instructions:\nUse short answers."))
+    }
+
+    @Test
+    fun currentDefaultPromptBlocksHiddenThinking() {
+        val prompt = composeSystemPrompt(DEFAULT_PERSONA, DEFAULT_CUSTOM_INSTRUCTIONS)
+
+        assertTrue(prompt.contains("<think>"))
+        assertTrue(prompt.contains("Write visible assistant answer text immediately."))
     }
 }
