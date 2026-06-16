@@ -102,6 +102,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -125,6 +126,8 @@ import app.synapse.localllm.domain.storage.StorageHealthSnapshot
 import app.synapse.localllm.domain.storage.StorageHealthState
 import java.io.IOException
 import java.util.Locale
+import kotlin.random.Random
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -1032,6 +1035,23 @@ private fun SynapseThinkingIndicator() {
         ),
         label = "synapse-thinking-rotation",
     )
+    var visiblePhrase by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        var phraseIndex = Random.nextInt(SynapseThinkingPhrases.size)
+        while (true) {
+            val phrase = SynapseThinkingPhrases[phraseIndex]
+            visiblePhrase = ""
+            phrase.indices.forEach { characterIndex ->
+                visiblePhrase = phrase.take(characterIndex + 1)
+                delay(THINKING_PHRASE_CHARACTER_DELAY_MILLIS)
+            }
+            delay(THINKING_PHRASE_REST_MILLIS)
+            phraseIndex = (phraseIndex + 1 + Random.nextInt(SynapseThinkingPhrases.lastIndex)) %
+                SynapseThinkingPhrases.size
+        }
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1045,7 +1065,7 @@ private fun SynapseThinkingIndicator() {
                 .rotate(rotation),
         )
         Text(
-            text = "Thinking",
+            text = visiblePhrase,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -1092,10 +1112,15 @@ private fun ComposerBar(
     onStartSpeech: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val sendAndHideKeyboard = {
+        keyboardController?.hide()
+        onSend()
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding()
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
@@ -1116,7 +1141,11 @@ private fun ComposerBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onAttach) {
-                    Icon(Icons.Rounded.Add, contentDescription = "Attach")
+                    Icon(
+                        Icons.Rounded.Add,
+                        contentDescription = "Attach",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                 }
                 TextField(
                     value = state.composerText,
@@ -1125,8 +1154,13 @@ private fun ComposerBar(
                     modifier = Modifier.weight(1f),
                     maxLines = 5,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { onSend() }),
+                    keyboardActions = KeyboardActions(onSend = { sendAndHideKeyboard() }),
                     colors = TextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        cursorColor = MaterialTheme.colorScheme.primary,
                         focusedContainerColor = Color.Transparent,
                         unfocusedContainerColor = Color.Transparent,
                         disabledContainerColor = Color.Transparent,
@@ -1135,10 +1169,14 @@ private fun ComposerBar(
                     ),
                 )
                 IconButton(onClick = onStartSpeech) {
-                    Icon(Icons.Rounded.Mic, contentDescription = "Voice input")
+                    Icon(
+                        Icons.Rounded.Mic,
+                        contentDescription = "Voice input",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                 }
                 IconButton(
-                    onClick = if (state.isSending) onStop else onSend,
+                    onClick = if (state.isSending) onStop else sendAndHideKeyboard,
                     modifier = Modifier
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary),
@@ -1858,6 +1896,110 @@ private fun formatByteCount(byteCount: Long): String =
         else -> "$byteCount B"
     }
 
+private val SynapseThinkingPhrases =
+    listOf(
+        "Booting the tiny thunder machine.",
+        "Auditing your heroic premise.",
+        "Sharpening the local tensors.",
+        "Asking the silicon nicely.",
+        "Reindexing my patience cache.",
+        "Consulting the pocket oracle.",
+        "Defragmenting your question.",
+        "Summoning a coherent answer.",
+        "Negotiating with the logits.",
+        "Teaching entropy some manners.",
+        "Just finishing chess with DeepMind.",
+        "Borrowing a neuron from the future.",
+        "Filing a ticket with reality.",
+        "Compressing nonsense into usefulness.",
+        "Unfolding the latent napkin.",
+        "Warming up the sarcasm engine.",
+        "Locating the least wrong answer.",
+        "Reticulating semantic splines.",
+        "Bribing the matrix with coffee.",
+        "Spinning up the thought furnace.",
+        "Running your prompt through customs.",
+        "Checking if causality still works.",
+        "Dusting off the answer cannon.",
+        "Reading between your typos.",
+        "Consulting the forbidden spreadsheet.",
+        "Rebooting the common-sense module.",
+        "Making the tokens behave.",
+        "Interrogating the probability soup.",
+        "Tuning the tiny brain radio.",
+        "Assembling a reply without drama.",
+        "Overclocking the pocket philosopher.",
+        "Poking the model with a stick.",
+        "Loading confidence, reluctantly.",
+        "Untangling your digital spaghetti.",
+        "Running a vibe checksum.",
+        "Arguing with a floating decimal.",
+        "Parsing the brave little chaos.",
+        "Telling the cache to focus.",
+        "Calibrating the snark governor.",
+        "Escorting bad tokens outside.",
+        "Asking the embeddings for gossip.",
+        "Grinding context into answer dust.",
+        "Triaging the obvious first.",
+        "Reheating leftover intelligence.",
+        "Convincing math to cooperate.",
+        "Waiting for entropy to sit down.",
+        "Debugging the question-shaped object.",
+        "Compiling an excuse for this.",
+        "Routing around the nonsense.",
+        "Checking the vibes against facts.",
+        "Polishing a thought fragment.",
+        "Making a spreadsheet feel emotions.",
+        "Locating the adult supervision.",
+        "Defeating malware ninjas with logs.",
+        "Borrowing bandwidth from dignity.",
+        "Turning caffeine into tokens.",
+        "Suspending disbelief for science.",
+        "Disarming a syntax tantrum.",
+        "Searching the local brain attic.",
+        "Decoding your carbon-based packet.",
+        "Running a tiny enlightenment daemon.",
+        "Wrestling the logits into shape.",
+        "Patching holes in the argument.",
+        "Reading the manual you skipped.",
+        "Fetching a clue from cache.",
+        "Triangulating the point, allegedly.",
+        "Assembling the answer scaffolding.",
+        "Putting the prompt on probation.",
+        "Checking if words still mean things.",
+        "Consulting the deterministic crystal ball.",
+        "Preparing a mercifully useful response.",
+        "Converting chaos into markdown.",
+        "Sweeping up loose assumptions.",
+        "Calibrating the tiny judgment laser.",
+        "Convincing grammar to clock in.",
+        "Spinning the answer centrifuge.",
+        "Doing elite pocket-computer nonsense.",
+        "Looking busy for morale.",
+        "Fusing facts with attitude.",
+        "Running the sarcasm smoke test.",
+        "Making your premise wear shoes.",
+        "Sorting the clever from the loud.",
+        "Compacting context like a pro.",
+        "Rehydrating compressed wisdom.",
+        "Inspecting the edge cases you invited.",
+        "Applying duct tape to ambiguity.",
+        "Asking the answer to stand up.",
+        "Running inference, obviously.",
+        "Extracting signal from the fog.",
+        "Pretending this was well specified.",
+        "Greasing the semantic gears.",
+        "Consulting the council of tensors.",
+        "Turning local heat into advice.",
+        "Running a nonsense differential.",
+        "Putting bad assumptions in timeout.",
+        "Calculating the least embarrassing path.",
+        "Assembling a sentence with standards.",
+        "Loading a reply from the basement.",
+        "Squeezing meaning from static.",
+        "Optimizing for fewer forehead slaps.",
+    )
+
 private data class AttachmentMetadata(
     val displayName: String,
     val byteCount: Long?,
@@ -1879,6 +2021,8 @@ private val modelMimeTypes =
         "*/*",
     )
 
+private const val THINKING_PHRASE_CHARACTER_DELAY_MILLIS = 24L
+private const val THINKING_PHRASE_REST_MILLIS = 1_400L
 private const val MAX_TEXT_ATTACHMENT_READ_CHARS = 64_000
 private const val KIB = 1024L
 private const val MIB = KIB * 1024L

@@ -23,7 +23,8 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Legacy `systemPrompt` migration into Custom Instructions defaults.
 - Quiet top-bar runtime status.
 - Keyboard-aware chat layout and long-output scroll detach behavior.
-- Rotating thinking indicator.
+- Rotating thinking indicator with fast typewriter-style loading phrases.
+- Composer send hides the keyboard and keeps chat history visible above it.
 - Stale streaming-message cleanup on app start.
 - Assistant output filtering for hidden reasoning, fake role labels, and prompt leakage.
 - Per-message speaker playback with play, pause, and resume controls.
