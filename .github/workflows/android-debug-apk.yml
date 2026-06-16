@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - "APK/**"
   workflow_dispatch:
 
 permissions:
@@ -18,7 +16,7 @@ jobs:
     timeout-minutes: 45
     env:
       APK_PATH: app/build/outputs/apk/synapse/Synapse-AI.apk
-      REPO_APK_PATH: APK/Synapse-AI.apk
+      APK_BRANCH: apk-latest
       RELEASE_TAG: synapse-ai-debug-latest
 
     steps:
@@ -83,21 +81,33 @@ jobs:
           test -f "$APK_PATH"
           ls -lh "$APK_PATH"
 
-      - name: Commit latest APK into repository folder
+      - name: Publish single-APK branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$(dirname "$REPO_APK_PATH")"
-          cp "$APK_PATH" "$REPO_APK_PATH"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$REPO_APK_PATH"
-          if git diff --cached --quiet; then
-            echo "APK folder already contains the latest build."
-          else
-            git commit -m "publish latest Synapse AI APK [skip ci]"
-            git push origin HEAD:main
-          fi
+          publish_root="$(mktemp -d)"
+          mkdir -p "$publish_root/APK"
+          cp "$APK_PATH" "$publish_root/APK/Synapse-AI.apk"
+          cat > "$publish_root/APK/README.md" <<'EOF'
+          # Synapse AI APK
+
+          `Synapse-AI.apk` is the latest debug APK built from `main`.
+
+          This branch is force-replaced by GitHub Actions so it exposes one
+          canonical APK without retaining old APK commits on the branch.
+          EOF
+
+          auth_header="$(git config --local --get http.https://github.com/.extraheader)"
+          git -C "$publish_root" init
+          git -C "$publish_root" checkout -b "$APK_BRANCH"
+          git -C "$publish_root" config user.name "github-actions[bot]"
+          git -C "$publish_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$publish_root" add APK/README.md APK/Synapse-AI.apk
+          git -C "$publish_root" commit -m "publish latest Synapse AI APK"
+          git -C "$publish_root" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$publish_root" -c "http.https://github.com/.extraheader=$auth_header" push --force origin "$APK_BRANCH"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
