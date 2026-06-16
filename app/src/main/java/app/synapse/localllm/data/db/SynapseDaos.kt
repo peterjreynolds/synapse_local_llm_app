@@ -65,6 +65,24 @@ interface ChatDao {
     @Query(
         """
         UPDATE chat_messages
+        SET deliveryState = :failedState,
+            completedAtEpochMillis = :completedAtEpochMillis,
+            failureReason = :failureReason
+        WHERE role = :assistantRole
+          AND deliveryState = :streamingState
+        """,
+    )
+    suspend fun failStreamingAssistantMessages(
+        assistantRole: String,
+        streamingState: String,
+        failedState: String,
+        completedAtEpochMillis: Long,
+        failureReason: String,
+    ): Int
+
+    @Query(
+        """
+        UPDATE chat_messages
         SET body = :body,
             deliveryState = :deliveryState,
             completedAtEpochMillis = :completedAtEpochMillis,

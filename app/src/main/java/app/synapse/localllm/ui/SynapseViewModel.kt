@@ -1,5 +1,6 @@
 package app.synapse.localllm.ui
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -9,8 +10,8 @@ import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.MemoryObjectId
-import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
+import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
@@ -135,6 +136,7 @@ class SynapseViewModel(
     }
 
     fun cancelActiveSend() {
+        graph.localInferenceRuntime.cancelActiveGeneration()
         activeSendJob?.cancel()
         mutableUiState.update { state ->
             state.copy(isSending = false, lastNotice = "Generation stopped.")
@@ -203,7 +205,8 @@ class SynapseViewModel(
                 runtimeBackend = draft.runtimeBackend,
                 baseUrl = draft.baseUrl,
                 modelName = draft.modelName,
-                systemPrompt = draft.systemPrompt,
+                persona = draft.persona,
+                customInstructions = draft.customInstructions,
                 temperature = draft.temperature.toDoubleOrNull() ?: 0.7,
                 maxTokens = draft.maxTokens.toIntOrNull() ?: 768,
             )
@@ -259,6 +262,27 @@ class SynapseViewModel(
         }
     }
 
+    fun exportDebugArchive(onArchiveReady: (Uri) -> Unit) {
+        viewModelScope.launch {
+            val snapshot = mutableUiState.value
+            try {
+                val receipt = graph.debugArchiveExporter.exportDebugArchive(
+                    settings = snapshot.settings,
+                    runtimeStatus = snapshot.runtimeStatus,
+                    storageHealthSnapshot = snapshot.storageHealthSnapshot,
+                )
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = "Debug archive ready: ${receipt.displayName}")
+                }
+                onArchiveReady(receipt.uri)
+            } catch (exception: Exception) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Debug archive export failed.")
+                }
+            }
+        }
+    }
+
     private fun observeSettings() {
         viewModelScope.launch {
             graph.settingsStore.settingsFlow.collect { settings ->
@@ -291,6 +315,9 @@ class SynapseViewModel(
 
     private fun bindDefaultThread() {
         viewModelScope.launch {
+            graph.conversationRepository.failStaleStreamingAssistantMessages(
+                reason = "Generation was interrupted before Synapse reopened.",
+            )
             val thread = graph.conversationRepository.ensureDefaultThread()
             bindThread(thread)
         }
@@ -319,7 +346,8 @@ class SynapseViewModel(
             runtimeBackend = runtimeBackend,
             baseUrl = baseUrl,
             modelName = modelName,
-            systemPrompt = systemPrompt,
+            persona = persona,
+            customInstructions = customInstructions,
             temperature = temperature.toString(),
             maxTokens = maxTokens.toString(),
         )

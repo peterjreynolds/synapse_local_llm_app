@@ -87,6 +87,8 @@ interface LocalInferenceRuntime {
     suspend fun startRuntime(settings: SynapseSettings, command: StartLlamaServerCommand): RuntimeStartReceipt
 
     fun streamChatCompletion(request: ChatCompletionRequest): Flow<ChatStreamEvent>
+
+    fun cancelActiveGeneration()
 }
 
 const val DEFAULT_LLAMA_SERVER_SCRIPT =

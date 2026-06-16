@@ -52,6 +52,15 @@ class RoomConversationRepository(
             .asReversed()
             .map { message -> message.toDomain() }
 
+    override suspend fun failStaleStreamingAssistantMessages(reason: String): Int =
+        chatDao.failStreamingAssistantMessages(
+            assistantRole = ConversationRole.ASSISTANT.name,
+            streamingState = MessageDeliveryState.STREAMING.name,
+            failedState = MessageDeliveryState.FAILED.name,
+            completedAtEpochMillis = clock.now().toEpochMilli(),
+            failureReason = reason,
+        )
+
     override suspend fun submitUserMessage(command: SubmitUserMessageCommand): ConversationTurnReceipt {
         val submittedAt = clock.now()
         val userMessageId = idFactory.createChatMessageId()

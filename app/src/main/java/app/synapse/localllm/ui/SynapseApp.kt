@@ -6,12 +6,21 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +42,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -50,6 +60,7 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -71,13 +82,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -97,18 +111,20 @@ import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
+import app.synapse.localllm.domain.runtime.RuntimeStartStatus
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.storage.StorageHealthSnapshot
 import app.synapse.localllm.domain.storage.StorageHealthState
 import java.io.IOException
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 @Composable
 fun SynapseApp(viewModel: SynapseViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    val speak = rememberTextToSpeechSpeaker()
+    val messageSpeechController = rememberMessageSpeechPlaybackController()
     val speechLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { activityResult ->
@@ -169,7 +185,7 @@ fun SynapseApp(viewModel: SynapseViewModel) {
                 audioPermissionLauncher = audioPermissionLauncher,
             )
         },
-        onSpeak = speak,
+        messageSpeechController = messageSpeechController,
         onPanelSelected = viewModel::selectPanel,
         onThreadDrawerOpen = viewModel::openThreadDrawer,
         onThreadDrawerClose = viewModel::closeThreadDrawer,
@@ -186,6 +202,11 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onMemoryWritesChanged = viewModel::updateMemoryWritesEnabled,
         onSpeechPlaybackChanged = viewModel::updateSpeechPlaybackEnabled,
         onInspectStorage = viewModel::inspectStorageHealth,
+        onExportDebugArchive = {
+            viewModel.exportDebugArchive { archiveUri ->
+                shareDebugArchive(context, archiveUri)
+            }
+        },
         onDismissNotice = viewModel::clearNotice,
     )
 }
@@ -199,7 +220,7 @@ private fun SynapseScreen(
     onAttach: () -> Unit,
     onRemoveAttachment: (Int) -> Unit,
     onStartSpeech: () -> Unit,
-    onSpeak: (String) -> Unit,
+    messageSpeechController: MessageSpeechPlaybackController,
     onPanelSelected: (SynapsePanel) -> Unit,
     onThreadDrawerOpen: () -> Unit,
     onThreadDrawerClose: () -> Unit,
@@ -216,6 +237,7 @@ private fun SynapseScreen(
     onMemoryWritesChanged: (Boolean) -> Unit,
     onSpeechPlaybackChanged: (Boolean) -> Unit,
     onInspectStorage: () -> Unit,
+    onExportDebugArchive: () -> Unit,
     onDismissNotice: () -> Unit,
 ) {
     Box(
@@ -257,11 +279,18 @@ private fun SynapseScreen(
                 )
                 when (state.activePanel) {
                     SynapsePanel.CHAT ->
-                        ChatPanel(
-                            modifier = Modifier.imePadding(),
-                            messages = state.messages,
-                            speechPlaybackEnabled = state.settings.speechPlaybackEnabled,
-                            onSpeak = onSpeak,
+                        ChatWorkspace(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .imePadding(),
+                            state = state,
+                            onComposerChanged = onComposerChanged,
+                            onSend = onSend,
+                            onStop = onStop,
+                            onAttach = onAttach,
+                            onRemoveAttachment = onRemoveAttachment,
+                            onStartSpeech = onStartSpeech,
+                            messageSpeechController = messageSpeechController,
                         )
 
                     SynapsePanel.MEMORY ->
@@ -281,21 +310,10 @@ private fun SynapseScreen(
                             onImportEmbeddedModel = onImportEmbeddedModel,
                             onMemoryWritesChanged = onMemoryWritesChanged,
                             onSpeechPlaybackChanged = onSpeechPlaybackChanged,
+                            onExportDebugArchive = onExportDebugArchive,
                         )
                 }
             }
-        }
-        if (state.activePanel == SynapsePanel.CHAT) {
-            ComposerBar(
-                state = state,
-                onComposerChanged = onComposerChanged,
-                onSend = onSend,
-                onStop = onStop,
-                onAttach = onAttach,
-                onRemoveAttachment = onRemoveAttachment,
-                onStartSpeech = onStartSpeech,
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
         }
         if (state.isThreadDrawerOpen) {
             ThreadDrawerOverlay(
@@ -347,14 +365,19 @@ private fun SynapseTopBar(
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = state.runtimeStatus.toRuntimeLabel(),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        val actionableRuntimeLabel = state.runtimeStatus.toActionableRuntimeLabel()
+        if (actionableRuntimeLabel == null) {
+            Spacer(modifier = Modifier.weight(1f))
+        } else {
+            Text(
+                text = actionableRuntimeLabel,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
         IconButton(
             onClick = onRuntimeStart,
             modifier = Modifier.size(40.dp),
@@ -546,45 +569,115 @@ private fun NoticeBanner(
 }
 
 @Composable
+private fun ChatWorkspace(
+    modifier: Modifier = Modifier,
+    state: SynapseUiState,
+    onComposerChanged: (String) -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+    onAttach: () -> Unit,
+    onRemoveAttachment: (Int) -> Unit,
+    onStartSpeech: () -> Unit,
+    messageSpeechController: MessageSpeechPlaybackController,
+) {
+    Column(
+        modifier = modifier,
+    ) {
+        ChatPanel(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            messages = state.messages,
+            speechPlaybackEnabled = state.settings.speechPlaybackEnabled,
+            messageSpeechController = messageSpeechController,
+        )
+        ComposerBar(
+            state = state,
+            onComposerChanged = onComposerChanged,
+            onSend = onSend,
+            onStop = onStop,
+            onAttach = onAttach,
+            onRemoveAttachment = onRemoveAttachment,
+            onStartSpeech = onStartSpeech,
+        )
+    }
+}
+
+@Composable
 private fun ChatPanel(
     modifier: Modifier = Modifier,
     messages: List<ChatMessageRecord>,
     speechPlaybackEnabled: Boolean,
-    onSpeak: (String) -> Unit,
+    messageSpeechController: MessageSpeechPlaybackController,
 ) {
     if (messages.isEmpty()) {
-        EmptyChat()
+        EmptyChat(modifier = modifier)
         return
     }
     val listState = rememberLazyListState()
-    LaunchedEffect(messages.size, messages.lastOrNull()?.body) {
-        listState.animateScrollToItem(messages.lastIndex)
+    val coroutineScope = rememberCoroutineScope()
+    var autoFollowLatest by remember { mutableStateOf(true) }
+    val isAtLatestMessage by remember {
+        derivedStateOf { listState.isAtLatestMessage(messages.lastIndex) }
     }
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        state = listState,
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            top = 18.dp,
-            end = 16.dp,
-            bottom = 112.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(messages, key = { message -> message.id.raw }) { message ->
-            MessageBubble(
-                message = message,
-                speechPlaybackEnabled = speechPlaybackEnabled,
-                onSpeak = onSpeak,
+    val isAssistantTyping = messages.any { message ->
+        message.role == ConversationRole.ASSISTANT &&
+            message.deliveryState == MessageDeliveryState.STREAMING
+    }
+
+    LaunchedEffect(isAtLatestMessage, listState.isScrollInProgress) {
+        if (isAtLatestMessage) {
+            autoFollowLatest = true
+        } else if (listState.isScrollInProgress) {
+            autoFollowLatest = false
+        }
+    }
+    LaunchedEffect(messages.size, messages.lastOrNull()?.body, autoFollowLatest) {
+        if (autoFollowLatest && messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                top = 18.dp,
+                end = 16.dp,
+                bottom = 16.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(messages, key = { message -> message.id.raw }) { message ->
+                MessageBubble(
+                    message = message,
+                    speechPlaybackEnabled = speechPlaybackEnabled,
+                    messageSpeechController = messageSpeechController,
+                )
+            }
+        }
+        if (isAssistantTyping && !isAtLatestMessage && !autoFollowLatest) {
+            DetachedTypingIndicator(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 12.dp),
+                onClick = {
+                    autoFollowLatest = true
+                    coroutineScope.launch {
+                        listState.animateScrollToItem(messages.lastIndex)
+                    }
+                },
             )
         }
     }
 }
 
 @Composable
-private fun EmptyChat() {
+private fun EmptyChat(modifier: Modifier = Modifier) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -606,11 +699,17 @@ private fun EmptyChat() {
     }
 }
 
+private fun LazyListState.isAtLatestMessage(lastMessageIndex: Int): Boolean {
+    if (lastMessageIndex < 0) return true
+    val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return true
+    return lastVisibleIndex >= lastMessageIndex
+}
+
 @Composable
 private fun MessageBubble(
     message: ChatMessageRecord,
     speechPlaybackEnabled: Boolean,
-    onSpeak: (String) -> Unit,
+    messageSpeechController: MessageSpeechPlaybackController,
 ) {
     val isUser = message.role == ConversationRole.USER
     Row(
@@ -629,12 +728,18 @@ private fun MessageBubble(
             modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.92f),
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Text(
-                    text = message.body.ifBlank {
-                        if (message.deliveryState == MessageDeliveryState.STREAMING) "..." else ""
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+                if (
+                    !isUser &&
+                    message.deliveryState == MessageDeliveryState.STREAMING &&
+                    message.body.isBlank()
+                ) {
+                    SynapseThinkingIndicator()
+                } else {
+                    Text(
+                        text = message.body,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
                 if (!isUser) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -650,13 +755,100 @@ private fun MessageBubble(
                             )
                         }
                         if (speechPlaybackEnabled && message.body.isNotBlank()) {
-                            IconButton(onClick = { onSpeak(message.body) }) {
-                                Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = "Speak")
+                            IconButton(
+                                onClick = {
+                                    messageSpeechController.toggleMessagePlayback(
+                                        messageId = message.id.raw,
+                                        text = message.body,
+                                    )
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = when {
+                                        messageSpeechController.isMessagePlaying(message.id.raw) ->
+                                            Icons.Rounded.Pause
+
+                                        messageSpeechController.isMessagePaused(message.id.raw) ->
+                                            Icons.Rounded.PlayArrow
+
+                                        else -> Icons.AutoMirrored.Rounded.VolumeUp
+                                    },
+                                    contentDescription = when {
+                                        messageSpeechController.isMessagePlaying(message.id.raw) ->
+                                            "Pause message"
+
+                                        messageSpeechController.isMessagePaused(message.id.raw) ->
+                                            "Resume message"
+
+                                        else -> "Speak message"
+                                    },
+                                )
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SynapseThinkingIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "synapse-thinking")
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "synapse-thinking-rotation",
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.synapse_guild_mark),
+            contentDescription = null,
+            tint = Color.Unspecified,
+            modifier = Modifier
+                .size(24.dp)
+                .rotate(rotation),
+        )
+        Text(
+            text = "Thinking",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@Composable
+private fun DetachedTypingIndicator(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(22.dp))
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 6.dp,
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SynapseThinkingIndicator()
+            Text(
+                text = "Jump to latest",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
     }
 }
@@ -789,7 +981,10 @@ private fun MemoryPanel(
     onInspectStorage: () -> Unit,
 ) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()
+            .navigationBarsPadding(),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -897,6 +1092,7 @@ private fun SettingsPanel(
     onImportEmbeddedModel: () -> Unit,
     onMemoryWritesChanged: (Boolean) -> Unit,
     onSpeechPlaybackChanged: (Boolean) -> Unit,
+    onExportDebugArchive: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -974,13 +1170,25 @@ private fun SettingsPanel(
         }
         item {
             OutlinedTextField(
-                value = state.settingsDraft.systemPrompt,
+                value = state.settingsDraft.persona,
                 onValueChange = { value ->
-                    onSettingsDraftChanged(state.settingsDraft.copy(systemPrompt = value))
+                    onSettingsDraftChanged(state.settingsDraft.copy(persona = value))
                 },
-                label = { Text("System prompt") },
+                label = { Text("Persona") },
                 modifier = Modifier.fillMaxWidth(),
-                minLines = 5,
+                minLines = 3,
+                maxLines = 5,
+            )
+        }
+        item {
+            OutlinedTextField(
+                value = state.settingsDraft.customInstructions,
+                onValueChange = { value ->
+                    onSettingsDraftChanged(state.settingsDraft.copy(customInstructions = value))
+                },
+                label = { Text("Custom Instructions") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 4,
                 maxLines = 8,
             )
         }
@@ -999,8 +1207,42 @@ private fun SettingsPanel(
             )
         }
         item {
+            DebugArchiveCard(onExportDebugArchive = onExportDebugArchive)
+        }
+        item {
             Button(onClick = onSaveSettings, modifier = Modifier.fillMaxWidth()) {
                 Text("Save")
+            }
+        }
+    }
+}
+
+@Composable
+private fun DebugArchiveCard(onExportDebugArchive: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "Diagnostics",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "Exports private chats, memory, prompts, settings, and runtime metadata. " +
+                    "The GGUF model file is not included.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(
+                onClick = onExportDebugArchive,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Text("Export Debug ZIP")
             }
         }
     }
@@ -1104,33 +1346,144 @@ private fun SettingsSwitchRow(
 }
 
 @Composable
-private fun rememberTextToSpeechSpeaker(): (String) -> Unit {
+private fun rememberMessageSpeechPlaybackController(): MessageSpeechPlaybackController {
     val context = LocalContext.current
-    var engine by remember { mutableStateOf<TextToSpeech?>(null) }
-    var isReady by remember { mutableStateOf(false) }
+    val controller = remember { MessageSpeechPlaybackController() }
 
     DisposableEffect(context) {
         val createdEngine = TextToSpeech(context) { status ->
-            isReady = status == TextToSpeech.SUCCESS
+            controller.updateEngineReadiness(status == TextToSpeech.SUCCESS)
         }
         createdEngine.language = Locale.getDefault()
-        engine = createdEngine
+        controller.attachEngine(createdEngine)
         onDispose {
-            createdEngine.stop()
-            createdEngine.shutdown()
-            engine = null
+            controller.dispose()
         }
     }
 
-    return { text ->
-        if (isReady && text.isNotBlank()) {
-            engine?.speak(
-                text,
-                TextToSpeech.QUEUE_FLUSH,
-                null,
-                "synapse-${text.hashCode()}",
-            )
+    return controller
+}
+
+private class MessageSpeechPlaybackController {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var engine: TextToSpeech? = null
+    private var ready = false
+    private var activeMessageText = ""
+    private var resumeCharIndex = 0
+    private var utteranceBaseCharIndex = 0
+    private var activeUtteranceId = ""
+
+    var playingMessageId by mutableStateOf<String?>(null)
+        private set
+    var pausedMessageId by mutableStateOf<String?>(null)
+        private set
+
+    fun attachEngine(createdEngine: TextToSpeech) {
+        engine = createdEngine
+        createdEngine.setOnUtteranceProgressListener(
+            object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
+
+                override fun onDone(utteranceId: String?) {
+                    if (utteranceId == activeUtteranceId) {
+                        mainHandler.post {
+                            playingMessageId = null
+                            pausedMessageId = null
+                            resumeCharIndex = 0
+                        }
+                    }
+                }
+
+                @Suppress("OVERRIDE_DEPRECATION")
+                override fun onError(utteranceId: String?) {
+                    if (utteranceId == activeUtteranceId) {
+                        mainHandler.post {
+                            playingMessageId = null
+                            pausedMessageId = null
+                        }
+                    }
+                }
+
+                override fun onRangeStart(
+                    utteranceId: String?,
+                    start: Int,
+                    end: Int,
+                    frame: Int,
+                ) {
+                    if (utteranceId == activeUtteranceId) {
+                        resumeCharIndex = (utteranceBaseCharIndex + end)
+                            .coerceAtMost(activeMessageText.length)
+                    }
+                }
+            },
+        )
+    }
+
+    fun updateEngineReadiness(isReady: Boolean) {
+        ready = isReady
+    }
+
+    fun toggleMessagePlayback(messageId: String, text: String) {
+        when {
+            playingMessageId == messageId -> pauseActiveMessage()
+            pausedMessageId == messageId -> resumePausedMessage()
+            else -> startMessage(messageId, text)
         }
+    }
+
+    fun isMessagePlaying(messageId: String): Boolean = playingMessageId == messageId
+
+    fun isMessagePaused(messageId: String): Boolean = pausedMessageId == messageId
+
+    fun dispose() {
+        engine?.stop()
+        engine?.shutdown()
+        engine = null
+        ready = false
+        playingMessageId = null
+        pausedMessageId = null
+    }
+
+    private fun startMessage(messageId: String, text: String) {
+        if (!ready || text.isBlank()) return
+        activeMessageText = text
+        resumeCharIndex = 0
+        pausedMessageId = null
+        speakMessageFrom(messageId, 0)
+    }
+
+    private fun pauseActiveMessage() {
+        val messageId = playingMessageId ?: return
+        engine?.stop()
+        playingMessageId = null
+        pausedMessageId = messageId
+    }
+
+    private fun resumePausedMessage() {
+        val messageId = pausedMessageId ?: return
+        val resumeIndex = resumeCharIndex.coerceIn(0, activeMessageText.length)
+        pausedMessageId = null
+        speakMessageFrom(messageId, resumeIndex)
+    }
+
+    private fun speakMessageFrom(messageId: String, startIndex: Int) {
+        val textToSpeak = activeMessageText.drop(startIndex).trimStart()
+        if (textToSpeak.isBlank()) {
+            playingMessageId = null
+            pausedMessageId = null
+            resumeCharIndex = 0
+            return
+        }
+        resumeCharIndex = startIndex
+        utteranceBaseCharIndex = startIndex
+        activeUtteranceId = "synapse-message-$messageId-${System.nanoTime()}"
+        playingMessageId = messageId
+        engine?.speak(
+            textToSpeak,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            activeUtteranceId,
+        )
     }
 }
 
@@ -1155,6 +1508,15 @@ private fun createSpeechRecognitionIntent(): Intent =
         )
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
     }
+
+private fun shareDebugArchive(context: Context, archiveUri: Uri) {
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/zip"
+        putExtra(Intent.EXTRA_STREAM, archiveUri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(sendIntent, "Share Synapse debug archive"))
+}
 
 private fun buildPendingAttachment(context: Context, uri: Uri): PendingAttachment? {
     val resolver = context.contentResolver
@@ -1231,12 +1593,24 @@ private fun inferAttachmentKind(mimeType: String?, displayName: String): Attachm
         else -> AttachmentKind.FILE
     }
 
-private fun RuntimeStatus.toRuntimeLabel(): String =
+private fun RuntimeStatus.toActionableRuntimeLabel(): String? =
     when (this) {
-        is RuntimeStatus.Ready -> "Ready"
-        is RuntimeStatus.Starting -> "Starting"
-        RuntimeStatus.Unknown -> "Unknown"
-        is RuntimeStatus.Unreachable -> "Offline"
+        is RuntimeStatus.Ready -> null
+        is RuntimeStatus.Starting ->
+            when (receipt.status) {
+                RuntimeStartStatus.EMBEDDED_MODEL_MISSING,
+                RuntimeStartStatus.TERMUX_UNAVAILABLE,
+                RuntimeStartStatus.TERMUX_PERMISSION_MISSING,
+                RuntimeStartStatus.FAILED,
+                -> receipt.message
+
+                RuntimeStartStatus.SENT_TO_TERMUX,
+                RuntimeStartStatus.EMBEDDED_MODEL_READY,
+                -> null
+            }
+
+        RuntimeStatus.Unknown -> null
+        is RuntimeStatus.Unreachable -> reason
     }
 
 private fun MemoryKind.toDisplayLabel(): String =

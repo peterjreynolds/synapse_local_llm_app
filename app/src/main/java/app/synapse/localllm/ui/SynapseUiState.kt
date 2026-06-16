@@ -19,7 +19,8 @@ data class RuntimeSettingsDraft(
     val runtimeBackend: InferenceRuntimeBackend = InferenceRuntimeBackend.EMBEDDED_LLAMA,
     val baseUrl: String = "http://127.0.0.1:8080",
     val modelName: String = "local-llama",
-    val systemPrompt: String = "",
+    val persona: String = "",
+    val customInstructions: String = "",
     val temperature: String = "0.7",
     val maxTokens: String = "768",
 )
@@ -27,7 +28,8 @@ data class RuntimeSettingsDraft(
 data class SynapseUiState(
     val settings: SynapseSettings = SynapseSettings(),
     val settingsDraft: RuntimeSettingsDraft = RuntimeSettingsDraft(
-        systemPrompt = SynapseSettings().systemPrompt,
+        persona = SynapseSettings().persona,
+        customInstructions = SynapseSettings().customInstructions,
     ),
     val runtimeStatus: RuntimeStatus = RuntimeStatus.Unknown,
     val currentThread: ChatThreadRecord? = null,

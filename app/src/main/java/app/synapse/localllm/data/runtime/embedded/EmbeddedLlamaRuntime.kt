@@ -136,18 +136,19 @@ class EmbeddedLlamaRuntime(
         request.messages
             .firstOrNull { message -> message.role == ConversationRole.SYSTEM }
             ?.content
+            ?.let { systemPrompt -> "<|im_start|>system\n$systemPrompt<|im_end|>\n" }
             .orEmpty()
 
     private fun buildEmbeddedPrompt(request: ChatCompletionRequest): String =
         request.messages
             .filterNot { message -> message.role == ConversationRole.SYSTEM }
-            .joinToString(separator = "\n\n") { message ->
+            .joinToString(separator = "") { message ->
                 when (message.role) {
-                    ConversationRole.USER -> "User:\n${message.content}"
-                    ConversationRole.ASSISTANT -> "Assistant:\n${message.content}"
+                    ConversationRole.USER -> "<|im_start|>user\n${message.content}<|im_end|>\n"
+                    ConversationRole.ASSISTANT -> "<|im_start|>assistant\n${message.content}<|im_end|>\n"
                     ConversationRole.SYSTEM -> message.content
                 }
-            } + "\n\nAssistant:\n"
+            } + "<|im_start|>assistant\n"
 
     private companion object {
         const val EMBEDDED_BASE_URL = "embedded://llama.cpp"

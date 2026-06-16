@@ -87,6 +87,8 @@ interface ConversationRepository {
 
     suspend fun listRecentMessages(threadId: ChatThreadId, limit: Int): List<ChatMessageRecord>
 
+    suspend fun failStaleStreamingAssistantMessages(reason: String): Int
+
     suspend fun submitUserMessage(command: SubmitUserMessageCommand): ConversationTurnReceipt
 
     suspend fun appendAssistantToken(messageId: ChatMessageId, token: String)

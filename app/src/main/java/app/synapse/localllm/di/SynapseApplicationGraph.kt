@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.data.chat.RoomConversationRepository
+import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.memory.DeterministicMemoryProjector
 import app.synapse.localllm.data.memory.EvidenceBackedMemoryAdmissionGate
@@ -43,6 +44,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
 
     val settingsStore = SynapseSettingsStore(applicationContext)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
+    val debugArchiveExporter = AndroidDebugArchiveExporter(applicationContext, clock)
 
     val conversationRepository: ConversationRepository =
         RoomConversationRepository(

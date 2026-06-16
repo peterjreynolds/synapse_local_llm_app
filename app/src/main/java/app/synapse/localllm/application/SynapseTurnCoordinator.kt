@@ -72,13 +72,22 @@ class SynapseTurnCoordinator(
 
         val failureReason = try {
             var streamFailureReason: String? = null
+            val visibleTextFilter = AssistantVisibleTextFilter()
             localInferenceRuntime.streamChatCompletion(completionRequest).collect { streamEvent ->
                 when (streamEvent) {
-                    is ChatStreamEvent.Token ->
-                        conversationRepository.appendAssistantToken(
-                            messageId = turnReceipt.assistantMessageId,
-                            token = streamEvent.text,
-                        )
+                    is ChatStreamEvent.Token -> {
+                        val filteredToken = visibleTextFilter.appendToken(streamEvent.text)
+                        if (filteredToken.visibleDelta.isNotBlank()) {
+                            conversationRepository.appendAssistantToken(
+                                messageId = turnReceipt.assistantMessageId,
+                                token = filteredToken.visibleDelta,
+                            )
+                        }
+                        if (filteredToken.shouldStopGeneration) {
+                            localInferenceRuntime.cancelActiveGeneration()
+                            throw AssistantOutputCompletedEarly()
+                        }
+                    }
 
                     is ChatStreamEvent.Completed ->
                         conversationRepository.completeAssistantMessage(turnReceipt.assistantMessageId)
@@ -93,6 +102,9 @@ class SynapseTurnCoordinator(
                 }
             }
             streamFailureReason
+        } catch (_: AssistantOutputCompletedEarly) {
+            conversationRepository.completeAssistantMessage(turnReceipt.assistantMessageId)
+            null
         } catch (exception: CancellationException) {
             conversationRepository.failAssistantMessage(
                 messageId = turnReceipt.assistantMessageId,
@@ -201,6 +213,8 @@ class SynapseTurnCoordinator(
         const val MAX_TEXT_ATTACHMENT_PROMPT_CHARS = 12_000
     }
 }
+
+private class AssistantOutputCompletedEarly : RuntimeException()
 
 sealed interface SynapseTurnOutcome {
     data class Completed(

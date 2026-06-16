@@ -36,4 +36,8 @@ class PhoneLocalInferenceRuntime(
             InferenceRuntimeBackend.EMBEDDED_LLAMA -> embeddedLlamaRuntime.streamChatCompletion(request)
             InferenceRuntimeBackend.LLAMA_SERVER -> llamaServerGateway.streamChatCompletion(request)
         }
+
+    override fun cancelActiveGeneration() {
+        embeddedLlamaRuntime.cancelGeneration()
+    }
 }

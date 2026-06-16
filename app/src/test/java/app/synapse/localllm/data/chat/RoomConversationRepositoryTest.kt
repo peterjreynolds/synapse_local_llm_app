@@ -83,6 +83,30 @@ class RoomConversationRepositoryTest {
         assertEquals("Second message", recentMessages[2].body)
     }
 
+    @Test
+    fun failStaleStreamingAssistantMessagesMarksInterruptedAssistantMessagesFailed() = runTest {
+        val thread = repository.ensureDefaultThread()
+        repository.submitUserMessage(
+            SubmitUserMessageCommand(
+                threadId = thread.id,
+                body = "Write a long answer",
+                attachments = emptyList(),
+            ),
+        )
+
+        val failedCount = repository.failStaleStreamingAssistantMessages(
+            reason = "Generation was interrupted before Synapse reopened.",
+        )
+        val recentMessages = repository.listRecentMessages(thread.id, limit = 10)
+
+        assertEquals(1, failedCount)
+        assertEquals(MessageDeliveryState.FAILED, recentMessages[1].deliveryState)
+        assertEquals(
+            "Generation was interrupted before Synapse reopened.",
+            recentMessages[1].failureReason,
+        )
+    }
+
     private class IncrementingSynapseClock : SynapseClock {
         private var tickMillis = 0L
 
