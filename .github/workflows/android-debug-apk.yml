@@ -13,6 +13,7 @@ jobs:
   build-debug-apk:
     name: Build debug APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       APK_PATH: app/build/outputs/apk/synapse/Synapse-AI.apk
       RELEASE_TAG: synapse-ai-debug-latest
@@ -57,9 +58,21 @@ jobs:
             echo "SYNAPSE_DEBUG_KEYSTORE_B64 is not set. Android may require uninstall/reinstall between APKs."
           fi
 
-      - name: Validate and build
+      - name: Run unit tests
         shell: bash
-        run: ./gradlew testDebugUnitTest ktlintCheck lintDebug assembleDebug
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Run ktlint
+        shell: bash
+        run: ./gradlew ktlintCheck --stacktrace
+
+      - name: Run Android lint
+        shell: bash
+        run: ./gradlew lintDebug --stacktrace
+
+      - name: Assemble debug APK
+        shell: bash
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Verify APK output
         shell: bash
