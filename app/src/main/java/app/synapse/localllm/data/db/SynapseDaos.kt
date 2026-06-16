@@ -8,13 +8,32 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChatDao {
-    @Query("SELECT * FROM chat_threads ORDER BY updatedAtEpochMillis DESC LIMIT 1")
+    @Query(
+        """
+        SELECT * FROM chat_threads
+        WHERE archivedAtEpochMillis IS NULL
+        ORDER BY
+            CASE WHEN pinnedAtEpochMillis IS NULL THEN 1 ELSE 0 END ASC,
+            pinnedAtEpochMillis DESC,
+            updatedAtEpochMillis DESC
+        LIMIT 1
+        """,
+    )
     suspend fun findLatestThread(): ChatThreadEntity?
 
     @Query("SELECT * FROM chat_threads WHERE id = :threadId LIMIT 1")
     suspend fun findThread(threadId: String): ChatThreadEntity?
 
-    @Query("SELECT * FROM chat_threads ORDER BY updatedAtEpochMillis DESC")
+    @Query(
+        """
+        SELECT * FROM chat_threads
+        WHERE archivedAtEpochMillis IS NULL
+        ORDER BY
+            CASE WHEN pinnedAtEpochMillis IS NULL THEN 1 ELSE 0 END ASC,
+            pinnedAtEpochMillis DESC,
+            updatedAtEpochMillis DESC
+        """,
+    )
     fun observeThreads(): Flow<List<ChatThreadEntity>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -23,9 +42,13 @@ interface ChatDao {
     @Query(
         """
         UPDATE chat_threads
-        SET title = :title,
+        SET title = CASE
+                WHEN titleEditedByUser THEN title
+                ELSE :title
+            END,
             updatedAtEpochMillis = :updatedAtEpochMillis
         WHERE id = :threadId
+          AND archivedAtEpochMillis IS NULL
         """,
     )
     suspend fun updateThreadSummary(
@@ -33,6 +56,50 @@ interface ChatDao {
         title: String,
         updatedAtEpochMillis: Long,
     )
+
+    @Query(
+        """
+        UPDATE chat_threads
+        SET pinnedAtEpochMillis = :pinnedAtEpochMillis
+        WHERE id = :threadId
+          AND archivedAtEpochMillis IS NULL
+        """,
+    )
+    suspend fun updateThreadPin(
+        threadId: String,
+        pinnedAtEpochMillis: Long?,
+    ): Int
+
+    @Query(
+        """
+        UPDATE chat_threads
+        SET title = :title,
+            titleEditedByUser = 1
+        WHERE id = :threadId
+          AND archivedAtEpochMillis IS NULL
+        """,
+    )
+    suspend fun renameThread(
+        threadId: String,
+        title: String,
+    ): Int
+
+    @Query(
+        """
+        UPDATE chat_threads
+        SET archivedAtEpochMillis = :archivedAtEpochMillis,
+            pinnedAtEpochMillis = NULL
+        WHERE id = :threadId
+          AND archivedAtEpochMillis IS NULL
+        """,
+    )
+    suspend fun archiveThread(
+        threadId: String,
+        archivedAtEpochMillis: Long,
+    ): Int
+
+    @Query("DELETE FROM chat_threads WHERE id = :threadId")
+    suspend fun deleteThread(threadId: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMessage(message: ChatMessageEntity)

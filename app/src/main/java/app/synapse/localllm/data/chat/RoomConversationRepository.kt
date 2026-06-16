@@ -7,6 +7,8 @@ import app.synapse.localllm.data.db.ChatMessageEntity
 import app.synapse.localllm.data.db.ChatThreadEntity
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.domain.chat.ChatMessageRecord
+import app.synapse.localllm.domain.chat.ChatThreadMutation
+import app.synapse.localllm.domain.chat.ChatThreadMutationReceipt
 import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.ConversationRepository
 import app.synapse.localllm.domain.chat.ConversationRole
@@ -52,6 +54,65 @@ class RoomConversationRepository(
             .asReversed()
             .map { message -> message.toDomain() }
 
+    override suspend fun setThreadPinned(
+        threadId: ChatThreadId,
+        pinned: Boolean,
+    ): ChatThreadMutationReceipt {
+        val changedAt = clock.now()
+        val affectedRows = chatDao.updateThreadPin(
+            threadId = threadId.raw,
+            pinnedAtEpochMillis = if (pinned) changedAt.toEpochMilli() else null,
+        )
+        return ChatThreadMutationReceipt(
+            threadId = threadId,
+            mutation = if (pinned) ChatThreadMutation.PINNED else ChatThreadMutation.UNPINNED,
+            changedAt = changedAt,
+            affectedRows = affectedRows,
+        )
+    }
+
+    override suspend fun renameThread(
+        threadId: ChatThreadId,
+        title: String,
+    ): ChatThreadMutationReceipt {
+        val changedAt = clock.now()
+        val affectedRows = chatDao.renameThread(
+            threadId = threadId.raw,
+            title = normalizeManualThreadTitle(title),
+        )
+        return ChatThreadMutationReceipt(
+            threadId = threadId,
+            mutation = ChatThreadMutation.RENAMED,
+            changedAt = changedAt,
+            affectedRows = affectedRows,
+        )
+    }
+
+    override suspend fun archiveThread(threadId: ChatThreadId): ChatThreadMutationReceipt {
+        val changedAt = clock.now()
+        val affectedRows = chatDao.archiveThread(
+            threadId = threadId.raw,
+            archivedAtEpochMillis = changedAt.toEpochMilli(),
+        )
+        return ChatThreadMutationReceipt(
+            threadId = threadId,
+            mutation = ChatThreadMutation.ARCHIVED,
+            changedAt = changedAt,
+            affectedRows = affectedRows,
+        )
+    }
+
+    override suspend fun deleteThread(threadId: ChatThreadId): ChatThreadMutationReceipt {
+        val changedAt = clock.now()
+        val affectedRows = chatDao.deleteThread(threadId.raw)
+        return ChatThreadMutationReceipt(
+            threadId = threadId,
+            mutation = ChatThreadMutation.DELETED,
+            changedAt = changedAt,
+            affectedRows = affectedRows,
+        )
+    }
+
     override suspend fun failStaleStreamingAssistantMessages(reason: String): Int =
         chatDao.failStreamingAssistantMessages(
             assistantRole = ConversationRole.ASSISTANT.name,
@@ -73,6 +134,9 @@ class RoomConversationRepository(
                 ChatThreadEntity(
                     id = command.threadId.raw,
                     title = buildThreadTitle(command.body),
+                    pinnedAtEpochMillis = currentThread?.pinnedAtEpochMillis,
+                    archivedAtEpochMillis = currentThread?.archivedAtEpochMillis,
+                    titleEditedByUser = currentThread?.titleEditedByUser ?: false,
                     createdAtEpochMillis = currentThread?.createdAtEpochMillis ?: submittedAtEpochMillis,
                     updatedAtEpochMillis = submittedAtEpochMillis,
                 ),
@@ -173,6 +237,9 @@ class RoomConversationRepository(
         val thread = ChatThreadEntity(
             id = idFactory.createChatThreadId().raw,
             title = title,
+            pinnedAtEpochMillis = null,
+            archivedAtEpochMillis = null,
+            titleEditedByUser = false,
             createdAtEpochMillis = now.toEpochMilli(),
             updatedAtEpochMillis = now.toEpochMilli(),
         )
@@ -189,10 +256,20 @@ class RoomConversationRepository(
         }
     }
 
+    private fun normalizeManualThreadTitle(title: String): String {
+        val trimmedTitle = title.trim()
+        require(trimmedTitle.isNotBlank()) { "Chat title cannot be blank." }
+        return when {
+            trimmedTitle.length <= MANUAL_TITLE_LIMIT -> trimmedTitle
+            else -> trimmedTitle.take(MANUAL_TITLE_LIMIT).trimEnd() + "..."
+        }
+    }
+
     private fun ChatThreadEntity.toDomain(): ChatThreadRecord =
         ChatThreadRecord(
             id = ChatThreadId(id),
             title = title,
+            isPinned = pinnedAtEpochMillis != null,
             createdAt = Instant.ofEpochMilli(createdAtEpochMillis),
             updatedAt = Instant.ofEpochMilli(updatedAtEpochMillis),
         )
@@ -211,5 +288,6 @@ class RoomConversationRepository(
 
     private companion object {
         const val TITLE_LIMIT = 42
+        const val MANUAL_TITLE_LIMIT = 72
     }
 }

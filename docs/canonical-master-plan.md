@@ -12,6 +12,8 @@ speech input, per-message playback, and no visible prompt scaffolding.
 ## Implemented
 
 - Android-native chat shell with recent chats.
+- Recent-chat management: pin to top, rename, archive, and delete from the
+  long-press chat list menu.
 - Embedded ARM64 `llama.cpp` runtime with Termux server fallback.
 - Named debug APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
 - App-local Room/SQLite chat and evidence-backed memory.

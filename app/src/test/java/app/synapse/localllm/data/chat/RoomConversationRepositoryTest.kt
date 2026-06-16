@@ -10,6 +10,7 @@ import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -105,6 +106,60 @@ class RoomConversationRepositoryTest {
             "Generation was interrupted before Synapse reopened.",
             recentMessages[1].failureReason,
         )
+    }
+
+    @Test
+    fun observeThreadsOrdersPinnedThreadsBeforeRecentThreads() = runTest {
+        val olderThread = repository.createThread()
+        val newerThread = repository.createThread()
+
+        repository.setThreadPinned(olderThread.id, pinned = true)
+
+        val pinnedThreads = repository.observeThreads().first()
+        assertEquals(
+            listOf(olderThread.id, newerThread.id),
+            pinnedThreads.map { thread -> thread.id },
+        )
+        assertEquals(true, pinnedThreads.first().isPinned)
+
+        repository.setThreadPinned(olderThread.id, pinned = false)
+
+        val unpinnedThreads = repository.observeThreads().first()
+        assertEquals(
+            listOf(newerThread.id, olderThread.id),
+            unpinnedThreads.map { thread -> thread.id },
+        )
+        assertEquals(false, unpinnedThreads.last().isPinned)
+    }
+
+    @Test
+    fun renameThreadPreservesManualTitleAfterNewMessages() = runTest {
+        val thread = repository.createThread()
+
+        repository.renameThread(thread.id, "Pinned project brain")
+        repository.submitUserMessage(
+            SubmitUserMessageCommand(
+                threadId = thread.id,
+                body = "This message should not replace the manual title",
+                attachments = emptyList(),
+            ),
+        )
+
+        val threads = repository.observeThreads().first()
+        assertEquals("Pinned project brain", threads.first { it.id == thread.id }.title)
+    }
+
+    @Test
+    fun archiveAndDeleteRemoveThreadsFromRecentList() = runTest {
+        val archivedThread = repository.createThread()
+        val deletedThread = repository.createThread()
+        val visibleThread = repository.createThread()
+
+        repository.archiveThread(archivedThread.id)
+        repository.deleteThread(deletedThread.id)
+
+        val visibleThreads = repository.observeThreads().first()
+        assertEquals(listOf(visibleThread.id), visibleThreads.map { thread -> thread.id })
     }
 
     private class IncrementingSynapseClock : SynapseClock {

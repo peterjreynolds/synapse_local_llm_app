@@ -5,6 +5,7 @@ import androidx.room.Room
 import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.memory.DeterministicMemoryProjector
 import app.synapse.localllm.data.memory.EvidenceBackedMemoryAdmissionGate
@@ -40,7 +41,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         applicationContext,
         SynapseDatabase::class.java,
         DATABASE_NAME,
-    ).build()
+    ).addMigrations(SYNAPSE_DATABASE_MIGRATION_1_2).build()
 
     val settingsStore = SynapseSettingsStore(applicationContext)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)

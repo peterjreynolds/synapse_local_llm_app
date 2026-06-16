@@ -9,6 +9,7 @@ import app.synapse.localllm.di.SynapseApplicationGraph
 import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
+import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.ids.MemoryObjectId
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.RuntimeStatus
@@ -83,6 +84,84 @@ class SynapseViewModel(
 
     fun selectThread(thread: ChatThreadRecord) {
         bindThread(thread)
+    }
+
+    fun setThreadPinned(thread: ChatThreadRecord, pinned: Boolean) {
+        viewModelScope.launch {
+            val receipt = graph.conversationRepository.setThreadPinned(thread.id, pinned)
+            mutableUiState.update { state ->
+                state.copy(
+                    lastNotice = if (receipt.affectedRows > 0) {
+                        if (pinned) "Pinned chat." else "Unpinned chat."
+                    } else {
+                        "Chat was not updated."
+                    },
+                )
+            }
+        }
+    }
+
+    fun renameThread(thread: ChatThreadRecord, title: String) {
+        viewModelScope.launch {
+            try {
+                val receipt = graph.conversationRepository.renameThread(thread.id, title)
+                mutableUiState.update { state ->
+                    state.copy(
+                        lastNotice = if (receipt.affectedRows > 0) {
+                            "Renamed chat."
+                        } else {
+                            "Chat was not renamed."
+                        },
+                    )
+                }
+            } catch (exception: IllegalArgumentException) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Chat title is not valid.")
+                }
+            }
+        }
+    }
+
+    fun archiveThread(thread: ChatThreadRecord) {
+        viewModelScope.launch {
+            val wasCurrentThread = thread.id == mutableUiState.value.currentThread?.id
+            cancelGenerationIfActiveThread(thread.id)
+            val receipt = graph.conversationRepository.archiveThread(thread.id)
+            if (wasCurrentThread) {
+                bindThread(graph.conversationRepository.ensureDefaultThread())
+            }
+            mutableUiState.update { state ->
+                state.copy(
+                    isSending = if (wasCurrentThread) false else state.isSending,
+                    lastNotice = if (receipt.affectedRows > 0) {
+                        "Archived chat."
+                    } else {
+                        "Chat was not archived."
+                    },
+                )
+            }
+        }
+    }
+
+    fun deleteThread(thread: ChatThreadRecord) {
+        viewModelScope.launch {
+            val wasCurrentThread = thread.id == mutableUiState.value.currentThread?.id
+            cancelGenerationIfActiveThread(thread.id)
+            val receipt = graph.conversationRepository.deleteThread(thread.id)
+            if (wasCurrentThread) {
+                bindThread(graph.conversationRepository.ensureDefaultThread())
+            }
+            mutableUiState.update { state ->
+                state.copy(
+                    isSending = if (wasCurrentThread) false else state.isSending,
+                    lastNotice = if (receipt.affectedRows > 0) {
+                        "Deleted chat."
+                    } else {
+                        "Chat was not deleted."
+                    },
+                )
+            }
+        }
     }
 
     fun clearNotice() {
@@ -339,6 +418,12 @@ class SynapseViewModel(
                 mutableUiState.update { state -> state.copy(messages = messages) }
             }
         }
+    }
+
+    private fun cancelGenerationIfActiveThread(threadId: ChatThreadId) {
+        if (mutableUiState.value.currentThread?.id != threadId) return
+        graph.localInferenceRuntime.cancelActiveGeneration()
+        activeSendJob?.cancel()
     }
 
     private fun SynapseSettings.toDraft(): RuntimeSettingsDraft =

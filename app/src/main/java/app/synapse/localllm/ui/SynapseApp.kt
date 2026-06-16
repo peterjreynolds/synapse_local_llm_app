@@ -21,8 +21,9 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,8 +54,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Memory
@@ -62,9 +65,11 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -94,6 +99,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -191,6 +198,10 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onThreadDrawerClose = viewModel::closeThreadDrawer,
         onCreateThread = viewModel::createNewThread,
         onThreadSelected = viewModel::selectThread,
+        onThreadPinnedChanged = viewModel::setThreadPinned,
+        onThreadRenamed = viewModel::renameThread,
+        onThreadArchived = viewModel::archiveThread,
+        onThreadDeleted = viewModel::deleteThread,
         onRuntimeCheck = viewModel::checkRuntimeStatus,
         onRuntimeStart = viewModel::startRuntime,
         onImportEmbeddedModel = { modelImportLauncher.launch(modelMimeTypes) },
@@ -226,6 +237,10 @@ private fun SynapseScreen(
     onThreadDrawerClose: () -> Unit,
     onCreateThread: () -> Unit,
     onThreadSelected: (ChatThreadRecord) -> Unit,
+    onThreadPinnedChanged: (ChatThreadRecord, Boolean) -> Unit,
+    onThreadRenamed: (ChatThreadRecord, String) -> Unit,
+    onThreadArchived: (ChatThreadRecord) -> Unit,
+    onThreadDeleted: (ChatThreadRecord) -> Unit,
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
     onImportEmbeddedModel: () -> Unit,
@@ -321,6 +336,10 @@ private fun SynapseScreen(
                 onClose = onThreadDrawerClose,
                 onCreateThread = onCreateThread,
                 onThreadSelected = onThreadSelected,
+                onThreadPinnedChanged = onThreadPinnedChanged,
+                onThreadRenamed = onThreadRenamed,
+                onThreadArchived = onThreadArchived,
+                onThreadDeleted = onThreadDeleted,
             )
         }
     }
@@ -427,7 +446,15 @@ private fun ThreadDrawerOverlay(
     onClose: () -> Unit,
     onCreateThread: () -> Unit,
     onThreadSelected: (ChatThreadRecord) -> Unit,
+    onThreadPinnedChanged: (ChatThreadRecord, Boolean) -> Unit,
+    onThreadRenamed: (ChatThreadRecord, String) -> Unit,
+    onThreadArchived: (ChatThreadRecord) -> Unit,
+    onThreadDeleted: (ChatThreadRecord) -> Unit,
 ) {
+    var actionThread by remember { mutableStateOf<ChatThreadRecord?>(null) }
+    var renameThread by remember { mutableStateOf<ChatThreadRecord?>(null) }
+    var deleteThread by remember { mutableStateOf<ChatThreadRecord?>(null) }
+
     Box(
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -493,11 +520,59 @@ private fun ThreadDrawerOverlay(
                             thread = thread,
                             selected = thread.id == state.currentThread?.id,
                             onThreadSelected = onThreadSelected,
+                            onThreadActionsRequested = { selectedThread ->
+                                actionThread = selectedThread
+                            },
                         )
                     }
                 }
             }
         }
+    }
+
+    actionThread?.let { thread ->
+        ThreadActionsDialog(
+            thread = thread,
+            onDismiss = { actionThread = null },
+            onPinnedChanged = { pinned ->
+                actionThread = null
+                onThreadPinnedChanged(thread, pinned)
+            },
+            onRenameRequested = {
+                actionThread = null
+                renameThread = thread
+            },
+            onArchiveRequested = {
+                actionThread = null
+                onThreadArchived(thread)
+            },
+            onDeleteRequested = {
+                actionThread = null
+                deleteThread = thread
+            },
+        )
+    }
+
+    renameThread?.let { thread ->
+        RenameThreadDialog(
+            thread = thread,
+            onDismiss = { renameThread = null },
+            onRenamed = { title ->
+                renameThread = null
+                onThreadRenamed(thread, title)
+            },
+        )
+    }
+
+    deleteThread?.let { thread ->
+        DeleteThreadDialog(
+            thread = thread,
+            onDismiss = { deleteThread = null },
+            onDeleted = {
+                deleteThread = null
+                onThreadDeleted(thread)
+            },
+        )
     }
 }
 
@@ -506,12 +581,18 @@ private fun ThreadDrawerRow(
     thread: ChatThreadRecord,
     selected: Boolean,
     onThreadSelected: (ChatThreadRecord) -> Unit,
+    onThreadActionsRequested: (ChatThreadRecord) -> Unit,
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
-            .clickable { onThreadSelected(thread) },
+            .height(50.dp)
+            .pointerInput(thread.id.raw) {
+                detectTapGestures(
+                    onTap = { onThreadSelected(thread) },
+                    onLongPress = { onThreadActionsRequested(thread) },
+                )
+            },
         color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
         shape = RoundedCornerShape(8.dp),
     ) {
@@ -519,6 +600,15 @@ private fun ThreadDrawerRow(
             modifier = Modifier.padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (thread.isPinned) {
+                Icon(
+                    Icons.Rounded.PushPin,
+                    contentDescription = "Pinned chat",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
             Text(
                 text = thread.title,
                 modifier = Modifier.weight(1f),
@@ -529,6 +619,144 @@ private fun ThreadDrawerRow(
             )
         }
     }
+}
+
+@Composable
+private fun ThreadActionsDialog(
+    thread: ChatThreadRecord,
+    onDismiss: () -> Unit,
+    onPinnedChanged: (Boolean) -> Unit,
+    onRenameRequested: () -> Unit,
+    onArchiveRequested: () -> Unit,
+    onDeleteRequested: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = thread.title,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                ThreadActionDialogButton(
+                    icon = Icons.Rounded.PushPin,
+                    label = if (thread.isPinned) "Unpin chat" else "Pin chat",
+                    onClick = { onPinnedChanged(!thread.isPinned) },
+                )
+                ThreadActionDialogButton(
+                    icon = Icons.Rounded.Edit,
+                    label = "Rename chat",
+                    onClick = onRenameRequested,
+                )
+                ThreadActionDialogButton(
+                    icon = Icons.Rounded.Archive,
+                    label = "Archive chat",
+                    onClick = onArchiveRequested,
+                )
+                ThreadActionDialogButton(
+                    icon = Icons.Rounded.Delete,
+                    label = "Delete chat",
+                    contentColor = MaterialTheme.colorScheme.error,
+                    onClick = onDeleteRequested,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun ThreadActionDialogButton(
+    icon: ImageVector,
+    label: String,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit,
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = contentColor)
+            Text(text = label, color = contentColor)
+        }
+    }
+}
+
+@Composable
+private fun RenameThreadDialog(
+    thread: ChatThreadRecord,
+    onDismiss: () -> Unit,
+    onRenamed: (String) -> Unit,
+) {
+    var draftTitle by remember(thread.id.raw) { mutableStateOf(thread.title) }
+    val normalizedTitle = draftTitle.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename chat") },
+        text = {
+            OutlinedTextField(
+                value = draftTitle,
+                onValueChange = { value -> draftTitle = value },
+                label = { Text("Title") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onRenamed(normalizedTitle) },
+                enabled = normalizedTitle.isNotEmpty(),
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun DeleteThreadDialog(
+    thread: ChatThreadRecord,
+    onDismiss: () -> Unit,
+    onDeleted: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete chat?") },
+        text = {
+            Text(
+                text = "This removes the chat and its messages from recent chats.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDeleted) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable

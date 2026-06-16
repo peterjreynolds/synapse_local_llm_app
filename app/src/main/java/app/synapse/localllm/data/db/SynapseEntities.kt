@@ -11,6 +11,9 @@ import androidx.room.PrimaryKey
 data class ChatThreadEntity(
     @PrimaryKey val id: String,
     val title: String,
+    val pinnedAtEpochMillis: Long?,
+    val archivedAtEpochMillis: Long?,
+    val titleEditedByUser: Boolean,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
 )
