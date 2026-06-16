@@ -1,8 +1,12 @@
 package app.synapse.localllm.domain.settings
 
 data class SynapseSettings(
+    val runtimeBackend: InferenceRuntimeBackend = InferenceRuntimeBackend.EMBEDDED_LLAMA,
     val baseUrl: String = "http://127.0.0.1:8080",
     val modelName: String = "local-llama",
+    val embeddedModelPath: String? = null,
+    val embeddedModelDisplayName: String? = null,
+    val embeddedModelByteCount: Long? = null,
     val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
     val temperature: Double = 0.7,
     val maxTokens: Int = 768,
@@ -12,6 +16,11 @@ data class SynapseSettings(
     val attachmentCacheWarningBytes: Long = 1024L * 1024L * 1024L,
     val minimumFreeStorageBytes: Long = 2L * 1024L * 1024L * 1024L,
 )
+
+enum class InferenceRuntimeBackend {
+    EMBEDDED_LLAMA,
+    LLAMA_SERVER,
+}
 
 const val DEFAULT_SYSTEM_PROMPT =
     "You are Synapse, Peter's local Android LLM assistant. Reply like a normal chat partner. " +

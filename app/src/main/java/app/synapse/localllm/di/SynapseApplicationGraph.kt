@@ -12,6 +12,8 @@ import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
 import app.synapse.localllm.data.runtime.LlamaServerGateway
 import app.synapse.localllm.data.runtime.PhoneLocalInferenceRuntime
 import app.synapse.localllm.data.runtime.TermuxCommandGateway
+import app.synapse.localllm.data.runtime.AndroidEmbeddedModelStore
+import app.synapse.localllm.data.runtime.embedded.EmbeddedLlamaRuntime
 import app.synapse.localllm.data.settings.SynapseSettingsStore
 import app.synapse.localllm.data.storage.AndroidStorageHealthGovernor
 import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
@@ -40,6 +42,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
     ).build()
 
     val settingsStore = SynapseSettingsStore(applicationContext)
+    val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
 
     val conversationRepository: ConversationRepository =
         RoomConversationRepository(
@@ -72,6 +75,11 @@ class SynapseApplicationGraph private constructor(context: Context) {
                 clock = clock,
             ),
             termuxCommandGateway = TermuxCommandGateway(
+                context = applicationContext,
+                idFactory = idFactory,
+                clock = clock,
+            ),
+            embeddedLlamaRuntime = EmbeddedLlamaRuntime(
                 context = applicationContext,
                 idFactory = idFactory,
                 clock = clock,

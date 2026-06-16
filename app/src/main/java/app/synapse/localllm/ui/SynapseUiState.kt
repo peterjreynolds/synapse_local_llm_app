@@ -5,6 +5,7 @@ import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.RuntimeStatus
+import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageHealthSnapshot
 
@@ -15,6 +16,7 @@ enum class SynapsePanel {
 }
 
 data class RuntimeSettingsDraft(
+    val runtimeBackend: InferenceRuntimeBackend = InferenceRuntimeBackend.EMBEDDED_LLAMA,
     val baseUrl: String = "http://127.0.0.1:8080",
     val modelName: String = "local-llama",
     val systemPrompt: String = "",
@@ -36,6 +38,7 @@ data class SynapseUiState(
     val pendingAttachments: List<PendingAttachment> = emptyList(),
     val activePanel: SynapsePanel = SynapsePanel.CHAT,
     val isSending: Boolean = false,
+    val isImportingModel: Boolean = false,
     val lastNotice: String? = null,
     val memorySearchQuery: String = "",
     val memorySearchResults: List<RetrievedMemoryRef> = emptyList(),

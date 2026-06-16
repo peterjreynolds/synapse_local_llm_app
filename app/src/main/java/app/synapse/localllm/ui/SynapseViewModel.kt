@@ -10,7 +10,9 @@ import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.MemoryObjectId
 import app.synapse.localllm.domain.runtime.RuntimeStatus
+import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
+import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageThresholds
 import kotlinx.coroutines.Job
@@ -142,14 +144,15 @@ class SynapseViewModel(
     fun checkRuntimeStatus() {
         viewModelScope.launch {
             val settings = mutableUiState.value.settings
-            val status = graph.localInferenceRuntime.checkRuntimeStatus(settings.baseUrl)
+            val status = graph.localInferenceRuntime.checkRuntimeStatus(settings)
             mutableUiState.update { state -> state.copy(runtimeStatus = status) }
         }
     }
 
     fun startRuntime() {
         viewModelScope.launch {
-            val receipt = graph.localInferenceRuntime.startRuntime(StartLlamaServerCommand())
+            val settings = mutableUiState.value.settings
+            val receipt = graph.localInferenceRuntime.startRuntime(settings, StartLlamaServerCommand())
             mutableUiState.update { state ->
                 state.copy(
                     runtimeStatus = RuntimeStatus.Starting(receipt),
@@ -197,6 +200,7 @@ class SynapseViewModel(
         val draft = mutableUiState.value.settingsDraft
         viewModelScope.launch {
             graph.settingsStore.updateRuntimeSettings(
+                runtimeBackend = draft.runtimeBackend,
                 baseUrl = draft.baseUrl,
                 modelName = draft.modelName,
                 systemPrompt = draft.systemPrompt,
@@ -205,6 +209,32 @@ class SynapseViewModel(
             )
             mutableUiState.update { state -> state.copy(lastNotice = "Runtime settings saved.") }
             inspectStorageHealth()
+        }
+    }
+
+    fun importEmbeddedModel(command: ImportEmbeddedModelCommand) {
+        if (mutableUiState.value.isImportingModel) return
+        mutableUiState.update { state ->
+            state.copy(isImportingModel = true, lastNotice = "Importing GGUF model...")
+        }
+        viewModelScope.launch {
+            try {
+                val receipt = graph.embeddedModelStore.importModel(command)
+                graph.settingsStore.updateEmbeddedModel(
+                    modelPath = receipt.modelPath,
+                    displayName = receipt.displayName,
+                    byteCount = receipt.byteCount,
+                )
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = "Imported model: ${receipt.displayName}")
+                }
+            } catch (exception: Exception) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Model import failed.")
+                }
+            } finally {
+                mutableUiState.update { state -> state.copy(isImportingModel = false) }
+            }
         }
     }
 
@@ -286,6 +316,7 @@ class SynapseViewModel(
 
     private fun SynapseSettings.toDraft(): RuntimeSettingsDraft =
         RuntimeSettingsDraft(
+            runtimeBackend = runtimeBackend,
             baseUrl = baseUrl,
             modelName = modelName,
             systemPrompt = systemPrompt,

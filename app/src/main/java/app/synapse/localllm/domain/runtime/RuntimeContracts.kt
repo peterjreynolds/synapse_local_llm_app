@@ -3,6 +3,8 @@ package app.synapse.localllm.domain.runtime
 import android.annotation.SuppressLint
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.ids.ReceiptId
+import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
+import app.synapse.localllm.domain.settings.SynapseSettings
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 
@@ -24,6 +26,8 @@ data class RuntimeStartReceipt(
 
 enum class RuntimeStartStatus {
     SENT_TO_TERMUX,
+    EMBEDDED_MODEL_READY,
+    EMBEDDED_MODEL_MISSING,
     TERMUX_UNAVAILABLE,
     TERMUX_PERMISSION_MISSING,
     FAILED,
@@ -54,8 +58,10 @@ data class ModelChatMessage(
 )
 
 data class ChatCompletionRequest(
+    val backend: InferenceRuntimeBackend,
     val baseUrl: String,
     val model: String,
+    val embeddedModelPath: String?,
     val messages: List<ModelChatMessage>,
     val temperature: Double,
     val maxTokens: Int,
@@ -76,9 +82,9 @@ sealed interface ChatStreamEvent {
 }
 
 interface LocalInferenceRuntime {
-    suspend fun checkRuntimeStatus(baseUrl: String): RuntimeStatus
+    suspend fun checkRuntimeStatus(settings: SynapseSettings): RuntimeStatus
 
-    suspend fun startRuntime(command: StartLlamaServerCommand): RuntimeStartReceipt
+    suspend fun startRuntime(settings: SynapseSettings, command: StartLlamaServerCommand): RuntimeStartReceipt
 
     fun streamChatCompletion(request: ChatCompletionRequest): Flow<ChatStreamEvent>
 }

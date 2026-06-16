@@ -96,7 +96,9 @@ import app.synapse.localllm.domain.chat.MessageDeliveryState
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
+import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.RuntimeStatus
+import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.storage.StorageHealthSnapshot
 import app.synapse.localllm.domain.storage.StorageHealthState
 import java.io.IOException
@@ -138,6 +140,20 @@ fun SynapseApp(viewModel: SynapseViewModel) {
             }
         }
     }
+    val modelImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            val metadata = queryAttachmentMetadata(context, uri)
+            viewModel.importEmbeddedModel(
+                ImportEmbeddedModelCommand(
+                    sourceUri = uri.toString(),
+                    displayName = metadata.displayName,
+                    byteCount = metadata.byteCount,
+                ),
+            )
+        }
+    }
 
     SynapseScreen(
         state = uiState,
@@ -161,6 +177,7 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onThreadSelected = viewModel::selectThread,
         onRuntimeCheck = viewModel::checkRuntimeStatus,
         onRuntimeStart = viewModel::startRuntime,
+        onImportEmbeddedModel = { modelImportLauncher.launch(modelMimeTypes) },
         onMemoryQueryChanged = viewModel::updateMemorySearchQuery,
         onMemorySearch = viewModel::searchMemory,
         onTombstoneMemory = { memory -> viewModel.tombstoneMemory(memory.memoryObjectId) },
@@ -190,6 +207,7 @@ private fun SynapseScreen(
     onThreadSelected: (ChatThreadRecord) -> Unit,
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
+    onImportEmbeddedModel: () -> Unit,
     onMemoryQueryChanged: (String) -> Unit,
     onMemorySearch: () -> Unit,
     onTombstoneMemory: (RetrievedMemoryRef) -> Unit,
@@ -260,6 +278,7 @@ private fun SynapseScreen(
                             state = state,
                             onSettingsDraftChanged = onSettingsDraftChanged,
                             onSaveSettings = onSaveSettings,
+                            onImportEmbeddedModel = onImportEmbeddedModel,
                             onMemoryWritesChanged = onMemoryWritesChanged,
                             onSpeechPlaybackChanged = onSpeechPlaybackChanged,
                         )
@@ -875,6 +894,7 @@ private fun SettingsPanel(
     state: SynapseUiState,
     onSettingsDraftChanged: (RuntimeSettingsDraft) -> Unit,
     onSaveSettings: () -> Unit,
+    onImportEmbeddedModel: () -> Unit,
     onMemoryWritesChanged: (Boolean) -> Unit,
     onSpeechPlaybackChanged: (Boolean) -> Unit,
 ) {
@@ -891,26 +911,44 @@ private fun SettingsPanel(
             )
         }
         item {
-            OutlinedTextField(
-                value = state.settingsDraft.baseUrl,
-                onValueChange = { value ->
-                    onSettingsDraftChanged(state.settingsDraft.copy(baseUrl = value))
+            RuntimeBackendSelector(
+                selectedBackend = state.settingsDraft.runtimeBackend,
+                onBackendSelected = { backend ->
+                    onSettingsDraftChanged(state.settingsDraft.copy(runtimeBackend = backend))
                 },
-                label = { Text("Server") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
             )
         }
-        item {
-            OutlinedTextField(
-                value = state.settingsDraft.modelName,
-                onValueChange = { value ->
-                    onSettingsDraftChanged(state.settingsDraft.copy(modelName = value))
-                },
-                label = { Text("Model") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
+        if (state.settingsDraft.runtimeBackend == InferenceRuntimeBackend.EMBEDDED_LLAMA) {
+            item {
+                EmbeddedModelSettingsCard(
+                    state = state,
+                    onImportEmbeddedModel = onImportEmbeddedModel,
+                )
+            }
+        }
+        if (state.settingsDraft.runtimeBackend == InferenceRuntimeBackend.LLAMA_SERVER) {
+            item {
+                OutlinedTextField(
+                    value = state.settingsDraft.baseUrl,
+                    onValueChange = { value ->
+                        onSettingsDraftChanged(state.settingsDraft.copy(baseUrl = value))
+                    },
+                    label = { Text("Server") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = state.settingsDraft.modelName,
+                    onValueChange = { value ->
+                        onSettingsDraftChanged(state.settingsDraft.copy(modelName = value))
+                    },
+                    label = { Text("Model") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+            }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -963,6 +1001,84 @@ private fun SettingsPanel(
         item {
             Button(onClick = onSaveSettings, modifier = Modifier.fillMaxWidth()) {
                 Text("Save")
+            }
+        }
+    }
+}
+
+@Composable
+private fun RuntimeBackendSelector(
+    selectedBackend: InferenceRuntimeBackend,
+    onBackendSelected: (InferenceRuntimeBackend) -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TextButton(
+                onClick = { onBackendSelected(InferenceRuntimeBackend.EMBEDDED_LLAMA) },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(
+                    text = if (selectedBackend == InferenceRuntimeBackend.EMBEDDED_LLAMA) {
+                        "Embedded"
+                    } else {
+                        "Use embedded"
+                    },
+                )
+            }
+            TextButton(
+                onClick = { onBackendSelected(InferenceRuntimeBackend.LLAMA_SERVER) },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(
+                    text = if (selectedBackend == InferenceRuntimeBackend.LLAMA_SERVER) {
+                        "Server"
+                    } else {
+                        "Use server"
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmbeddedModelSettingsCard(
+    state: SynapseUiState,
+    onImportEmbeddedModel: () -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "Embedded model",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            val modelName = state.settings.embeddedModelDisplayName ?: "No GGUF model imported"
+            val byteCount = state.settings.embeddedModelByteCount
+            Text(
+                text = if (byteCount == null) modelName else "$modelName | ${formatByteCount(byteCount)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(
+                onClick = onImportEmbeddedModel,
+                enabled = !state.isImportingModel,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Icon(Icons.Rounded.FolderOpen, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(if (state.isImportingModel) "Importing..." else "Import GGUF")
             }
         }
     }
@@ -1152,6 +1268,13 @@ private val attachmentMimeTypes =
         "application/json",
         "application/pdf",
         "application/octet-stream",
+    )
+
+private val modelMimeTypes =
+    arrayOf(
+        "application/octet-stream",
+        "application/x-gguf",
+        "*/*",
     )
 
 private const val MAX_TEXT_ATTACHMENT_READ_CHARS = 64_000

@@ -9,6 +9,7 @@ plugins {
 android {
     namespace = "app.synapse.localllm"
     compileSdk = 36
+    ndkVersion = "29.0.13113456"
 
     defaultConfig {
         applicationId = "app.synapse.localllm"
@@ -18,6 +19,24 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments += "-DCMAKE_BUILD_TYPE=Release"
+                arguments += "-DBUILD_SHARED_LIBS=ON"
+                arguments += "-DLLAMA_BUILD_APP=OFF"
+                arguments += "-DLLAMA_BUILD_COMMON=ON"
+                arguments += "-DLLAMA_OPENSSL=OFF"
+                arguments += "-DGGML_NATIVE=OFF"
+                arguments += "-DGGML_BACKEND_DL=ON"
+                arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
+                arguments += "-DGGML_LLAMAFILE=OFF"
+            }
+        }
     }
 
     buildTypes {
@@ -38,6 +57,13 @@ android {
         buildConfig = true
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -51,6 +77,9 @@ android {
     }
 
     packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes +=
                 setOf(
@@ -68,6 +97,10 @@ android {
         disable +=
             setOf(
                 "AndroidGradlePluginVersion",
+                // Exception scope: Synapse phone APK builds only for Peter's ARM64 Android phone.
+                // Reason: bundling x86_64 llama.cpp doubles native build/output cost for no target device.
+                // Owner: Synapse Local LLM app. Removal: add x86_64 when ChromeOS/emulator distribution is required.
+                "ChromeOsAbiSupport",
                 "GradleDependency",
                 "KaptUsageInsteadOfKsp",
                 "NewerVersionAvailable",

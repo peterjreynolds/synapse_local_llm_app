@@ -1,10 +1,25 @@
 # Synapse Local LLM App
 
 Synapse is a native Android chat UI for a phone-local `llama.cpp` model.
-V1 talks to `llama-server` on `127.0.0.1:8080`, can ask Termux to start that
-server, and keeps chat plus evidence-backed memory in app-local storage.
+The app can run an embedded ARM64 `llama.cpp` runtime directly in the APK, or
+fall back to a Termux `llama-server` on `127.0.0.1:8080`. Chat and
+evidence-backed memory stay in app-local storage.
 
-## V1 Runtime
+## Embedded Runtime
+
+The APK includes native `llama.cpp` libraries for `arm64-v8a`, but it does not
+bundle model weights. GGUF files are too large and are intentionally excluded
+from git and APK packaging. On the phone:
+
+1. Download a `.gguf` model into Downloads or another user-visible folder.
+2. Open Synapse, go to Settings, keep runtime set to `Embedded`.
+3. Tap `Import GGUF` and pick the model.
+4. Tap the play button in the top bar to load the embedded model.
+
+Synapse validates the `GGUF` magic bytes and copies the model into app-private
+storage so native `llama.cpp` can open it by filesystem path.
+
+## Termux Server Runtime
 
 The expected Termux server command is:
 

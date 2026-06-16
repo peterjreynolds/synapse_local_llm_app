@@ -61,8 +61,10 @@ class SynapseTurnCoordinator(
             systemPrompt = settings.systemPrompt,
         )
         val completionRequest = ChatCompletionRequest(
+            backend = settings.runtimeBackend,
             baseUrl = settings.baseUrl,
             model = settings.modelName,
+            embeddedModelPath = settings.embeddedModelPath,
             messages = promptMessages,
             temperature = settings.temperature,
             maxTokens = settings.maxTokens,

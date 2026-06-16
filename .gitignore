@@ -8,4 +8,4 @@ captures/
 *.jks
 *.keystore
 app/build/
-
+app/.cxx/
