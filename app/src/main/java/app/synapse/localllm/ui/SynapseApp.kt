@@ -299,8 +299,7 @@ private fun SynapseScreen(
                     SynapsePanel.CHAT ->
                         ChatWorkspace(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .imePadding(),
+                                .fillMaxSize(),
                             state = state,
                             onComposerChanged = onComposerChanged,
                             onSend = onSend,
@@ -877,7 +876,7 @@ private fun ChatPanel(
                 start = 16.dp,
                 top = 18.dp,
                 end = 16.dp,
-                bottom = 16.dp,
+                bottom = 24.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -1121,6 +1120,7 @@ private fun ComposerBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .imePadding()
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
