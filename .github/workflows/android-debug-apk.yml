@@ -123,16 +123,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
-          git push origin "refs/tags/$RELEASE_TAG" --force
-
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" --clobber
-          else
-            gh release create "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" \
-              --title "Synapse AI Debug APK" \
-              --notes "Automated debug APK from commit $GITHUB_SHA." \
-              --prerelease
+            gh release delete "$RELEASE_TAG" --cleanup-tag --yes
           fi
+
+          gh release create "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" \
+            --target "$GITHUB_SHA" \
+            --title "Synapse AI Debug APK" \
+            --notes "Latest automated debug APK from commit $GITHUB_SHA. This rolling release is recreated after every successful main build so the Releases page points at the newest APK." \
+            --latest
