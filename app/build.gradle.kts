@@ -8,13 +8,13 @@ plugins {
 
 android {
     namespace = "app.synapse.localllm"
-    compileSdk = 37
+    compileSdk = 36
     ndkVersion = "29.0.13113456"
 
     defaultConfig {
         applicationId = "app.synapse.localllm"
         minSdk = 31
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
 
@@ -104,6 +104,10 @@ android {
                 "GradleDependency",
                 "KaptUsageInsteadOfKsp",
                 "NewerVersionAvailable",
+                // Exception scope: CI/debug APK builds while Android API 37 is visible to lint
+                // but unavailable from the public command-line SDK package feed.
+                // Owner: Synapse Local LLM app. Removal: delete once platforms;android-37 installs in CI.
+                "OldTargetApi",
             )
     }
 
