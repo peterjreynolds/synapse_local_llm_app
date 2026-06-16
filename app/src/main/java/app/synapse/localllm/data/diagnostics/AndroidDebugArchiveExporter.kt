@@ -172,9 +172,9 @@ class AndroidDebugArchiveExporter(
             appendLine("displayHeightPx=${displayMetrics.heightPixels}")
             appendLine("currentWindowBoundsPx=${currentWindowBounds.toDebugBounds()}")
             appendLine("maximumWindowBoundsPx=${maximumWindowBounds.toDebugBounds()}")
-            appendLine("activityDecorFitsSystemWindows=true")
+            appendLine("activityDecorFitsSystemWindows=false")
             appendLine("activityWindowSoftInputMode=adjustResize")
-            appendLine("composeKeyboardPolicy=platform resize owns IME; composer does not apply imePadding")
+            appendLine("composeKeyboardPolicy=edge-to-edge Compose insets; screen content applies imePadding")
         }
     }
 

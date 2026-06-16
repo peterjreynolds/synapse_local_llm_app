@@ -36,10 +36,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -273,7 +275,7 @@ private fun SynapseScreen(
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
-            contentWindowInsets = WindowInsets.safeDrawing,
+            contentWindowInsets = WindowInsets(0.dp),
             topBar = {
                 SynapseTopBar(
                     state = state,
@@ -287,7 +289,8 @@ private fun SynapseScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .imePadding(),
             ) {
                 NoticeBanner(
                     notice = state.lastNotice,
@@ -357,7 +360,7 @@ private fun SynapseTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(WindowInsets.safeDrawing.asPaddingValues())
+            .statusBarsPadding()
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
