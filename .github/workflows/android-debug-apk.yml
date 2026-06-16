@@ -29,11 +29,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install Android SDK packages
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install \
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "platform-tools" \
@@ -73,7 +76,7 @@ jobs:
           retention-days: 30
 
       - name: Publish rolling debug release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
