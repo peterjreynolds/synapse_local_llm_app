@@ -74,13 +74,24 @@ The debug APK will be under `app/build/outputs/apk/debug/`.
 The repo includes `.github/workflows/android-debug-apk.yml`. Once this local
 repo is pushed to GitHub, every push to `main` builds `Synapse-AI.apk`, uploads
 it as a workflow artifact, and updates the rolling prerelease tag
-`synapse-ai-debug-latest`.
+`synapse-ai-debug-latest`. It also updates the single repo-root download copy at
+`APK/Synapse-AI.apk`.
 
 That gives the phone a stable place to download the newest APK:
 
 ```text
 https://github.com/peterjreynolds/synapse_local_llm_app/releases/tag/synapse-ai-debug-latest
 ```
+
+If the release asset link gives a private-repo `404` on Android, open the repo
+file instead:
+
+```text
+https://github.com/peterjreynolds/synapse_local_llm_app/blob/main/APK/Synapse-AI.apk
+```
+
+The `APK/` folder is a narrow exception for the latest debug APK only. Other
+generated APKs should stay out of git.
 
 For clean Android update installs, configure one GitHub secret so every
 GitHub-built debug APK is signed with the same key:

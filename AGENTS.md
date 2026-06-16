@@ -16,4 +16,6 @@ This repository follows `/home/notsolikely/AGENTS.md` and the universal engineer
 - Memory writes require evidence and receipts.
 - Storage pressure must pause memory writes before corrupting local state.
 - Do not commit signing keys, model files, generated APKs, or user chat exports.
-
+- Narrow exception: `APK/Synapse-AI.apk` is the single repo-root APK distribution
+  artifact requested by Peter. Do not add other generated binaries unless a new
+  explicit exception is documented here.
