@@ -79,7 +79,7 @@ it as a workflow artifact, and updates the rolling prerelease tag
 That gives the phone a stable place to download the newest APK:
 
 ```text
-https://github.com/<owner>/<repo>/releases/tag/synapse-ai-debug-latest
+https://github.com/peterjreynolds/synapse_local_llm_app/releases/tag/synapse-ai-debug-latest
 ```
 
 For clean Android update installs, configure one GitHub secret so every
