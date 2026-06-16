@@ -36,7 +36,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -1120,7 +1119,6 @@ private fun ComposerBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .imePadding()
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
@@ -1249,7 +1247,6 @@ private fun MemoryPanel(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .imePadding()
             .navigationBarsPadding(),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
