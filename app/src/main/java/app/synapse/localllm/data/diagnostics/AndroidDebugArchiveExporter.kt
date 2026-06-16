@@ -143,6 +143,8 @@ class AndroidDebugArchiveExporter(
             appendLine("versionName=${BuildConfig.VERSION_NAME}")
             appendLine("versionCode=${BuildConfig.VERSION_CODE}")
             appendLine("buildType=${BuildConfig.BUILD_TYPE}")
+            appendLine("buildGitSha=${BuildConfig.SYNAPSE_BUILD_GIT_SHA}")
+            appendLine("apkChannel=${BuildConfig.SYNAPSE_APK_CHANNEL}")
             appendLine("device=${Build.MANUFACTURER} ${Build.MODEL}")
             appendLine("brand=${Build.BRAND}")
             appendLine("product=${Build.PRODUCT}")

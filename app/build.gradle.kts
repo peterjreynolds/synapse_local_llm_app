@@ -6,6 +6,15 @@ plugins {
     id("org.jlleitschuh.gradle.ktlint")
 }
 
+fun quoteBuildConfigString(rawValue: String): String = "\"${rawValue.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+val synapseBuildGitSha =
+    providers
+        .environmentVariable("GITHUB_SHA")
+        .orNull
+        ?.take(12)
+        ?: "local"
+
 android {
     namespace = "app.synapse.localllm"
     compileSdk = 36
@@ -15,10 +24,12 @@ android {
         applicationId = "app.synapse.localllm"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "SYNAPSE_BUILD_GIT_SHA", quoteBuildConfigString(synapseBuildGitSha))
+        buildConfigField("String", "SYNAPSE_APK_CHANNEL", quoteBuildConfigString("apk-latest"))
 
         ndk {
             abiFilters += listOf("arm64-v8a")
