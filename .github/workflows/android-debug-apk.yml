@@ -1,0 +1,93 @@
+name: Build Synapse AI APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-debug-apk:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    env:
+      APK_PATH: app/build/outputs/apk/synapse/Synapse-AI.apk
+      RELEASE_TAG: synapse-ai-debug-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools" \
+            "cmake;3.31.6" \
+            "ndk;29.0.13113456"
+
+      - name: Restore stable debug signing key
+        shell: bash
+        env:
+          SYNAPSE_DEBUG_KEYSTORE_B64: ${{ secrets.SYNAPSE_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$SYNAPSE_DEBUG_KEYSTORE_B64" ]; then
+            mkdir -p "$HOME/.android"
+            printf '%s' "$SYNAPSE_DEBUG_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
+            chmod 600 "$HOME/.android/debug.keystore"
+            echo "Using stable debug signing key from SYNAPSE_DEBUG_KEYSTORE_B64."
+          else
+            echo "SYNAPSE_DEBUG_KEYSTORE_B64 is not set. Android may require uninstall/reinstall between APKs."
+          fi
+
+      - name: Validate and build
+        shell: bash
+        run: ./gradlew testDebugUnitTest ktlintCheck lintDebug assembleDebug
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          test -f "$APK_PATH"
+          ls -lh "$APK_PATH"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Synapse-AI
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish rolling debug release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG" --force
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" \
+              --title "Synapse AI Debug APK" \
+              --notes "Automated debug APK from commit $GITHUB_SHA." \
+              --prerelease
+          fi

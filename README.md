@@ -69,6 +69,40 @@ Then run:
 
 The debug APK will be under `app/build/outputs/apk/debug/`.
 
+## GitHub APK Delivery
+
+The repo includes `.github/workflows/android-debug-apk.yml`. Once this local
+repo is pushed to GitHub, every push to `main` builds `Synapse-AI.apk`, uploads
+it as a workflow artifact, and updates the rolling prerelease tag
+`synapse-ai-debug-latest`.
+
+That gives the phone a stable place to download the newest APK:
+
+```text
+https://github.com/<owner>/<repo>/releases/tag/synapse-ai-debug-latest
+```
+
+For clean Android update installs, configure one GitHub secret so every
+GitHub-built debug APK is signed with the same key:
+
+```sh
+keytool -genkeypair -v \
+  -storetype JKS \
+  -keystore synapse-debug.keystore \
+  -storepass android \
+  -alias androiddebugkey \
+  -keypass android \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 10000 \
+  -dname "CN=Android Debug,O=Android,C=US"
+
+base64 -w0 synapse-debug.keystore
+```
+
+Add the base64 output as the GitHub repo secret
+`SYNAPSE_DEBUG_KEYSTORE_B64`. Do not commit the keystore file.
+
 ## Memory Safety
 
 Synapse memory uses one local truth: Room entities plus durable write/retrieval
