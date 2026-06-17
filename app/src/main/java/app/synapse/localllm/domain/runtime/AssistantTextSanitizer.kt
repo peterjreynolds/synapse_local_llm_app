@@ -95,7 +95,7 @@ object AssistantTextSanitizer {
         setOf(RegexOption.IGNORE_CASE),
     )
     private val PROMPT_SCAFFOLDING_BOUNDARY = Regex(
-        "(?m)^\\s*(Core behavior|Persona|Custom instructions|Verified local memory)\\s*:",
+        "(?m)^\\s*(Core behavior|Persona|Custom instructions|Standing user instructions|User preferences|Verified local memory)\\s*:",
         setOf(RegexOption.IGNORE_CASE),
     )
 }

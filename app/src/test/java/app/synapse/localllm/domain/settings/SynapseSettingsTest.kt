@@ -29,6 +29,10 @@ class SynapseSettingsTest {
             DEFAULT_CUSTOM_INSTRUCTIONS,
             normalizeCustomInstructions(LEGACY_DEFAULT_CUSTOM_INSTRUCTIONS),
         )
+        assertEquals(
+            DEFAULT_CUSTOM_INSTRUCTIONS,
+            normalizeCustomInstructions(LEGACY_CORE_LEAKING_CUSTOM_INSTRUCTIONS),
+        )
     }
 
     @Test
@@ -46,7 +50,7 @@ class SynapseSettingsTest {
         )
 
         assertTrue(prompt.contains("You are direct."))
-        assertTrue(prompt.contains("Standing user instructions: Use short answers."))
+        assertTrue(prompt.contains("User preferences: Use short answers."))
         assertFalse(prompt.contains("Core behavior:"))
         assertFalse(prompt.contains("Custom instructions:"))
     }
@@ -55,7 +59,21 @@ class SynapseSettingsTest {
     fun currentDefaultPromptBlocksHiddenThinking() {
         val prompt = composeSystemPrompt(DEFAULT_PERSONA, DEFAULT_CUSTOM_INSTRUCTIONS)
 
-        assertTrue(prompt.contains("<think>"))
+        assertTrue(prompt.contains("Never expose hidden reasoning"))
         assertTrue(prompt.contains("Write visible assistant answer text immediately."))
+        assertFalse(DEFAULT_CUSTOM_INSTRUCTIONS.contains("hidden reasoning"))
+        assertFalse(DEFAULT_CUSTOM_INSTRUCTIONS.contains("<think>"))
+    }
+
+    @Test
+    fun extractsEditableInstructionsFromLegacyComposedPrompt() {
+        val legacyPrompt = buildString {
+            append("You are Synapse, a private phone-local assistant inside an Android chat app. ")
+            append("Never expose hidden reasoning. ")
+            append(LEGACY_USER_INSTRUCTIONS_MARKER)
+            append(" Use terse answers.")
+        }
+
+        assertEquals("Use terse answers.", extractEditableCustomInstructions(legacyPrompt))
     }
 }

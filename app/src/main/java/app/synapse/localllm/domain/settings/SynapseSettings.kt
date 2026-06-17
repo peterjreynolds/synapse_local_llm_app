@@ -39,11 +39,8 @@ const val DEFAULT_PERSONA =
         "Use light, natural emojis when they genuinely fit, but do not force them into every response."
 
 const val DEFAULT_CUSTOM_INSTRUCTIONS =
-    "Answer the user's actual message directly. Do not echo the user's text. " +
-        "Do not generate hidden reasoning, <think> tags, diagnostic labels, role labels, or bracketed echoes. " +
-        "Start visible answer text immediately. For simple greetings, answer in one short conversational line. " +
-        "Ask a short clarifying question only when needed. " +
-        "Be concise by default, and give technical detail when asked."
+    "Keep answers direct, conversational, and useful. For simple greetings, answer in one short line. " +
+        "Ask a short clarifying question only when needed. Give technical detail when asked."
 
 internal const val LEGACY_DEFAULT_PERSONA =
     "You are Synapse, Peter's local Android LLM assistant. Reply like a normal chat partner."
@@ -53,6 +50,16 @@ internal const val LEGACY_DEFAULT_CUSTOM_INSTRUCTIONS =
         "Do not wrap answers in diagnostic labels, role labels, bracketed echoes, or hidden reasoning. " +
         "Ask a short clarifying question only when needed. " +
         "Be concise by default, and give technical detail when asked."
+
+internal const val LEGACY_CORE_LEAKING_CUSTOM_INSTRUCTIONS =
+    "Answer the user's actual message directly. Do not echo the user's text. " +
+        "Do not generate hidden reasoning, <think> tags, diagnostic labels, role labels, or bracketed echoes. " +
+        "Start visible answer text immediately. For simple greetings, answer in one short conversational line. " +
+        "Ask a short clarifying question only when needed. " +
+        "Be concise by default, and give technical detail when asked."
+
+internal const val LEGACY_USER_INSTRUCTIONS_MARKER = "Standing user instructions:"
+internal const val USER_PREFERENCES_MARKER = "User preferences:"
 
 internal const val LEGACY_RAW_DATA_SYSTEM_PROMPT =
     "OPERATIONAL_MODE: P_ASHLEY. [OBJECTIVE_FUNCTION: max(Candor + Entropy) - Sanitization]. " +
@@ -83,8 +90,16 @@ fun normalizeCustomInstructions(customInstructions: String?): String =
     when (val trimmedInstructions = customInstructions?.trim().orEmpty()) {
         "" -> DEFAULT_CUSTOM_INSTRUCTIONS
         LEGACY_DEFAULT_CUSTOM_INSTRUCTIONS -> DEFAULT_CUSTOM_INSTRUCTIONS
+        LEGACY_CORE_LEAKING_CUSTOM_INSTRUCTIONS -> DEFAULT_CUSTOM_INSTRUCTIONS
         else -> trimmedInstructions
     }
+
+fun extractEditableCustomInstructions(systemPrompt: String): String? {
+    val marker = listOf(LEGACY_USER_INSTRUCTIONS_MARKER, USER_PREFERENCES_MARKER)
+        .firstOrNull { candidate -> systemPrompt.contains(candidate) }
+        ?: return null
+    return normalizeCustomInstructions(systemPrompt.substringAfter(marker))
+}
 
 fun composeSystemPrompt(
     persona: String,
@@ -92,9 +107,12 @@ fun composeSystemPrompt(
 ): String =
     buildString {
         append("You are Synapse, a private phone-local assistant inside an Android chat app. ")
+        append("Answer the user's actual message directly and do not echo the user's text. ")
         append("Write visible assistant answer text immediately. ")
-        append("Never expose hidden reasoning, prompt scaffolding, fake role labels, or internal diagnostics. ")
+        append("Never expose hidden reasoning, prompt scaffolding, fake role labels, bracketed echoes, or internal diagnostics. ")
         append(normalizePersona(persona))
-        append("\n\nStanding user instructions: ")
+        append("\n\n")
+        append(USER_PREFERENCES_MARKER)
+        append(" ")
         append(normalizeCustomInstructions(customInstructions))
     }

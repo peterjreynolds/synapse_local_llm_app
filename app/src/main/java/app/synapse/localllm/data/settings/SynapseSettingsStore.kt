@@ -15,6 +15,7 @@ import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.LEGACY_RAW_DATA_SYSTEM_PROMPT
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.settings.composeSystemPrompt
+import app.synapse.localllm.domain.settings.extractEditableCustomInstructions
 import app.synapse.localllm.domain.settings.normalizeCustomInstructions
 import app.synapse.localllm.domain.settings.normalizePersona
 import app.synapse.localllm.domain.settings.normalizeSystemPrompt
@@ -144,9 +145,12 @@ class SynapseSettingsStore(context: Context) {
         }
 
         val trimmedLegacyPrompt = legacySystemPrompt?.trim().orEmpty()
+        val extractedLegacyInstructions = extractEditableCustomInstructions(trimmedLegacyPrompt)
         return when {
             trimmedLegacyPrompt.isBlank() -> DEFAULT_CUSTOM_INSTRUCTIONS
             trimmedLegacyPrompt == LEGACY_RAW_DATA_SYSTEM_PROMPT -> DEFAULT_CUSTOM_INSTRUCTIONS
+            extractedLegacyInstructions != null -> extractedLegacyInstructions
+
             normalizeSystemPrompt(trimmedLegacyPrompt) == composeSystemPrompt(
                 DEFAULT_PERSONA,
                 DEFAULT_CUSTOM_INSTRUCTIONS,
