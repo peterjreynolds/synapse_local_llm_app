@@ -31,6 +31,9 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Basic attachment composer with text extraction for text-like files and explicit
   image/file metadata placeholders. Image understanding is not claimed until a
   multimodal runtime is added.
+- Initial app-private Library/Workspace foundation: Markdown artifact creation,
+  Room-backed artifact catalog metadata, durable write receipts, safe path
+  handling, and basic PDF export cache generation.
 - One-shot Android speech input through the system speech recognizer.
 - Full app-state debug ZIP export, excluding GGUF model files.
 - Persisted generation timing traces for diagnosing slow or blank local model responses.
@@ -88,6 +91,9 @@ model can actually understand.
 
 Goal: make Synapse a local librarian plus analyst, not just a chatbot with memory.
 
+- Use the app-private Library/Workspace foundation in
+  [`library-workspace-architecture.md`](library-workspace-architecture.md) as
+  the storage/catalog base.
 - Store original imported documents in app-private storage.
 - Extract text from text/Markdown first, then PDF/DOCX, then exact
   user-provided URLs.

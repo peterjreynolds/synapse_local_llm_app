@@ -201,6 +201,27 @@ interface DiagnosticsDao {
 }
 
 @Dao
+interface LibraryDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLibraryArtifact(artifact: LibraryArtifactEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLibraryArtifactWriteReceipt(receipt: LibraryArtifactWriteReceiptEntity)
+
+    @Query("SELECT * FROM library_artifacts WHERE id = :artifactId LIMIT 1")
+    suspend fun findLibraryArtifact(artifactId: String): LibraryArtifactEntity?
+
+    @Query(
+        """
+        SELECT * FROM library_artifacts
+        ORDER BY updatedAtEpochMillis DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun listLibraryArtifacts(limit: Int): List<LibraryArtifactEntity>
+}
+
+@Dao
 interface MemoryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertTraceEvent(traceEvent: TraceEventEntity): Long

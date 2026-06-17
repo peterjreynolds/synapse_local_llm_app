@@ -11,6 +11,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChatMessageEntity::class,
         AssistantGenerationTraceEntity::class,
         AttachmentEntity::class,
+        LibraryArtifactEntity::class,
+        LibraryArtifactWriteReceiptEntity::class,
         TraceEventEntity::class,
         MemoryObjectEntity::class,
         MemoryVersionEntity::class,
@@ -20,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RetrievedMemoryReceiptEntity::class,
         StorageHealthSnapshotEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -31,6 +33,8 @@ abstract class SynapseDatabase : RoomDatabase() {
     abstract fun storageHealthDao(): StorageHealthDao
 
     abstract fun diagnosticsDao(): DiagnosticsDao
+
+    abstract fun libraryDao(): LibraryDao
 }
 
 val SYNAPSE_DATABASE_MIGRATION_1_2 =
@@ -98,6 +102,82 @@ val SYNAPSE_DATABASE_MIGRATION_2_3 =
                 WHERE role = 'ASSISTANT'
                   AND deliveryState = 'COMPLETE'
                   AND length(trim(body)) = 0
+                """.trimIndent(),
+            )
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_3_4 =
+    object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS library_artifacts (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    displayName TEXT NOT NULL,
+                    relativePath TEXT NOT NULL,
+                    mimeType TEXT NOT NULL,
+                    artifactKind TEXT NOT NULL,
+                    sourceKind TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    byteCount INTEGER NOT NULL,
+                    catalogSummary TEXT,
+                    tagsCsv TEXT NOT NULL,
+                    createdAtEpochMillis INTEGER NOT NULL,
+                    updatedAtEpochMillis INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_library_artifacts_artifactKind
+                ON library_artifacts(artifactKind)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_library_artifacts_sourceKind
+                ON library_artifacts(sourceKind)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_library_artifacts_sha256
+                ON library_artifacts(sha256)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_library_artifacts_updatedAtEpochMillis
+                ON library_artifacts(updatedAtEpochMillis)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS library_artifact_write_receipts (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    artifactId TEXT NOT NULL,
+                    mutation TEXT NOT NULL,
+                    writtenAtEpochMillis INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    byteCount INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    FOREIGN KEY(artifactId) REFERENCES library_artifacts(id)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_library_artifact_write_receipts_artifactId
+                ON library_artifact_write_receipts(artifactId)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_library_artifact_write_receipts_writtenAtEpochMillis
+                ON library_artifact_write_receipts(writtenAtEpochMillis)
                 """.trimIndent(),
             )
         }

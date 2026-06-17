@@ -12,6 +12,9 @@ value class ChatMessageId(val raw: String)
 value class AttachmentId(val raw: String)
 
 @JvmInline
+value class LibraryArtifactId(val raw: String)
+
+@JvmInline
 value class TraceEventId(val raw: String)
 
 @JvmInline
@@ -32,6 +35,8 @@ class SynapseIdFactory {
     fun createChatMessageId(): ChatMessageId = ChatMessageId(createPrefixedUuid("message"))
 
     fun createAttachmentId(): AttachmentId = AttachmentId(createPrefixedUuid("attachment"))
+
+    fun createLibraryArtifactId(): LibraryArtifactId = LibraryArtifactId(createPrefixedUuid("artifact"))
 
     fun createTraceEventId(): TraceEventId = TraceEventId(createPrefixedUuid("trace"))
 

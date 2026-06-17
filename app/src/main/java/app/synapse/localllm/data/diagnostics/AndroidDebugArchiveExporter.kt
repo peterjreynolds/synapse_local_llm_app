@@ -229,6 +229,7 @@ class AndroidDebugArchiveExporter(
                     appendSection("recentThreads", database.queryText(RECENT_THREADS_SQL))
                     appendSection("recentMessages", database.queryText(RECENT_MESSAGES_SQL))
                     appendSection("assistantGenerationTraces", database.queryText(GENERATION_TRACES_SQL))
+                    appendSection("recentLibraryArtifacts", database.queryText(RECENT_LIBRARY_ARTIFACTS_SQL))
                     appendSection("recentStorageHealth", database.queryText(RECENT_STORAGE_HEALTH_SQL))
                     appendSection("recentMemoryWriteReceipts", database.queryText(RECENT_MEMORY_WRITES_SQL))
                 }
@@ -357,6 +358,8 @@ class AndroidDebugArchiveExporter(
             UNION ALL SELECT 'chat_messages', COUNT(*) FROM chat_messages
             UNION ALL SELECT 'assistant_generation_traces', COUNT(*) FROM assistant_generation_traces
             UNION ALL SELECT 'attachments', COUNT(*) FROM attachments
+            UNION ALL SELECT 'library_artifacts', COUNT(*) FROM library_artifacts
+            UNION ALL SELECT 'library_artifact_write_receipts', COUNT(*) FROM library_artifact_write_receipts
             UNION ALL SELECT 'trace_events', COUNT(*) FROM trace_events
             UNION ALL SELECT 'memory_objects', COUNT(*) FROM memory_objects
             UNION ALL SELECT 'memory_versions', COUNT(*) FROM memory_versions
@@ -409,6 +412,16 @@ class AndroidDebugArchiveExporter(
             FROM assistant_generation_traces
             ORDER BY startedAtEpochMillis DESC
             LIMIT 80
+            """.trimIndent()
+
+        val RECENT_LIBRARY_ARTIFACTS_SQL =
+            """
+            SELECT id, title, displayName, relativePath, mimeType, artifactKind,
+                   sourceKind, byteCount, sha256, catalogSummary, tagsCsv,
+                   createdAtEpochMillis, updatedAtEpochMillis
+            FROM library_artifacts
+            ORDER BY updatedAtEpochMillis DESC
+            LIMIT 40
             """.trimIndent()
 
         val RECENT_STORAGE_HEALTH_SQL =

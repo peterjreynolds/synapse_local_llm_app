@@ -99,6 +99,53 @@ data class AttachmentEntity(
 )
 
 @Entity(
+    tableName = "library_artifacts",
+    indices = [
+        Index("artifactKind"),
+        Index("sourceKind"),
+        Index("sha256"),
+        Index("updatedAtEpochMillis"),
+    ],
+)
+data class LibraryArtifactEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val displayName: String,
+    val relativePath: String,
+    val mimeType: String,
+    val artifactKind: String,
+    val sourceKind: String,
+    val sha256: String,
+    val byteCount: Long,
+    val catalogSummary: String?,
+    val tagsCsv: String,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "library_artifact_write_receipts",
+    foreignKeys = [
+        ForeignKey(
+            entity = LibraryArtifactEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["artifactId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("artifactId"), Index("writtenAtEpochMillis")],
+)
+data class LibraryArtifactWriteReceiptEntity(
+    @PrimaryKey val id: String,
+    val artifactId: String,
+    val mutation: String,
+    val writtenAtEpochMillis: Long,
+    val reason: String,
+    val byteCount: Long,
+    val sha256: String,
+)
+
+@Entity(
     tableName = "trace_events",
     indices = [Index("sourceMessageId"), Index("observedAtEpochMillis")],
 )

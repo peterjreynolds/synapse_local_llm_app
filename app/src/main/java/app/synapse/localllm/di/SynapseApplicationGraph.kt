@@ -8,7 +8,10 @@ import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
 import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
 import app.synapse.localllm.data.db.SynapseDatabase
+import app.synapse.localllm.data.library.AndroidMarkdownPdfExporter
+import app.synapse.localllm.data.library.RoomLibraryWorkspaceRepository
 import app.synapse.localllm.data.memory.DeterministicMemoryProjector
 import app.synapse.localllm.data.memory.EvidenceBackedMemoryAdmissionGate
 import app.synapse.localllm.data.memory.RoomMemoryRepository
@@ -24,6 +27,7 @@ import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
 import app.synapse.localllm.domain.chat.ConversationRepository
 import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.SynapseIdFactory
+import app.synapse.localllm.domain.library.LibraryWorkspaceRepository
 import app.synapse.localllm.domain.memory.MemoryAdmissionGate
 import app.synapse.localllm.domain.memory.MemoryProjector
 import app.synapse.localllm.domain.memory.MemoryRepository
@@ -47,11 +51,13 @@ class SynapseApplicationGraph private constructor(context: Context) {
     ).addMigrations(
         SYNAPSE_DATABASE_MIGRATION_1_2,
         SYNAPSE_DATABASE_MIGRATION_2_3,
+        SYNAPSE_DATABASE_MIGRATION_3_4,
     ).build()
 
     val settingsStore = SynapseSettingsStore(applicationContext)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
     val debugArchiveExporter = AndroidDebugArchiveExporter(applicationContext, clock)
+    val markdownPdfExporter = AndroidMarkdownPdfExporter(applicationContext, clock)
 
     val conversationRepository: ConversationRepository =
         RoomConversationRepository(
@@ -65,6 +71,15 @@ class SynapseApplicationGraph private constructor(context: Context) {
         RoomMemoryRepository(
             database = database,
             memoryDao = database.memoryDao(),
+            idFactory = idFactory,
+            clock = clock,
+        )
+
+    val libraryWorkspaceRepository: LibraryWorkspaceRepository =
+        RoomLibraryWorkspaceRepository(
+            context = applicationContext,
+            database = database,
+            libraryDao = database.libraryDao(),
             idFactory = idFactory,
             clock = clock,
         )

@@ -3,4 +3,7 @@
     <cache-path
         name="diagnostics"
         path="diagnostics/" />
+    <cache-path
+        name="library_exports"
+        path="library-exports/" />
 </paths>
