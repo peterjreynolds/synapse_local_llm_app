@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: synapse-ai-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-debug-apk:
     name: Build debug APK
