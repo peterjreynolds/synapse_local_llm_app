@@ -147,10 +147,18 @@ class RoomMemoryRepository(
     override suspend fun retrieveMemories(query: String, limit: Int): RetrievalBundle {
         val retrievedAt = clock.now()
         val queryTokens = tokenize(query)
+        val isPersonalRecallQuery = isPersonalMemoryRecallQuery(query)
         val candidates = listPromptVisibleMemoryRefs(
             limit = limit * CANDIDATE_MULTIPLIER,
         ) { versionWithKind ->
-            buildReasonCodes(queryTokens, versionWithKind.version.text)
+            val lexicalReasonCodes = buildReasonCodes(queryTokens, versionWithKind.version.text)
+            if (lexicalReasonCodes.isNotEmpty()) {
+                lexicalReasonCodes
+            } else if (isPersonalRecallQuery) {
+                listOf("personal-memory-recall")
+            } else {
+                emptyList()
+            }
         }
             .filter { retrievedMemory ->
                 retrievedMemory.reasonCodes.isNotEmpty() || queryTokens.isEmpty()
@@ -273,6 +281,11 @@ class RoomMemoryRepository(
             .filterNot { token -> token in stopWords }
             .toSet()
 
+    private fun isPersonalMemoryRecallQuery(query: String): Boolean {
+        val normalizedQuery = query.lowercase()
+        return personalMemoryRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }
+    }
+
     private companion object {
         const val CANDIDATE_MULTIPLIER = 4
         const val MAX_REASON_CODES = 4
@@ -294,6 +307,13 @@ class RoomMemoryRepository(
             "where",
             "need",
             "want",
+        )
+        val personalMemoryRecallPatterns = listOf(
+            Regex("\\b(remember|memory|memories)\\b"),
+            Regex("\\babout\\s+me\\b"),
+            Regex("\\bknow\\s+about\\s+me\\b"),
+            Regex("\\bmy\\s+favou?rite\\b"),
+            Regex("\\bwhat\\s+do\\s+i\\s+(like|prefer|want|need)\\b"),
         )
     }
 }

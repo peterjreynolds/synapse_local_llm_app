@@ -15,10 +15,28 @@ class DeterministicMemoryProjector : MemoryProjector {
         if (normalizedText.length < MINIMUM_MEMORY_TEXT_LENGTH) return emptyList()
 
         return listOfNotNull(
+            extractFavoriteCandidate(normalizedText, traceEvent),
             extractPreferenceCandidate(normalizedText, traceEvent),
             extractCommitmentCandidate(normalizedText, traceEvent),
             extractProcedureCandidate(normalizedText, traceEvent),
         ).distinctBy { candidate -> candidate.kind to candidate.text.lowercase() }
+    }
+
+    private fun extractFavoriteCandidate(
+        normalizedText: String,
+        traceEvent: TraceEventRecord,
+    ): MemoryClaimCandidate? {
+        val match = favoritePattern.find(normalizedText) ?: return null
+        val category = cleanMemorySegment(match.groupValues[1])
+        val favorite = cleanMemorySegment(match.groupValues[2])
+        if (category.isBlank() || favorite.isBlank()) return null
+
+        return buildCandidate(
+            kind = MemoryKind.PREFERENCE,
+            text = "User's favorite $category is $favorite.",
+            traceEvent = traceEvent,
+            reasonCodes = listOf("explicit-user-favorite"),
+        )
     }
 
     private fun extractPreferenceCandidate(
@@ -76,11 +94,22 @@ class DeterministicMemoryProjector : MemoryProjector {
             reasonCodes = reasonCodes,
         )
 
+    private fun cleanMemorySegment(rawText: String): String =
+        rawText
+            .trim()
+            .trimEnd('.', '!', '?', ',', ';', ':')
+            .trim()
+
     private companion object {
         const val MINIMUM_MEMORY_TEXT_LENGTH = 8
         const val MAXIMUM_MEMORY_TEXT_LENGTH = 280
         const val DEFAULT_EXPLICIT_CONFIDENCE = 0.86
 
+        val favoritePattern =
+            Regex(
+                pattern = "\\bmy\\s+favou?rite\\s+([a-z0-9][a-z0-9' -]{0,48})\\s+is\\s+(.{1,120})",
+                option = RegexOption.IGNORE_CASE,
+            )
         val preferencePattern =
             Regex(
                 pattern = "\\bI\\s+(like|love|prefer|hate|dislike|want|need)\\b.{2,140}",

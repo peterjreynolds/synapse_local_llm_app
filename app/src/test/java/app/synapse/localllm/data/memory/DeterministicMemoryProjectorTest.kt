@@ -29,6 +29,27 @@ class DeterministicMemoryProjectorTest {
     }
 
     @Test
+    fun extractsFavoriteFoodAsPreferenceMemory() {
+        val traceEvent = userTrace("My favorite food is pizza.")
+
+        val candidate = projector.extractMemoryCandidates(traceEvent).single()
+
+        assertEquals(MemoryKind.PREFERENCE, candidate.kind)
+        assertEquals("User's favorite food is pizza.", candidate.text)
+        assertTrue(candidate.reasonCodes.contains("explicit-user-favorite"))
+    }
+
+    @Test
+    fun extractsFavoriteFoodInsideRememberRequest() {
+        val traceEvent = userTrace("Remember that my favorite food is sushi.")
+
+        val candidate = projector.extractMemoryCandidates(traceEvent).single()
+
+        assertEquals("User's favorite food is sushi.", candidate.text)
+        assertTrue(candidate.reasonCodes.contains("explicit-user-favorite"))
+    }
+
+    @Test
     fun ignoresAssistantTextForDurableMemoryExtraction() {
         val traceEvent = TraceEventRecord(
             id = TraceEventId("trace-1"),
