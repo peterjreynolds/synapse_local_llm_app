@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.ClipData
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -51,12 +52,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
@@ -102,7 +105,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -120,6 +125,7 @@ import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
+import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStartStatus
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
@@ -285,12 +291,25 @@ private fun SynapseScreen(
                     onRuntimeStart = onRuntimeStart,
                 )
             },
+            bottomBar = {
+                if (state.activePanel == SynapsePanel.CHAT) {
+                    ComposerBar(
+                        state = state,
+                        onComposerChanged = onComposerChanged,
+                        onSend = onSend,
+                        onStop = onStop,
+                        onAttach = onAttach,
+                        onRemoveAttachment = onRemoveAttachment,
+                        onStartSpeech = onStartSpeech,
+                        modifier = Modifier.imePadding(),
+                    )
+                }
+            },
         ) { innerPadding ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
-                    .imePadding(),
+                    .padding(innerPadding),
             ) {
                 NoticeBanner(
                     notice = state.lastNotice,
@@ -303,12 +322,6 @@ private fun SynapseScreen(
                             modifier = Modifier
                                 .fillMaxSize(),
                             state = state,
-                            onComposerChanged = onComposerChanged,
-                            onSend = onSend,
-                            onStop = onStop,
-                            onAttach = onAttach,
-                            onRemoveAttachment = onRemoveAttachment,
-                            onStartSpeech = onStartSpeech,
                             messageSpeechController = messageSpeechController,
                         )
 
@@ -411,15 +424,20 @@ private fun SynapseTopBar(
                 tint = MaterialTheme.colorScheme.onBackground,
             )
         }
-        IconButton(
-            onClick = onRuntimeCheck,
-            modifier = Modifier.size(40.dp),
-        ) {
-            Icon(
-                Icons.Rounded.ErrorOutline,
-                contentDescription = "Check runtime",
-                tint = MaterialTheme.colorScheme.onBackground,
-            )
+        if (actionableRuntimeLabel != null) {
+            IconButton(
+                onClick = {
+                    onRuntimeCheck()
+                    onPanelSelected(SynapsePanel.SETTINGS)
+                },
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    Icons.Rounded.ErrorOutline,
+                    contentDescription = "Open runtime diagnostics",
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
         }
         IconButton(
             onClick = { onPanelSelected(SynapsePanel.MEMORY) },
@@ -804,12 +822,6 @@ private fun NoticeBanner(
 private fun ChatWorkspace(
     modifier: Modifier = Modifier,
     state: SynapseUiState,
-    onComposerChanged: (String) -> Unit,
-    onSend: () -> Unit,
-    onStop: () -> Unit,
-    onAttach: () -> Unit,
-    onRemoveAttachment: (Int) -> Unit,
-    onStartSpeech: () -> Unit,
     messageSpeechController: MessageSpeechPlaybackController,
 ) {
     Column(
@@ -822,15 +834,6 @@ private fun ChatWorkspace(
             messages = state.messages,
             speechPlaybackEnabled = state.settings.speechPlaybackEnabled,
             messageSpeechController = messageSpeechController,
-        )
-        ComposerBar(
-            state = state,
-            onComposerChanged = onComposerChanged,
-            onSend = onSend,
-            onStop = onStop,
-            onAttach = onAttach,
-            onRemoveAttachment = onRemoveAttachment,
-            onStartSpeech = onStartSpeech,
         )
     }
 }
@@ -944,6 +947,8 @@ private fun MessageBubble(
     messageSpeechController: MessageSpeechPlaybackController,
 ) {
     val isUser = message.role == ConversationRole.USER
+    val clipboard = LocalClipboard.current
+    val coroutineScope = rememberCoroutineScope()
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
@@ -967,18 +972,20 @@ private fun MessageBubble(
                 ) {
                     SynapseThinkingIndicator()
                 } else {
-                    Text(
-                        text = message.body,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
+                    SelectionContainer {
+                        Text(
+                            text = message.body,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
                 }
-                if (!isUser) {
+                if (message.body.isNotBlank() || message.deliveryState == MessageDeliveryState.FAILED) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (message.deliveryState == MessageDeliveryState.FAILED) {
+                        if (!isUser && message.deliveryState == MessageDeliveryState.FAILED) {
                             Text(
                                 text = message.failureReason ?: "Failed",
                                 color = MaterialTheme.colorScheme.error,
@@ -986,7 +993,28 @@ private fun MessageBubble(
                                 modifier = Modifier.weight(1f),
                             )
                         }
-                        if (speechPlaybackEnabled && message.body.isNotBlank()) {
+                        if (message.body.isNotBlank()) {
+                            IconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        clipboard.setClipEntry(
+                                            ClipEntry(
+                                                ClipData.newPlainText(
+                                                    "Synapse message",
+                                                    message.body,
+                                                ),
+                                            ),
+                                        )
+                                    }
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Rounded.ContentCopy,
+                                    contentDescription = "Copy message",
+                                )
+                            }
+                        }
+                        if (!isUser && speechPlaybackEnabled && message.body.isNotBlank()) {
                             IconButton(
                                 onClick = {
                                     messageSpeechController.toggleMessagePlayback(
@@ -1037,17 +1065,24 @@ private fun SynapseThinkingIndicator() {
         label = "synapse-thinking-rotation",
     )
     var visiblePhrase by remember { mutableStateOf("") }
+    var visibleDots by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         var phraseIndex = Random.nextInt(SynapseThinkingPhrases.size)
         while (true) {
             val phrase = SynapseThinkingPhrases[phraseIndex]
             visiblePhrase = ""
+            visibleDots = ""
             phrase.indices.forEach { characterIndex ->
                 visiblePhrase = phrase.take(characterIndex + 1)
                 delay(THINKING_PHRASE_CHARACTER_DELAY_MILLIS)
             }
-            delay(THINKING_PHRASE_REST_MILLIS)
+            repeat(THINKING_PHRASE_DOT_CYCLES) {
+                THINKING_PHRASE_DOT_STATES.forEach { dots ->
+                    visibleDots = dots
+                    delay(THINKING_PHRASE_DOT_DELAY_MILLIS)
+                }
+            }
             phraseIndex = (phraseIndex + 1 + Random.nextInt(SynapseThinkingPhrases.lastIndex)) %
                 SynapseThinkingPhrases.size
         }
@@ -1066,7 +1101,7 @@ private fun SynapseThinkingIndicator() {
                 .rotate(rotation),
         )
         Text(
-            text = visiblePhrase,
+            text = "$visiblePhrase$visibleDots",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -1282,6 +1317,15 @@ private fun MemoryPanel(
                 }
             }
         }
+        if (state.memorySearchResults.isEmpty()) {
+            item {
+                Text(
+                    text = "No active memories found.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
         items(state.memorySearchResults, key = { memory -> memory.memoryVersionId.raw }) { memory ->
             MemoryResultRow(memory = memory, onTombstoneMemory = onTombstoneMemory)
         }
@@ -1385,6 +1429,14 @@ private fun SettingsPanel(
                 EmbeddedModelSettingsCard(
                     state = state,
                     onImportEmbeddedModel = onImportEmbeddedModel,
+                )
+            }
+            item {
+                ModelPromptProfileSelector(
+                    selectedProfile = state.settingsDraft.modelPromptProfile,
+                    onProfileSelected = { profile ->
+                        onSettingsDraftChanged(state.settingsDraft.copy(modelPromptProfile = profile))
+                    },
                 )
             }
         }
@@ -1587,6 +1639,49 @@ private fun EmbeddedModelSettingsCard(
                 Icon(Icons.Rounded.FolderOpen, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(if (state.isImportingModel) "Importing..." else "Import GGUF")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelPromptProfileSelector(
+    selectedProfile: ModelPromptProfile,
+    onProfileSelected: (ModelPromptProfile) -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Prompt profile",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = selectedProfile.toPromptProfileLabel(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                ModelPromptProfile.entries.forEach { profile ->
+                    TextButton(
+                        onClick = { onProfileSelected(profile) },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            text = profile.toPromptProfileShortLabel(),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1886,6 +1981,22 @@ private fun MemoryKind.toDisplayLabel(): String =
         } else {
             firstCharacter.toString()
         }
+    }
+
+private fun ModelPromptProfile.toPromptProfileLabel(): String =
+    when (this) {
+        ModelPromptProfile.AUTO -> "Auto: use GGUF template when available"
+        ModelPromptProfile.QWEN_CHATML -> "Qwen ChatML"
+        ModelPromptProfile.LLAMA_INSTRUCT -> "Llama 3 Instruct"
+        ModelPromptProfile.PLAIN_COMPLETION -> "Plain transcript"
+    }
+
+private fun ModelPromptProfile.toPromptProfileShortLabel(): String =
+    when (this) {
+        ModelPromptProfile.AUTO -> "Auto"
+        ModelPromptProfile.QWEN_CHATML -> "Qwen"
+        ModelPromptProfile.LLAMA_INSTRUCT -> "Llama"
+        ModelPromptProfile.PLAIN_COMPLETION -> "Plain"
     }
 
 private fun formatByteCount(byteCount: Long): String =

@@ -305,4 +305,6 @@ internal val SynapseThinkingPhrases =
     )
 
 internal const val THINKING_PHRASE_CHARACTER_DELAY_MILLIS = 24L
-internal const val THINKING_PHRASE_REST_MILLIS = 3_000L
+internal const val THINKING_PHRASE_DOT_DELAY_MILLIS = 500L
+internal const val THINKING_PHRASE_DOT_CYCLES = 4
+internal val THINKING_PHRASE_DOT_STATES = listOf("", ".", "..", "...")
