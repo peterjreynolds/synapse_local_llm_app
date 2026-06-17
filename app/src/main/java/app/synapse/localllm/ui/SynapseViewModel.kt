@@ -5,27 +5,34 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.application.SynapseTurnOutcome
+import app.synapse.localllm.data.library.MarkdownPdfExportCommand
 import app.synapse.localllm.di.SynapseApplicationGraph
 import app.synapse.localllm.domain.chat.ChatThreadRecord
-import app.synapse.localllm.domain.diagnostics.DebugUiSnapshot
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
+import app.synapse.localllm.domain.diagnostics.DebugUiSnapshot
 import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.ids.MemoryObjectId
+import app.synapse.localllm.domain.library.CreateMarkdownArtifactCommand
+import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageThresholds
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SynapseViewModel(
     private val graph: SynapseApplicationGraph,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(SynapseUiState())
     val uiState: StateFlow<SynapseUiState> = mutableUiState
@@ -66,8 +73,12 @@ class SynapseViewModel(
 
     fun selectPanel(panel: SynapsePanel) {
         mutableUiState.update { state -> state.copy(activePanel = panel, lastNotice = null) }
-        if (panel == SynapsePanel.MEMORY) {
-            loadMemoryList()
+        when (panel) {
+            SynapsePanel.LIBRARY -> loadLibraryArtifacts()
+            SynapsePanel.MEMORY -> loadMemoryList()
+            SynapsePanel.CHAT,
+            SynapsePanel.SETTINGS,
+            -> Unit
         }
     }
 
@@ -243,6 +254,133 @@ class SynapseViewModel(
                     runtimeStatus = RuntimeStatus.Starting(receipt),
                     lastNotice = receipt.message,
                 )
+            }
+        }
+    }
+
+    fun updateLibraryDraftTitle(title: String) {
+        mutableUiState.update { state -> state.copy(libraryDraftTitle = title) }
+    }
+
+    fun updateLibraryDraftMarkdown(markdown: String) {
+        mutableUiState.update { state -> state.copy(libraryDraftMarkdown = markdown) }
+    }
+
+    fun loadLibraryArtifacts() {
+        viewModelScope.launch {
+            try {
+                refreshLibraryArtifactsIntoState()
+            } catch (exception: Exception) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Library catalog could not be loaded.")
+                }
+            }
+        }
+    }
+
+    fun createLibraryMarkdownArtifact() {
+        val snapshot = mutableUiState.value
+        val title = snapshot.libraryDraftTitle.trim()
+        val markdown = snapshot.libraryDraftMarkdown.trim()
+        if (snapshot.isCreatingLibraryArtifact) return
+        if (title.isBlank() || markdown.isBlank()) {
+            mutableUiState.update { state ->
+                state.copy(lastNotice = "Add a title and Markdown body before saving.")
+            }
+            return
+        }
+
+        mutableUiState.update { state ->
+            state.copy(isCreatingLibraryArtifact = true, lastNotice = null)
+        }
+        viewModelScope.launch {
+            try {
+                val receipt = withContext(ioDispatcher) {
+                    graph.libraryWorkspaceRepository.createMarkdownArtifact(
+                        CreateMarkdownArtifactCommand(
+                            title = title,
+                            markdown = markdown,
+                            catalogSummary = buildLibraryCatalogSummary(markdown),
+                        ),
+                    )
+                }
+                val artifacts = withContext(ioDispatcher) {
+                    graph.libraryWorkspaceRepository.listCatalogArtifacts(limit = 50)
+                }
+                mutableUiState.update { state ->
+                    state.copy(
+                        libraryDraftTitle = "",
+                        libraryDraftMarkdown = "",
+                        libraryArtifacts = artifacts,
+                        lastNotice = "Saved Markdown note: ${receipt.artifact.displayName}",
+                    )
+                }
+            } catch (exception: Exception) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Markdown note could not be saved.")
+                }
+            } finally {
+                mutableUiState.update { state -> state.copy(isCreatingLibraryArtifact = false) }
+            }
+        }
+    }
+
+    fun exportLibraryDraftAsPdf(onPdfReady: (Uri) -> Unit) {
+        val snapshot = mutableUiState.value
+        val title = snapshot.libraryDraftTitle.trim()
+        val markdown = snapshot.libraryDraftMarkdown.trim()
+        if (snapshot.isExportingLibraryPdf) return
+        if (title.isBlank() || markdown.isBlank()) {
+            mutableUiState.update { state ->
+                state.copy(lastNotice = "Add a title and Markdown body before exporting.")
+            }
+            return
+        }
+
+        exportMarkdownAsPdf(
+            title = title,
+            markdown = markdown,
+            onPdfReady = onPdfReady,
+        )
+    }
+
+    fun exportLibraryArtifactAsPdf(
+        artifact: LibraryArtifactRecord,
+        onPdfReady: (Uri) -> Unit,
+    ) {
+        if (mutableUiState.value.isExportingLibraryPdf) return
+        mutableUiState.update { state ->
+            state.copy(isExportingLibraryPdf = true, lastNotice = null)
+        }
+        viewModelScope.launch {
+            try {
+                val markdownContent = withContext(ioDispatcher) {
+                    graph.libraryWorkspaceRepository.readMarkdownArtifactContent(artifact.id)
+                }
+                if (markdownContent == null) {
+                    mutableUiState.update { state ->
+                        state.copy(lastNotice = "Markdown artifact is missing from the workspace.")
+                    }
+                    return@launch
+                }
+                val receipt = withContext(ioDispatcher) {
+                    graph.markdownPdfExporter.exportMarkdownAsPdf(
+                        MarkdownPdfExportCommand(
+                            title = markdownContent.artifact.title,
+                            markdown = markdownContent.markdown,
+                        ),
+                    )
+                }
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = "PDF ready: ${receipt.displayName}")
+                }
+                onPdfReady(receipt.uri)
+            } catch (exception: Exception) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Markdown artifact could not be exported.")
+                }
+            } finally {
+                mutableUiState.update { state -> state.copy(isExportingLibraryPdf = false) }
             }
         }
     }
@@ -455,6 +593,53 @@ class SynapseViewModel(
         }
     }
 
+    private fun exportMarkdownAsPdf(
+        title: String,
+        markdown: String,
+        onPdfReady: (Uri) -> Unit,
+    ) {
+        mutableUiState.update { state ->
+            state.copy(isExportingLibraryPdf = true, lastNotice = null)
+        }
+        viewModelScope.launch {
+            try {
+                val receipt = withContext(ioDispatcher) {
+                    graph.markdownPdfExporter.exportMarkdownAsPdf(
+                        MarkdownPdfExportCommand(
+                            title = title,
+                            markdown = markdown,
+                        ),
+                    )
+                }
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = "PDF ready: ${receipt.displayName}")
+                }
+                onPdfReady(receipt.uri)
+            } catch (exception: Exception) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Markdown PDF could not be exported.")
+                }
+            } finally {
+                mutableUiState.update { state -> state.copy(isExportingLibraryPdf = false) }
+            }
+        }
+    }
+
+    private suspend fun refreshLibraryArtifactsIntoState() {
+        val artifacts = withContext(ioDispatcher) {
+            graph.libraryWorkspaceRepository.listCatalogArtifacts(limit = 50)
+        }
+        mutableUiState.update { state -> state.copy(libraryArtifacts = artifacts) }
+    }
+
+    private fun buildLibraryCatalogSummary(markdown: String): String? =
+        markdown
+            .lineSequence()
+            .map { line -> line.trim().trimStart('#').trim() }
+            .firstOrNull { line -> line.isNotBlank() }
+            ?.take(180)
+            ?.trimEnd()
+
     private fun SynapseSettings.toStorageThresholds(): StorageThresholds =
         StorageThresholds(
             memoryDatabaseWarningBytes = memoryDatabaseWarningBytes,
@@ -480,10 +665,11 @@ class SynapseViewModel(
 
 class SynapseViewModelFactory(
     private val graph: SynapseApplicationGraph,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SynapseViewModel::class.java)) {
-            return modelClass.cast(SynapseViewModel(graph))
+            return modelClass.cast(SynapseViewModel(graph, ioDispatcher))
                 ?: throw IllegalArgumentException("Unable to create SynapseViewModel.")
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}.")

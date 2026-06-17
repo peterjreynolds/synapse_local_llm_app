@@ -98,10 +98,26 @@ class RoomLibraryWorkspaceRepositoryTest {
         requireNotNull(foundArtifact)
         assertEquals("Speaker Diarization Notes", foundArtifact.title)
         assertEquals("speaker-diarization-notes.md", foundArtifact.displayName)
-        assertEquals("# Existing heading\n\nKeep source documents separate from memory.\n", File(
-            context.filesDir,
-            foundArtifact.relativePath,
-        ).readText())
+    }
+
+    @Test
+    fun readMarkdownArtifactContentReadsOnlyCatalogOwnedWorkspaceFile() = runTest {
+        val receipt = repository.createMarkdownArtifact(
+            CreateMarkdownArtifactCommand(
+                title = "Speaker Diarization Notes",
+                markdown = "# Existing heading\n\nKeep source documents separate from memory.",
+                tags = listOf("diarization"),
+            ),
+        )
+
+        val markdownContent = repository.readMarkdownArtifactContent(receipt.artifact.id)
+
+        requireNotNull(markdownContent)
+        assertEquals(receipt.artifact.id, markdownContent.artifact.id)
+        assertEquals(
+            "# Existing heading\n\nKeep source documents separate from memory.\n",
+            markdownContent.markdown,
+        )
     }
 
     private class IncrementingSynapseClock : SynapseClock {

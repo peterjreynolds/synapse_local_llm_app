@@ -1,9 +1,10 @@
 # Library And Workspace Architecture
 
-Status: first durable foundation slice
+Status: app-facing foundation slice
 
-Synapse now has a narrow app-owned Library/Workspace foundation. It is not a
-RAG engine yet, and it is intentionally separate from personal memory.
+Synapse now has a narrow app-owned Library/Workspace foundation exposed through
+the app flow. It is not a RAG engine yet, and it is intentionally separate from
+personal memory.
 
 ## Current Slice
 
@@ -18,6 +19,13 @@ RAG engine yet, and it is intentionally separate from personal memory.
   `cacheDir/library-exports/pdf/...`.
 - PDF export files can be exposed through the app FileProvider for share/export
   flows.
+- The app graph exposes the Library/Workspace repository and Markdown PDF
+  exporter.
+- The ViewModel exposes app-facing operations to create Markdown notes, list
+  recent catalog artifacts, export a draft to PDF, and export saved Markdown
+  artifacts to PDF.
+- The app has a minimal Library panel for creating Markdown notes, refreshing
+  recent artifacts, and sharing generated PDFs.
 
 ## Current Tables
 
@@ -68,10 +76,21 @@ itself should not be shoved into durable memory.
 
 ## Next Slices
 
-1. UI surfaces for "Create note" and generated chat file cards.
+1. Generated chat file cards that can open/share saved workspace artifacts.
 2. Text/Markdown import preserving originals plus catalog rows.
 3. PDF text extraction into a document-original record.
 4. Chunk metadata and keyword index.
 5. Local embedding model integration.
 6. Retrieval receipts and cited evidence packs.
 7. Research graph relationships: similarity, references, conflicts, topics.
+
+## Test Notes
+
+- Repository tests cover safe title/path handling, catalog metadata, durable
+  Markdown reads, and FileProvider PDF export receipts.
+- The production graph has a library wiring smoke test.
+- The ViewModel has a focused app-facing operation test for creating a Markdown
+  artifact and refreshing Library panel state.
+- Robolectric tests inject a small PDF writer where platform `PdfDocument`
+  behavior is not the subject under test. Production exports use Android
+  `PdfDocument`.

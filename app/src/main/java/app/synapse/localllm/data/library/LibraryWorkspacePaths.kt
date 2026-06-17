@@ -53,6 +53,13 @@ class LibraryWorkspacePaths(
         )
     }
 
+    fun resolveWorkspaceArtifactFile(relativePath: String): File {
+        require(relativePath.isNotBlank()) { "Library artifact path cannot be blank." }
+        val artifactFile = File(filesRoot, relativePath).canonicalFile
+        requireOwnedFile(workspaceRoot, artifactFile)
+        return artifactFile
+    }
+
     private fun File.toUnixRelativePathFrom(root: File): String {
         val rootPath = root.canonicalFile.toPath()
         val filePath = canonicalFile.toPath()

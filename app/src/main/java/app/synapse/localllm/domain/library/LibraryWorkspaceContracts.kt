@@ -39,6 +39,11 @@ data class LibraryArtifactRecord(
     val updatedAt: Instant,
 )
 
+data class MarkdownArtifactContent(
+    val artifact: LibraryArtifactRecord,
+    val markdown: String,
+)
+
 data class MarkdownArtifactCreationReceipt(
     val receiptId: ReceiptId,
     val artifact: LibraryArtifactRecord,
@@ -53,6 +58,8 @@ interface LibraryWorkspaceRepository {
     ): MarkdownArtifactCreationReceipt
 
     suspend fun findArtifact(artifactId: LibraryArtifactId): LibraryArtifactRecord?
+
+    suspend fun readMarkdownArtifactContent(artifactId: LibraryArtifactId): MarkdownArtifactContent?
 
     suspend fun listCatalogArtifacts(limit: Int): List<LibraryArtifactRecord>
 }

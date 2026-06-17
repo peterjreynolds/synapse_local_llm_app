@@ -14,6 +14,7 @@ import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.library.LibraryArtifactSourceKind
 import app.synapse.localllm.domain.library.LibraryArtifactWriteMutation
 import app.synapse.localllm.domain.library.LibraryWorkspaceRepository
+import app.synapse.localllm.domain.library.MarkdownArtifactContent
 import app.synapse.localllm.domain.library.MarkdownArtifactCreationReceipt
 import app.synapse.localllm.domain.time.SynapseClock
 import java.io.File
@@ -94,6 +95,17 @@ class RoomLibraryWorkspaceRepository(
 
     override suspend fun findArtifact(artifactId: LibraryArtifactId): LibraryArtifactRecord? =
         libraryDao.findLibraryArtifact(artifactId.raw)?.toDomain()
+
+    override suspend fun readMarkdownArtifactContent(artifactId: LibraryArtifactId): MarkdownArtifactContent? {
+        val artifact = libraryDao.findLibraryArtifact(artifactId.raw) ?: return null
+        if (artifact.artifactKind != LibraryArtifactKind.MARKDOWN.name) return null
+        val artifactFile = workspacePaths.resolveWorkspaceArtifactFile(artifact.relativePath)
+        if (!artifactFile.isFile) return null
+        return MarkdownArtifactContent(
+            artifact = artifact.toDomain(),
+            markdown = artifactFile.readText(Charsets.UTF_8),
+        )
+    }
 
     override suspend fun listCatalogArtifacts(limit: Int): List<LibraryArtifactRecord> {
         require(limit in 1..MAX_CATALOG_LIMIT) { "Library artifact catalog limit must be 1..$MAX_CATALOG_LIMIT." }

@@ -5,6 +5,7 @@ import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class LibraryWorkspacePathsTest {
@@ -36,5 +37,21 @@ class LibraryWorkspacePathsTest {
         )
 
         assertEquals(listOf("ai-readiness", "speaker-diarization", "bad"), tags)
+    }
+
+    @Test
+    fun resolveWorkspaceArtifactFileRejectsPathsOutsideWorkspaceRoot() {
+        val filesDirectory = Files.createTempDirectory("synapse-files").toFile()
+        val cacheDirectory = Files.createTempDirectory("synapse-cache").toFile()
+        val paths = LibraryWorkspacePaths(filesDirectory, cacheDirectory)
+
+        try {
+            paths.resolveWorkspaceArtifactFile("library/../outside.md")
+            fail("Expected workspace path escape to be rejected.")
+        } catch (exception: IllegalArgumentException) {
+            assertTrue(
+                exception.message.orEmpty().contains("escaped its owner directory"),
+            )
+        }
     }
 }

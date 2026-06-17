@@ -122,6 +122,7 @@ import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.MessageDeliveryState
 import app.synapse.localllm.domain.chat.PendingAttachment
+import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
@@ -215,6 +216,20 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onRuntimeCheck = viewModel::checkRuntimeStatus,
         onRuntimeStart = viewModel::startRuntime,
         onImportEmbeddedModel = { modelImportLauncher.launch(modelMimeTypes) },
+        onLibraryTitleChanged = viewModel::updateLibraryDraftTitle,
+        onLibraryMarkdownChanged = viewModel::updateLibraryDraftMarkdown,
+        onCreateLibraryMarkdownArtifact = viewModel::createLibraryMarkdownArtifact,
+        onRefreshLibraryArtifacts = viewModel::loadLibraryArtifacts,
+        onExportLibraryDraftAsPdf = {
+            viewModel.exportLibraryDraftAsPdf { pdfUri ->
+                sharePdfExport(context, pdfUri)
+            }
+        },
+        onExportLibraryArtifactAsPdf = { artifact ->
+            viewModel.exportLibraryArtifactAsPdf(artifact) { pdfUri ->
+                sharePdfExport(context, pdfUri)
+            }
+        },
         onMemoryQueryChanged = viewModel::updateMemorySearchQuery,
         onMemorySearch = viewModel::searchMemory,
         onTombstoneMemory = { memory -> viewModel.tombstoneMemory(memory.memoryObjectId) },
@@ -254,6 +269,12 @@ private fun SynapseScreen(
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
     onImportEmbeddedModel: () -> Unit,
+    onLibraryTitleChanged: (String) -> Unit,
+    onLibraryMarkdownChanged: (String) -> Unit,
+    onCreateLibraryMarkdownArtifact: () -> Unit,
+    onRefreshLibraryArtifacts: () -> Unit,
+    onExportLibraryDraftAsPdf: () -> Unit,
+    onExportLibraryArtifactAsPdf: (LibraryArtifactRecord) -> Unit,
     onMemoryQueryChanged: (String) -> Unit,
     onMemorySearch: () -> Unit,
     onTombstoneMemory: (RetrievedMemoryRef) -> Unit,
@@ -323,6 +344,17 @@ private fun SynapseScreen(
                                 .fillMaxSize(),
                             state = state,
                             messageSpeechController = messageSpeechController,
+                        )
+
+                    SynapsePanel.LIBRARY ->
+                        LibraryPanel(
+                            state = state,
+                            onLibraryTitleChanged = onLibraryTitleChanged,
+                            onLibraryMarkdownChanged = onLibraryMarkdownChanged,
+                            onCreateLibraryMarkdownArtifact = onCreateLibraryMarkdownArtifact,
+                            onRefreshLibraryArtifacts = onRefreshLibraryArtifacts,
+                            onExportLibraryDraftAsPdf = onExportLibraryDraftAsPdf,
+                            onExportLibraryArtifactAsPdf = onExportLibraryArtifactAsPdf,
                         )
 
                     SynapsePanel.MEMORY ->
@@ -438,6 +470,16 @@ private fun SynapseTopBar(
                     tint = MaterialTheme.colorScheme.error,
                 )
             }
+        }
+        IconButton(
+            onClick = { onPanelSelected(SynapsePanel.LIBRARY) },
+            modifier = Modifier.size(40.dp),
+        ) {
+            Icon(
+                Icons.Rounded.FolderOpen,
+                contentDescription = "Library",
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
         }
         IconButton(
             onClick = { onPanelSelected(SynapsePanel.MEMORY) },
@@ -1275,6 +1317,173 @@ private fun AttachmentStrip(
 }
 
 @Composable
+private fun LibraryPanel(
+    state: SynapseUiState,
+    onLibraryTitleChanged: (String) -> Unit,
+    onLibraryMarkdownChanged: (String) -> Unit,
+    onCreateLibraryMarkdownArtifact: () -> Unit,
+    onRefreshLibraryArtifacts: () -> Unit,
+    onExportLibraryDraftAsPdf: () -> Unit,
+    onExportLibraryArtifactAsPdf: (LibraryArtifactRecord) -> Unit,
+) {
+    val draftIsComplete = state.libraryDraftTitle.isNotBlank() &&
+        state.libraryDraftMarkdown.isNotBlank()
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding(),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Text(
+                text = "Library",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        item {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        text = "Create Markdown note",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    OutlinedTextField(
+                        value = state.libraryDraftTitle,
+                        onValueChange = onLibraryTitleChanged,
+                        label = { Text("Title") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = state.libraryDraftMarkdown,
+                        onValueChange = onLibraryMarkdownChanged,
+                        label = { Text("Markdown") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 6,
+                        maxLines = 12,
+                    )
+                    Button(
+                        onClick = onCreateLibraryMarkdownArtifact,
+                        enabled = draftIsComplete && !state.isCreatingLibraryArtifact,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text(if (state.isCreatingLibraryArtifact) "Saving..." else "Save Markdown")
+                    }
+                    TextButton(
+                        onClick = onExportLibraryDraftAsPdf,
+                        enabled = draftIsComplete && !state.isExportingLibraryPdf,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (state.isExportingLibraryPdf) "Exporting PDF..." else "Export Draft PDF")
+                    }
+                }
+            }
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Recent artifacts",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                TextButton(onClick = onRefreshLibraryArtifacts) {
+                    Text("Refresh")
+                }
+            }
+        }
+        if (state.libraryArtifacts.isEmpty()) {
+            item {
+                Text(
+                    text = "No library artifacts yet.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+        items(state.libraryArtifacts, key = { artifact -> artifact.id.raw }) { artifact ->
+            LibraryArtifactRow(
+                artifact = artifact,
+                exportEnabled = !state.isExportingLibraryPdf,
+                onExportLibraryArtifactAsPdf = onExportLibraryArtifactAsPdf,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryArtifactRow(
+    artifact: LibraryArtifactRecord,
+    exportEnabled: Boolean,
+    onExportLibraryArtifactAsPdf: (LibraryArtifactRecord) -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = artifact.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "${artifact.displayName} | ${formatByteCount(artifact.byteCount)}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                artifact.catalogSummary?.let { summary ->
+                    Text(
+                        text = summary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (artifact.tags.isNotEmpty()) {
+                    Text(
+                        text = artifact.tags.joinToString(" | "),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            TextButton(
+                onClick = { onExportLibraryArtifactAsPdf(artifact) },
+                enabled = exportEnabled,
+            ) {
+                Text("PDF")
+            }
+        }
+    }
+}
+
+@Composable
 private fun MemoryPanel(
     state: SynapseUiState,
     onMemoryQueryChanged: (String) -> Unit,
@@ -1877,6 +2086,15 @@ private fun shareDebugArchive(context: Context, archiveUri: Uri) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(sendIntent, "Share Synapse debug archive"))
+}
+
+private fun sharePdfExport(context: Context, pdfUri: Uri) {
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/pdf"
+        putExtra(Intent.EXTRA_STREAM, pdfUri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(sendIntent, "Share Synapse PDF"))
 }
 
 private fun buildPendingAttachment(context: Context, uri: Uri): PendingAttachment? {

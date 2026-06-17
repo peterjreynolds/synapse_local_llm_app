@@ -3,6 +3,7 @@ package app.synapse.localllm.ui
 import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.PendingAttachment
+import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStatus
@@ -12,6 +13,7 @@ import app.synapse.localllm.domain.storage.StorageHealthSnapshot
 
 enum class SynapsePanel {
     CHAT,
+    LIBRARY,
     MEMORY,
     SETTINGS,
 }
@@ -46,5 +48,10 @@ data class SynapseUiState(
     val lastNotice: String? = null,
     val memorySearchQuery: String = "",
     val memorySearchResults: List<RetrievedMemoryRef> = emptyList(),
+    val libraryDraftTitle: String = "",
+    val libraryDraftMarkdown: String = "",
+    val libraryArtifacts: List<LibraryArtifactRecord> = emptyList(),
+    val isCreatingLibraryArtifact: Boolean = false,
+    val isExportingLibraryPdf: Boolean = false,
     val storageHealthSnapshot: StorageHealthSnapshot? = null,
 )
