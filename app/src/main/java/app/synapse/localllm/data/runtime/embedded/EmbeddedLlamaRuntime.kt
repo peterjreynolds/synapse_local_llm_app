@@ -5,6 +5,7 @@ import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.runtime.ChatCompletionRequest
 import app.synapse.localllm.domain.runtime.ChatStreamEvent
+import app.synapse.localllm.domain.runtime.ModelChatMessage
 import app.synapse.localllm.domain.runtime.RuntimeStartReceipt
 import app.synapse.localllm.domain.runtime.RuntimeStartStatus
 import app.synapse.localllm.domain.runtime.RuntimeStatus
@@ -25,6 +26,27 @@ class EmbeddedLlamaRuntime(
     private val applicationContext = context.applicationContext
     private val engine: EmbeddedLlamaEngine by lazy {
         EmbeddedLlamaEngine.getInstance(applicationContext)
+    }
+    private val promptFormatter: EmbeddedPromptFormatter by lazy {
+        EmbeddedPromptFormatter(
+            modelTemplateFormatter = object : ModelTemplateFormatter {
+                override fun formatWithModelTemplate(messages: List<ModelChatMessage>): String? =
+                    engine.formatWithModelTemplate(
+                        roles = messages.map { message -> message.role.toTemplateRole() }.toTypedArray(),
+                        contents = messages.map { message -> message.content }.toTypedArray(),
+                    )
+
+                override fun formatWithNamedTemplate(
+                    templateName: String,
+                    messages: List<ModelChatMessage>,
+                ): String? =
+                    engine.formatWithNamedTemplate(
+                        templateName = templateName,
+                        roles = messages.map { message -> message.role.toTemplateRole() }.toTypedArray(),
+                        contents = messages.map { message -> message.content }.toTypedArray(),
+                    )
+            },
+        )
     }
 
     suspend fun checkStatus(settings: SynapseSettings): RuntimeStatus {
@@ -110,9 +132,15 @@ class EmbeddedLlamaRuntime(
                 return@flow
             }
             engine.loadModel(modelPath)
+            val promptFormat = promptFormatter.formatPrompt(
+                modelName = request.model,
+                modelPath = request.embeddedModelPath,
+                requestedProfile = request.modelPromptProfile,
+                messages = request.messages,
+            )
             engine.streamResponse(
-                systemPrompt = extractSystemPrompt(request),
-                userPrompt = buildEmbeddedPrompt(request),
+                promptText = promptFormat.promptText,
+                stopSequences = promptFormat.stopSequences,
                 maxTokens = request.maxTokens,
                 temperature = request.temperature,
             ).transform { token ->
@@ -132,23 +160,12 @@ class EmbeddedLlamaRuntime(
         engine.cancelGeneration()
     }
 
-    private fun extractSystemPrompt(request: ChatCompletionRequest): String =
-        request.messages
-            .firstOrNull { message -> message.role == ConversationRole.SYSTEM }
-            ?.content
-            ?.let { systemPrompt -> "<|im_start|>system\n$systemPrompt<|im_end|>\n" }
-            .orEmpty()
-
-    private fun buildEmbeddedPrompt(request: ChatCompletionRequest): String =
-        request.messages
-            .filterNot { message -> message.role == ConversationRole.SYSTEM }
-            .joinToString(separator = "") { message ->
-                when (message.role) {
-                    ConversationRole.USER -> "<|im_start|>user\n${message.content}<|im_end|>\n"
-                    ConversationRole.ASSISTANT -> "<|im_start|>assistant\n${message.content}<|im_end|>\n"
-                    ConversationRole.SYSTEM -> message.content
-                }
-            } + "<|im_start|>assistant\n"
+    private fun ConversationRole.toTemplateRole(): String =
+        when (this) {
+            ConversationRole.SYSTEM -> "system"
+            ConversationRole.USER -> "user"
+            ConversationRole.ASSISTANT -> "assistant"
+        }
 
     private companion object {
         const val EMBEDDED_BASE_URL = "embedded://llama.cpp"

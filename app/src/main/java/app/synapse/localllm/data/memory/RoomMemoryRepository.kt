@@ -139,24 +139,22 @@ class RoomMemoryRepository(
         )
     }
 
+    override suspend fun listPromptVisibleMemories(limit: Int): List<RetrievedMemoryRef> =
+        listPromptVisibleMemoryRefs(limit = limit.coerceAtLeast(1)) {
+            listOf("review-list")
+        }
+
     override suspend fun retrieveMemories(query: String, limit: Int): RetrievalBundle {
         val retrievedAt = clock.now()
         val queryTokens = tokenize(query)
-        val candidates = memoryDao
-            .listPromptVisibleVersions(
-                activeStatus = MemoryStatus.ACTIVE.name,
-                surfacePolicy = SurfacePolicy.PROMPT_VISIBLE.name,
-                limit = limit * CANDIDATE_MULTIPLIER,
-            )
-            .map { versionWithKind ->
-                val supportTraceEventIds = memoryDao.listSupportTraceEventIds(versionWithKind.version.id)
-                versionWithKind.toMemoryVersionRecord(supportTraceEventIds)
-                    .toRetrievedMemoryRef(
-                        kind = MemoryKind.valueOf(versionWithKind.objectKind),
-                        reasonCodes = buildReasonCodes(queryTokens, versionWithKind.version.text),
-                    )
+        val candidates = listPromptVisibleMemoryRefs(
+            limit = limit * CANDIDATE_MULTIPLIER,
+        ) { versionWithKind ->
+            buildReasonCodes(queryTokens, versionWithKind.version.text)
+        }
+            .filter { retrievedMemory ->
+                retrievedMemory.reasonCodes.isNotEmpty() || queryTokens.isEmpty()
             }
-            .filter { retrievedMemory -> retrievedMemory.reasonCodes.isNotEmpty() || queryTokens.isEmpty() }
             .take(limit)
 
         val promptBlock = buildPromptBlock(candidates)
@@ -168,6 +166,25 @@ class RoomMemoryRepository(
             promptBlock = promptBlock,
         )
     }
+
+    private suspend fun listPromptVisibleMemoryRefs(
+        limit: Int,
+        buildReasonCodes: (MemoryVersionWithKind) -> List<String>,
+    ): List<RetrievedMemoryRef> =
+        memoryDao
+            .listPromptVisibleVersions(
+                activeStatus = MemoryStatus.ACTIVE.name,
+                surfacePolicy = SurfacePolicy.PROMPT_VISIBLE.name,
+                limit = limit,
+            )
+            .map { versionWithKind ->
+                val supportTraceEventIds = memoryDao.listSupportTraceEventIds(versionWithKind.version.id)
+                versionWithKind.toMemoryVersionRecord(supportTraceEventIds)
+                    .toRetrievedMemoryRef(
+                        kind = MemoryKind.valueOf(versionWithKind.objectKind),
+                        reasonCodes = buildReasonCodes(versionWithKind),
+                    )
+            }
 
     private suspend fun persistRetrievalReceipt(
         query: String,
@@ -243,7 +260,7 @@ class RoomMemoryRepository(
     private fun buildPromptBlock(candidates: List<RetrievedMemoryRef>): String {
         if (candidates.isEmpty()) return ""
         return candidates.joinToString(separator = "\n") { candidate ->
-            "- [${candidate.memoryObjectId.raw}/${candidate.memoryVersionId.raw}] ${candidate.text}"
+            "- ${candidate.text}"
         }
     }
 

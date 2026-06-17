@@ -62,6 +62,7 @@ data class ChatCompletionRequest(
     val baseUrl: String,
     val model: String,
     val embeddedModelPath: String?,
+    val modelPromptProfile: ModelPromptProfile,
     val messages: List<ModelChatMessage>,
     val temperature: Double,
     val maxTokens: Int,

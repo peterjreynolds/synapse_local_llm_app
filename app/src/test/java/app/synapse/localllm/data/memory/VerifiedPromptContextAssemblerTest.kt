@@ -30,7 +30,7 @@ class VerifiedPromptContextAssemblerTest {
             retrievalBundle = RetrievalBundle(
                 retrievedAt = Instant.parse("2026-06-14T16:00:00Z"),
                 refs = listOf(retrievedMemory()),
-                promptBlock = "- [memory-1/version-1] User prefers native Android.",
+                promptBlock = "- User prefers native Android.",
             ),
             systemPrompt = "System prompt.",
         )
@@ -41,6 +41,28 @@ class VerifiedPromptContextAssemblerTest {
         assertEquals("Remember I prefer native Android.", messages[1].content)
         assertEquals("Got it.", messages[2].content)
         assertEquals("What should we build next?", messages[3].content)
+    }
+
+    @Test
+    fun removesLeakedAssistantScaffoldingFromPromptHistory() = runTest {
+        val messages = assembler.assemblePromptMessages(
+            userMessage = "Continue normally.",
+            priorMessages = listOf(
+                chatMessage(ConversationRole.USER, "Hey"),
+                chatMessage(
+                    ConversationRole.ASSISTANT,
+                    "Hey!<|im_end|>Hey!\n\nCore behavior:\nYou are Synapse.",
+                ),
+            ),
+            retrievalBundle = RetrievalBundle(
+                retrievedAt = Instant.parse("2026-06-14T16:00:00Z"),
+                refs = emptyList(),
+                promptBlock = "",
+            ),
+            systemPrompt = "System prompt.",
+        )
+
+        assertEquals("Hey!", messages[2].content)
     }
 
     private fun chatMessage(role: ConversationRole, body: String): ChatMessageRecord =

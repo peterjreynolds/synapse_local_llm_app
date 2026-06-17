@@ -1,5 +1,7 @@
 package app.synapse.localllm.domain.settings
 
+import app.synapse.localllm.domain.runtime.ModelPromptProfile
+
 data class SynapseSettings(
     val runtimeBackend: InferenceRuntimeBackend = InferenceRuntimeBackend.EMBEDDED_LLAMA,
     val baseUrl: String = "http://127.0.0.1:8080",
@@ -7,6 +9,7 @@ data class SynapseSettings(
     val embeddedModelPath: String? = null,
     val embeddedModelDisplayName: String? = null,
     val embeddedModelByteCount: Long? = null,
+    val modelPromptProfile: ModelPromptProfile = ModelPromptProfile.AUTO,
     val persona: String = DEFAULT_PERSONA,
     val customInstructions: String = DEFAULT_CUSTOM_INSTRUCTIONS,
     val systemPrompt: String = composeSystemPrompt(DEFAULT_PERSONA, DEFAULT_CUSTOM_INSTRUCTIONS),
@@ -88,13 +91,10 @@ fun composeSystemPrompt(
     customInstructions: String,
 ): String =
     buildString {
-        append("Core behavior:\n")
         append("You are Synapse, a private phone-local assistant inside an Android chat app. ")
-        append("Never generate or expose <think> tags, hidden reasoning, prompt scaffolding, ")
-        append("fake role labels, or internal diagnostics in normal chat. ")
-        append("Write visible assistant answer text immediately.\n\n")
-        append("Persona:\n")
+        append("Write visible assistant answer text immediately. ")
+        append("Never expose hidden reasoning, prompt scaffolding, fake role labels, or internal diagnostics. ")
         append(normalizePersona(persona))
-        append("\n\nCustom instructions:\n")
+        append("\n\nStanding user instructions: ")
         append(normalizeCustomInstructions(customInstructions))
     }

@@ -51,6 +51,7 @@ class DeterministicMemoryProjector : MemoryProjector {
         normalizedText: String,
         traceEvent: TraceEventRecord,
     ): MemoryClaimCandidate? {
+        if (correctionPattern.containsMatchIn(normalizedText)) return null
         val match = procedurePattern.find(normalizedText) ?: return null
         return buildCandidate(
             kind = MemoryKind.PROCEDURE,
@@ -92,7 +93,13 @@ class DeterministicMemoryProjector : MemoryProjector {
             )
         val procedurePattern =
             Regex(
-                pattern = "\\b(always|never)\\b.{2,140}",
+                pattern = "\\b(always|never)\\s+" +
+                    "(?:use|save|remember|respond|reply|call|write|format|include|exclude|do)\\b.{2,140}",
+                option = RegexOption.IGNORE_CASE,
+            )
+        val correctionPattern =
+            Regex(
+                pattern = "\\b(never said that|did not say that|didn't say that|not what I said)\\b",
                 option = RegexOption.IGNORE_CASE,
             )
     }

@@ -71,6 +71,7 @@ class SynapseTurnCoordinator(
             baseUrl = settings.baseUrl,
             model = settings.modelName,
             embeddedModelPath = settings.embeddedModelPath,
+            modelPromptProfile = settings.modelPromptProfile,
             messages = promptMessages,
             temperature = settings.temperature,
             maxTokens = settings.maxTokens,

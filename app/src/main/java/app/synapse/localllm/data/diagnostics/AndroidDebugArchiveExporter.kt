@@ -120,6 +120,7 @@ class AndroidDebugArchiveExporter(
             appendLine("runtimeBackend=${settings.runtimeBackend}")
             appendLine("baseUrl=${settings.baseUrl}")
             appendLine("modelName=${settings.modelName}")
+            appendLine("modelPromptProfile=${settings.modelPromptProfile}")
             appendLine("temperature=${settings.temperature}")
             appendLine("maxTokens=${settings.maxTokens}")
             appendLine("memoryWritesEnabled=${settings.memoryWritesEnabled}")
@@ -176,7 +177,7 @@ class AndroidDebugArchiveExporter(
             appendLine("maximumWindowBoundsPx=${maximumWindowBounds.toDebugBounds()}")
             appendLine("activityDecorFitsSystemWindows=false")
             appendLine("activityWindowSoftInputMode=adjustResize")
-            appendLine("composeKeyboardPolicy=edge-to-edge Compose insets; screen content applies imePadding")
+            appendLine("composeKeyboardPolicy=Scaffold bottomBar composer applies imePadding")
         }
     }
 
@@ -198,6 +199,7 @@ class AndroidDebugArchiveExporter(
     private fun buildModelMetadata(settings: SynapseSettings): String =
         buildString {
             appendLine("displayName=${settings.embeddedModelDisplayName ?: "none"}")
+            appendLine("promptProfile=${settings.modelPromptProfile}")
             appendLine("byteCount=${settings.embeddedModelByteCount ?: "unknown"}")
             appendLine("path=${settings.embeddedModelPath ?: "none"}")
             val modelPath = settings.embeddedModelPath

@@ -53,6 +53,15 @@ class DeterministicMemoryProjectorTest {
         assertTrue(candidates.single().reasonCodes.contains("explicit-user-commitment"))
     }
 
+    @Test
+    fun rejectsUserCorrectionAsProcedureMemory() {
+        val traceEvent = userTrace("Never said that. You were half right, but don't save it.")
+
+        val candidates = projector.extractMemoryCandidates(traceEvent)
+
+        assertTrue(candidates.isEmpty())
+    }
+
     private fun userTrace(text: String): TraceEventRecord =
         TraceEventRecord(
             id = TraceEventId("trace-1"),

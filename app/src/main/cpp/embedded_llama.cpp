@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <string>
+#include <vector>
 
 #include "common.h"
 #include "llama.h"
@@ -184,65 +185,36 @@ Java_app_synapse_localllm_data_runtime_embedded_EmbeddedLlamaEngine_systemInfo(
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_app_synapse_localllm_data_runtime_embedded_EmbeddedLlamaEngine_processSystemPrompt(
+Java_app_synapse_localllm_data_runtime_embedded_EmbeddedLlamaEngine_processPrompt(
         JNIEnv * env,
         jobject /* unused */,
-        jstring system_prompt_value) {
-    reset_prompt_state();
-
-    const auto * system_prompt_chars = env->GetStringUTFChars(system_prompt_value, nullptr);
-    const std::string system_prompt = std::string(system_prompt_chars) + "\n\n";
-    env->ReleaseStringUTFChars(system_prompt_value, system_prompt_chars);
-
-    const auto system_tokens = common_tokenize(
-            g_context,
-            system_prompt,
-            true,
-            true);
-
-    if ((int) system_tokens.size() >= CONTEXT_SIZE - OVERFLOW_HEADROOM) {
-        return 1;
-    }
-
-    const int decode_result = decode_tokens(system_tokens, g_current_position, false);
-    if (decode_result != 0) {
-        return decode_result;
-    }
-
-    g_current_position += (llama_pos) system_tokens.size();
-    return 0;
-}
-
-extern "C"
-JNIEXPORT jint JNICALL
-Java_app_synapse_localllm_data_runtime_embedded_EmbeddedLlamaEngine_processUserPrompt(
-        JNIEnv * env,
-        jobject /* unused */,
-        jstring user_prompt_value,
+        jstring prompt_value,
         jint predict_length,
         jfloat temperature) {
-    const auto * user_prompt_chars = env->GetStringUTFChars(user_prompt_value, nullptr);
-    const std::string user_prompt = std::string(user_prompt_chars);
-    env->ReleaseStringUTFChars(user_prompt_value, user_prompt_chars);
+    reset_prompt_state();
+
+    const auto * prompt_chars = env->GetStringUTFChars(prompt_value, nullptr);
+    const std::string prompt = std::string(prompt_chars);
+    env->ReleaseStringUTFChars(prompt_value, prompt_chars);
 
     reset_sampler(temperature);
 
-    const auto user_tokens = common_tokenize(
+    const auto prompt_tokens = common_tokenize(
             g_context,
-            user_prompt,
-            false,
+            prompt,
+            true,
             true);
 
-    if ((int) user_tokens.size() >= CONTEXT_SIZE - OVERFLOW_HEADROOM) {
+    if ((int) prompt_tokens.size() >= CONTEXT_SIZE - OVERFLOW_HEADROOM) {
         return 1;
     }
 
-    const int decode_result = decode_tokens(user_tokens, g_current_position, true);
+    const int decode_result = decode_tokens(prompt_tokens, g_current_position, true);
     if (decode_result != 0) {
         return decode_result;
     }
 
-    g_current_position += (llama_pos) user_tokens.size();
+    g_current_position += (llama_pos) prompt_tokens.size();
     g_remaining_tokens = predict_length;
     return 0;
 }
@@ -287,6 +259,112 @@ Java_app_synapse_localllm_data_runtime_embedded_EmbeddedLlamaEngine_generateNext
     }
 
     return env->NewStringUTF("");
+}
+
+static jstring format_chat_prompt(
+        JNIEnv * env,
+        jobjectArray role_values,
+        jobjectArray content_values,
+        const char * template_name) {
+    if (g_model == nullptr) {
+        return nullptr;
+    }
+
+    const jsize role_count = env->GetArrayLength(role_values);
+    const jsize content_count = env->GetArrayLength(content_values);
+    if (role_count != content_count) {
+        return nullptr;
+    }
+
+    std::vector<std::string> roles;
+    std::vector<std::string> contents;
+    roles.reserve(role_count);
+    contents.reserve(content_count);
+
+    for (jsize index = 0; index < role_count; index++) {
+        auto role_value = (jstring) env->GetObjectArrayElement(role_values, index);
+        auto content_value = (jstring) env->GetObjectArrayElement(content_values, index);
+        if (role_value == nullptr || content_value == nullptr) {
+            if (role_value != nullptr) {
+                env->DeleteLocalRef(role_value);
+            }
+            if (content_value != nullptr) {
+                env->DeleteLocalRef(content_value);
+            }
+            return nullptr;
+        }
+
+        const char * role_chars = env->GetStringUTFChars(role_value, nullptr);
+        const char * content_chars = env->GetStringUTFChars(content_value, nullptr);
+        roles.emplace_back(role_chars);
+        contents.emplace_back(content_chars);
+        env->ReleaseStringUTFChars(role_value, role_chars);
+        env->ReleaseStringUTFChars(content_value, content_chars);
+        env->DeleteLocalRef(role_value);
+        env->DeleteLocalRef(content_value);
+    }
+
+    std::vector<llama_chat_message> messages;
+    messages.reserve(role_count);
+    for (jsize index = 0; index < role_count; index++) {
+        messages.push_back({
+            roles[(size_t) index].c_str(),
+            contents[(size_t) index].c_str(),
+        });
+    }
+
+    const int32_t required_length = llama_chat_apply_template(
+            template_name,
+            messages.data(),
+            messages.size(),
+            true,
+            nullptr,
+            0);
+    if (required_length <= 0) {
+        return nullptr;
+    }
+
+    std::vector<char> prompt_buffer((size_t) required_length + 1, '\0');
+    const int32_t written_length = llama_chat_apply_template(
+            template_name,
+            messages.data(),
+            messages.size(),
+            true,
+            prompt_buffer.data(),
+            required_length + 1);
+    if (written_length <= 0) {
+        return nullptr;
+    }
+
+    return env->NewStringUTF(prompt_buffer.data());
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_app_synapse_localllm_data_runtime_embedded_EmbeddedLlamaEngine_formatModelChatPrompt(
+        JNIEnv * env,
+        jobject /* unused */,
+        jobjectArray role_values,
+        jobjectArray content_values) {
+    const char * model_template = llama_model_chat_template(g_model, nullptr);
+    if (model_template == nullptr) {
+        return nullptr;
+    }
+    return format_chat_prompt(env, role_values, content_values, model_template);
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_app_synapse_localllm_data_runtime_embedded_EmbeddedLlamaEngine_formatNamedChatPrompt(
+        JNIEnv * env,
+        jobject /* unused */,
+        jstring template_name_value,
+        jobjectArray role_values,
+        jobjectArray content_values) {
+    const char * template_name = env->GetStringUTFChars(template_name_value, nullptr);
+    jstring formatted_prompt = format_chat_prompt(env, role_values, content_values, template_name);
+    env->ReleaseStringUTFChars(template_name_value, template_name);
+    return formatted_prompt;
 }
 
 extern "C"

@@ -4,6 +4,7 @@ import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
+import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
@@ -19,6 +20,7 @@ data class RuntimeSettingsDraft(
     val runtimeBackend: InferenceRuntimeBackend = InferenceRuntimeBackend.EMBEDDED_LLAMA,
     val baseUrl: String = "http://127.0.0.1:8080",
     val modelName: String = "local-llama",
+    val modelPromptProfile: ModelPromptProfile = ModelPromptProfile.AUTO,
     val persona: String = "",
     val customInstructions: String = "",
     val temperature: String = "0.7",

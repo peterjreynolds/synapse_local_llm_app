@@ -38,6 +38,39 @@ class AssistantVisibleTextFilterTest {
     }
 
     @Test
+    fun extractsFinalAnswerAfterDiagnosticPrelude() {
+        val filter = AssistantVisibleTextFilter()
+
+        val filtered = filter.appendToken(
+            "Thinking Process: private notes\nFinal Decision: Hello back.",
+        )
+
+        assertEquals("Hello back.", filtered.visibleDelta)
+    }
+
+    @Test
+    fun extractsFinalAnswerAfterUnclosedThinkBlock() {
+        val filter = AssistantVisibleTextFilter()
+
+        val filtered = filter.appendToken(
+            "<think>private notes\nFinal Answer: Hello back.",
+        )
+
+        assertEquals("Hello back.", filtered.visibleDelta)
+    }
+
+    @Test
+    fun stopsBeforeChatMlEndMarker() {
+        val filter = AssistantVisibleTextFilter()
+
+        filter.appendToken("Programming! 😊")
+        val stopped = filter.appendToken("<|im_end|>Programming! 😊")
+
+        assertEquals("", stopped.visibleDelta)
+        assertTrue(stopped.shouldStopGeneration)
+    }
+
+    @Test
     fun reportsVisibleAndFilteredCharacterCounts() {
         val filter = AssistantVisibleTextFilter()
 

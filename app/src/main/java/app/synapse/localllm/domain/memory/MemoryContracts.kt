@@ -130,6 +130,8 @@ interface MemoryRepository {
 
     suspend fun tombstoneMemory(memoryObjectId: MemoryObjectId, reason: String): MemoryWriteReceipt
 
+    suspend fun listPromptVisibleMemories(limit: Int): List<RetrievedMemoryRef>
+
     suspend fun retrieveMemories(query: String, limit: Int): RetrievalBundle
 }
 

@@ -5,6 +5,7 @@ import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.MessageDeliveryState
 import app.synapse.localllm.domain.memory.PromptContextAssembler
 import app.synapse.localllm.domain.memory.RetrievalBundle
+import app.synapse.localllm.domain.runtime.AssistantTextSanitizer
 import app.synapse.localllm.domain.runtime.ModelChatMessage
 
 class VerifiedPromptContextAssembler : PromptContextAssembler {
@@ -27,11 +28,19 @@ class VerifiedPromptContextAssembler : PromptContextAssembler {
             .filter { message -> message.deliveryState == MessageDeliveryState.COMPLETE }
             .filter { message -> message.role == ConversationRole.USER || message.role == ConversationRole.ASSISTANT }
             .takeLast(RECENT_MESSAGE_LIMIT)
-            .map { message ->
-                ModelChatMessage(
-                    role = message.role,
-                    content = message.body,
-                )
+            .mapNotNull { message ->
+                val promptHistoryText = when (message.role) {
+                    ConversationRole.ASSISTANT ->
+                        AssistantTextSanitizer.sanitizeForPromptHistory(message.body)
+
+                    else -> message.body.trim().takeIf { text -> text.isNotBlank() }
+                }
+                promptHistoryText?.let { content ->
+                    ModelChatMessage(
+                        role = message.role,
+                        content = content,
+                    )
+                }
             }
 
         return listOf(

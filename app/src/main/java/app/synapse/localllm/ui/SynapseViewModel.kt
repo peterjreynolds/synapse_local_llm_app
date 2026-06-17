@@ -66,6 +66,9 @@ class SynapseViewModel(
 
     fun selectPanel(panel: SynapsePanel) {
         mutableUiState.update { state -> state.copy(activePanel = panel, lastNotice = null) }
+        if (panel == SynapsePanel.MEMORY) {
+            loadMemoryList()
+        }
     }
 
     fun openThreadDrawer() {
@@ -251,9 +254,13 @@ class SynapseViewModel(
     fun searchMemory() {
         val query = mutableUiState.value.memorySearchQuery
         viewModelScope.launch {
-            val retrievalBundle = graph.memoryRepository.retrieveMemories(query = query, limit = 20)
+            val memoryRefs = if (query.isBlank()) {
+                graph.memoryRepository.listPromptVisibleMemories(limit = 50)
+            } else {
+                graph.memoryRepository.retrieveMemories(query = query, limit = 20).refs
+            }
             mutableUiState.update { state ->
-                state.copy(memorySearchResults = retrievalBundle.refs)
+                state.copy(memorySearchResults = memoryRefs)
             }
         }
     }
@@ -287,6 +294,7 @@ class SynapseViewModel(
                 modelName = draft.modelName,
                 persona = draft.persona,
                 customInstructions = draft.customInstructions,
+                modelPromptProfile = draft.modelPromptProfile,
                 temperature = draft.temperature.toDoubleOrNull() ?: 0.7,
                 maxTokens = draft.maxTokens.toIntOrNull() ?: 768,
             )
@@ -433,11 +441,19 @@ class SynapseViewModel(
             runtimeBackend = runtimeBackend,
             baseUrl = baseUrl,
             modelName = modelName,
+            modelPromptProfile = modelPromptProfile,
             persona = persona,
             customInstructions = customInstructions,
             temperature = temperature.toString(),
             maxTokens = maxTokens.toString(),
         )
+
+    private fun loadMemoryList() {
+        viewModelScope.launch {
+            val memoryRefs = graph.memoryRepository.listPromptVisibleMemories(limit = 50)
+            mutableUiState.update { state -> state.copy(memorySearchResults = memoryRefs) }
+        }
+    }
 
     private fun SynapseSettings.toStorageThresholds(): StorageThresholds =
         StorageThresholds(

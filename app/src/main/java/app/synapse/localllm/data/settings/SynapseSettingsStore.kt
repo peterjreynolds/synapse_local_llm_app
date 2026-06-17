@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.settings.DEFAULT_CUSTOM_INSTRUCTIONS
 import app.synapse.localllm.domain.settings.DEFAULT_PERSONA
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
@@ -39,6 +40,7 @@ class SynapseSettingsStore(context: Context) {
                 embeddedModelPath = preferences[EMBEDDED_MODEL_PATH],
                 embeddedModelDisplayName = preferences[EMBEDDED_MODEL_DISPLAY_NAME],
                 embeddedModelByteCount = preferences[EMBEDDED_MODEL_BYTE_COUNT],
+                modelPromptProfile = parseModelPromptProfile(preferences[MODEL_PROMPT_PROFILE]),
                 persona = persona,
                 customInstructions = customInstructions,
                 systemPrompt = composeSystemPrompt(persona, customInstructions),
@@ -61,6 +63,7 @@ class SynapseSettingsStore(context: Context) {
         modelName: String,
         persona: String,
         customInstructions: String,
+        modelPromptProfile: ModelPromptProfile,
         temperature: Double,
         maxTokens: Int,
     ) {
@@ -72,6 +75,7 @@ class SynapseSettingsStore(context: Context) {
             preferences[MODEL_NAME] = modelName.trim().ifBlank { "local-llama" }
             preferences[PERSONA] = normalizedPersona
             preferences[CUSTOM_INSTRUCTIONS] = normalizedCustomInstructions
+            preferences[MODEL_PROMPT_PROFILE] = modelPromptProfile.name
             preferences[SYSTEM_PROMPT] = composeSystemPrompt(
                 normalizedPersona,
                 normalizedCustomInstructions,
@@ -96,6 +100,7 @@ class SynapseSettingsStore(context: Context) {
                 preferences[EMBEDDED_MODEL_BYTE_COUNT] = byteCount
             }
             preferences[MODEL_NAME] = displayName.removeSuffix(".gguf").ifBlank { "embedded-gguf" }
+            preferences[MODEL_PROMPT_PROFILE] = inferModelPromptProfile(displayName).name
         }
     }
 
@@ -115,6 +120,20 @@ class SynapseSettingsStore(context: Context) {
         rawBackend
             ?.let { backend -> runCatching { InferenceRuntimeBackend.valueOf(backend) }.getOrNull() }
             ?: InferenceRuntimeBackend.EMBEDDED_LLAMA
+
+    private fun parseModelPromptProfile(rawProfile: String?): ModelPromptProfile =
+        rawProfile
+            ?.let { profile -> runCatching { ModelPromptProfile.valueOf(profile) }.getOrNull() }
+            ?: ModelPromptProfile.AUTO
+
+    private fun inferModelPromptProfile(displayName: String): ModelPromptProfile {
+        val normalizedName = displayName.lowercase()
+        return when {
+            "qwen" in normalizedName -> ModelPromptProfile.QWEN_CHATML
+            "llama" in normalizedName -> ModelPromptProfile.AUTO
+            else -> ModelPromptProfile.AUTO
+        }
+    }
 
     private fun resolveCustomInstructions(
         persistedCustomInstructions: String?,
@@ -143,6 +162,7 @@ class SynapseSettingsStore(context: Context) {
         val EMBEDDED_MODEL_PATH = stringPreferencesKey("embedded_model_path")
         val EMBEDDED_MODEL_DISPLAY_NAME = stringPreferencesKey("embedded_model_display_name")
         val EMBEDDED_MODEL_BYTE_COUNT = longPreferencesKey("embedded_model_byte_count")
+        val MODEL_PROMPT_PROFILE = stringPreferencesKey("model_prompt_profile")
         val SYSTEM_PROMPT = stringPreferencesKey("system_prompt")
         val PERSONA = stringPreferencesKey("persona")
         val CUSTOM_INSTRUCTIONS = stringPreferencesKey("custom_instructions")

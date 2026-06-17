@@ -45,8 +45,10 @@ class SynapseSettingsTest {
             customInstructions = "Use short answers.",
         )
 
-        assertTrue(prompt.contains("Persona:\nYou are direct."))
-        assertTrue(prompt.contains("Custom instructions:\nUse short answers."))
+        assertTrue(prompt.contains("You are direct."))
+        assertTrue(prompt.contains("Standing user instructions: Use short answers."))
+        assertFalse(prompt.contains("Core behavior:"))
+        assertFalse(prompt.contains("Custom instructions:"))
     }
 
     @Test

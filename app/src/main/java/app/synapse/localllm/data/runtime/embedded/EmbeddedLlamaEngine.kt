@@ -70,12 +70,12 @@ class EmbeddedLlamaEngine private constructor(
         }
 
     fun streamResponse(
-        systemPrompt: String,
-        userPrompt: String,
+        promptText: String,
+        stopSequences: List<String>,
         maxTokens: Int,
         temperature: Double,
     ): Flow<String> = flow {
-        require(userPrompt.isNotBlank()) { "Embedded prompt cannot be blank." }
+        require(promptText.isNotBlank()) { "Embedded prompt cannot be blank." }
         check(mutableState.value is EmbeddedLlamaEngineState.ModelReady) {
             "Embedded llama.cpp model is not ready."
         }
@@ -83,23 +83,30 @@ class EmbeddedLlamaEngine private constructor(
         try {
             cancelGeneration = false
             mutableState.value = EmbeddedLlamaEngineState.ProcessingPrompt
-            val systemCode = processSystemPrompt(systemPrompt.ifBlank { "You are Synapse." })
-            if (systemCode != 0) {
-                throw IOException("llama.cpp failed to process system prompt: code $systemCode")
-            }
-            val userCode = processUserPrompt(
-                userPrompt,
+            val promptCode = processPrompt(
+                promptText,
                 maxTokens.coerceIn(MIN_PREDICT_TOKENS, MAX_PREDICT_TOKENS),
                 temperature.toFloat().coerceIn(MIN_TEMPERATURE, MAX_TEMPERATURE),
             )
-            if (userCode != 0) {
-                throw IOException("llama.cpp failed to process user prompt: code $userCode")
+            if (promptCode != 0) {
+                throw IOException("llama.cpp failed to process prompt: code $promptCode")
             }
 
+            val stopSequenceFilter = StopSequenceTextFilter(stopSequences)
             mutableState.value = EmbeddedLlamaEngineState.Generating
             while (!cancelGeneration) {
                 val token = generateNextToken() ?: break
-                if (token.isNotEmpty()) emit(token)
+                val tokenResult = stopSequenceFilter.append(token)
+                if (tokenResult.visibleText.isNotEmpty()) {
+                    emit(tokenResult.visibleText)
+                }
+                if (tokenResult.shouldStop) {
+                    break
+                }
+            }
+            val remainingText = stopSequenceFilter.flush()
+            if (remainingText.isNotEmpty() && !cancelGeneration) {
+                emit(remainingText)
             }
             mutableState.value = EmbeddedLlamaEngineState.ModelReady
         } catch (exception: CancellationException) {
@@ -147,15 +154,35 @@ class EmbeddedLlamaEngine private constructor(
 
     private external fun systemInfo(): String
 
-    private external fun processSystemPrompt(systemPrompt: String): Int
+    fun formatWithModelTemplate(
+        roles: Array<String>,
+        contents: Array<String>,
+    ): String? = formatModelChatPrompt(roles, contents)
 
-    private external fun processUserPrompt(
-        userPrompt: String,
+    fun formatWithNamedTemplate(
+        templateName: String,
+        roles: Array<String>,
+        contents: Array<String>,
+    ): String? = formatNamedChatPrompt(templateName, roles, contents)
+
+    private external fun processPrompt(
+        promptText: String,
         predictLength: Int,
         temperature: Float,
     ): Int
 
     private external fun generateNextToken(): String?
+
+    private external fun formatModelChatPrompt(
+        roles: Array<String>,
+        contents: Array<String>,
+    ): String?
+
+    private external fun formatNamedChatPrompt(
+        templateName: String,
+        roles: Array<String>,
+        contents: Array<String>,
+    ): String?
 
     private external fun unload()
 
