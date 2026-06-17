@@ -15,6 +15,24 @@ val synapseBuildGitSha =
         ?.take(12)
         ?: "local"
 
+val synapseVersionCode =
+    providers
+        .environmentVariable("SYNAPSE_VERSION_CODE")
+        .orNull
+        ?.toIntOrNull()
+        ?: providers
+            .environmentVariable("GITHUB_RUN_NUMBER")
+            .orNull
+            ?.toIntOrNull()
+            ?.let { runNumber -> 2_000 + runNumber }
+        ?: 3
+
+val synapseVersionName =
+    providers
+        .environmentVariable("SYNAPSE_VERSION_NAME")
+        .orNull
+        ?: "0.1.$synapseVersionCode"
+
 android {
     namespace = "app.synapse.localllm"
     compileSdk = 36
@@ -24,8 +42,8 @@ android {
         applicationId = "app.synapse.localllm"
         minSdk = 31
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = synapseVersionCode
+        versionName = synapseVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "SYNAPSE_BUILD_GIT_SHA", quoteBuildConfigString(synapseBuildGitSha))

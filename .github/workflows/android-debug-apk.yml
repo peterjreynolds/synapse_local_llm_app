@@ -80,6 +80,7 @@ jobs:
         run: |
           test -f "$APK_PATH"
           ls -lh "$APK_PATH"
+          sha256sum "$APK_PATH" | tee apk-sha256.txt
 
       - name: Publish single-APK branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -90,6 +91,7 @@ jobs:
           publish_root="$(mktemp -d)"
           mkdir -p "$publish_root/APK"
           cp "$APK_PATH" "$publish_root/APK/Synapse-AI.apk"
+          cp apk-sha256.txt "$publish_root/APK/Synapse-AI.apk.sha256"
           cat > "$publish_root/APK/README.md" <<'EOF'
           # Synapse AI APK
 
@@ -104,7 +106,7 @@ jobs:
           git -C "$publish_root" checkout -b "$APK_BRANCH"
           git -C "$publish_root" config user.name "github-actions[bot]"
           git -C "$publish_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$publish_root" add APK/README.md APK/Synapse-AI.apk
+          git -C "$publish_root" add APK/README.md APK/Synapse-AI.apk APK/Synapse-AI.apk.sha256
           git -C "$publish_root" commit -m "publish latest Synapse AI APK"
           git -C "$publish_root" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git -C "$publish_root" -c "http.https://github.com/.extraheader=$auth_header" push --force origin "$APK_BRANCH"
@@ -126,9 +128,15 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release delete "$RELEASE_TAG" --cleanup-tag --yes
           fi
+          version_code=$((2000 + GITHUB_RUN_NUMBER))
+          apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
+          release_notes="Latest automated debug APK from commit $GITHUB_SHA. "
+          release_notes+="Version code: $version_code. SHA-256: $apk_sha256. "
+          release_notes+="This rolling release is recreated after every successful main build "
+          release_notes+="so the Releases page points at the newest APK."
 
           gh release create "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" \
             --target "$GITHUB_SHA" \
             --title "Synapse AI Debug APK" \
-            --notes "Latest automated debug APK from commit $GITHUB_SHA. This rolling release is recreated after every successful main build so the Releases page points at the newest APK." \
+            --notes "$release_notes" \
             --latest
