@@ -21,6 +21,7 @@ import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageThresholds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,8 +38,10 @@ class SynapseViewModel(
     private val mutableUiState = MutableStateFlow(SynapseUiState())
     val uiState: StateFlow<SynapseUiState> = mutableUiState
 
+    private val voiceModeStateMachine = VoiceModeStateMachine()
     private var messageObservationJob: Job? = null
     private var activeSendJob: Job? = null
+    private var activeVoiceModeTurnJob: Job? = null
 
     init {
         observeSettings()
@@ -200,6 +203,11 @@ class SynapseViewModel(
                 pendingAttachments = emptyList(),
                 isSending = true,
                 activePanel = SynapsePanel.CHAT,
+                voiceMode = if (state.voiceMode.isActive) {
+                    voiceModeStateMachine.stop()
+                } else {
+                    state.voiceMode
+                },
                 lastNotice = null,
             )
         }
@@ -232,9 +240,158 @@ class SynapseViewModel(
     fun cancelActiveSend() {
         graph.localInferenceRuntime.cancelActiveGeneration()
         activeSendJob?.cancel()
+        activeVoiceModeTurnJob?.cancel()
         mutableUiState.update { state ->
-            state.copy(isSending = false, lastNotice = "Generation stopped.")
+            if (state.voiceMode.isActive) {
+                state.copy(
+                    isSending = false,
+                    voiceMode = voiceModeStateMachine.stop(),
+                    lastNotice = "Voice Mode stopped.",
+                )
+            } else {
+                state.copy(isSending = false, lastNotice = "Generation stopped.")
+            }
         }
+    }
+
+    fun toggleVoiceMode() {
+        val voiceMode = mutableUiState.value.voiceMode
+        when (voiceMode.status) {
+            VoiceModeStatus.OFF,
+            VoiceModeStatus.ERROR,
+            -> startVoiceMode()
+
+            VoiceModeStatus.LISTENING,
+            VoiceModeStatus.PROCESSING,
+            VoiceModeStatus.SPEAKING,
+            -> stopVoiceMode()
+        }
+    }
+
+    fun stopVoiceMode() {
+        graph.localInferenceRuntime.cancelActiveGeneration()
+        activeVoiceModeTurnJob?.cancel()
+        if (activeSendJob == activeVoiceModeTurnJob) {
+            activeSendJob = null
+        }
+        activeVoiceModeTurnJob = null
+        mutableUiState.update { state ->
+            state.copy(
+                isSending = if (state.voiceMode.status == VoiceModeStatus.PROCESSING) {
+                    false
+                } else {
+                    state.isSending
+                },
+                voiceMode = voiceModeStateMachine.stop(),
+                lastNotice = "Voice Mode stopped.",
+            )
+        }
+    }
+
+    fun onVoiceModeSpeechResult(transcript: String) {
+        val snapshot = mutableUiState.value
+        val thread = snapshot.currentThread ?: run {
+            failVoiceMode("No active chat is ready for Voice Mode.")
+            return
+        }
+        val userText = transcript.trim()
+        if (snapshot.voiceMode.status != VoiceModeStatus.LISTENING) return
+        if (userText.isBlank()) {
+            failVoiceMode("No speech was recognized.")
+            return
+        }
+        if (snapshot.isSending || activeVoiceModeTurnJob != null) {
+            failVoiceMode("Synapse is already responding.")
+            return
+        }
+
+        mutableUiState.update { state ->
+            state.copy(
+                isSending = true,
+                activePanel = SynapsePanel.CHAT,
+                voiceMode = voiceModeStateMachine.processTranscript(state.voiceMode),
+                lastNotice = "Voice Mode heard: $userText",
+            )
+        }
+        val voiceTurnJob = viewModelScope.launch {
+            try {
+                val outcome = graph.turnCoordinator.sendUserTurn(
+                    command = SubmitUserMessageCommand(
+                        threadId = thread.id,
+                        body = userText,
+                        attachments = emptyList(),
+                    ),
+                    settings = snapshot.settings,
+                )
+                when (outcome) {
+                    is SynapseTurnOutcome.Completed -> {
+                        val assistantText = graph.conversationRepository
+                            .listRecentMessages(thread.id, limit = VOICE_MODE_RECENT_MESSAGE_LIMIT)
+                            .firstOrNull { message -> message.id == outcome.assistantMessageId }
+                            ?.body
+                            .orEmpty()
+                            .trim()
+                        if (assistantText.isBlank()) {
+                            failVoiceMode("Synapse finished without speakable text.")
+                        } else {
+                            mutableUiState.update { state ->
+                                if (state.voiceMode.status != VoiceModeStatus.PROCESSING) {
+                                    state
+                                } else {
+                                    state.copy(
+                                        voiceMode = voiceModeStateMachine.speakAssistantReply(
+                                            currentState = state.voiceMode,
+                                            assistantText = assistantText,
+                                        ),
+                                        lastNotice = "Voice Mode speaking.",
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    is SynapseTurnOutcome.Failed ->
+                        failVoiceMode(outcome.reason)
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                failVoiceMode(exception.message ?: "Voice Mode turn failed.")
+            } finally {
+                activeVoiceModeTurnJob = null
+                if (activeSendJob == this.coroutineContext[Job]) {
+                    activeSendJob = null
+                }
+                mutableUiState.update { state -> state.copy(isSending = false) }
+            }
+        }
+        activeVoiceModeTurnJob = voiceTurnJob
+        activeSendJob = voiceTurnJob
+    }
+
+    fun onVoiceModeSpeechError(reason: String) {
+        val snapshot = mutableUiState.value
+        if (snapshot.voiceMode.status != VoiceModeStatus.LISTENING) return
+        failVoiceMode(reason)
+    }
+
+    fun onVoiceModeSpeechPlaybackFinished() {
+        mutableUiState.update { state ->
+            if (state.voiceMode.status != VoiceModeStatus.SPEAKING) {
+                state
+            } else {
+                state.copy(
+                    voiceMode = voiceModeStateMachine.finishSpeaking(state.voiceMode),
+                    lastNotice = "Voice Mode listening.",
+                )
+            }
+        }
+    }
+
+    fun onVoiceModeSpeechPlaybackError(reason: String) {
+        val snapshot = mutableUiState.value
+        if (snapshot.voiceMode.status != VoiceModeStatus.SPEAKING) return
+        failVoiceMode(reason)
     }
 
     fun checkRuntimeStatus() {
@@ -593,6 +750,48 @@ class SynapseViewModel(
         }
     }
 
+    private fun startVoiceMode() {
+        if (mutableUiState.value.isSending) {
+            mutableUiState.update { state ->
+                state.copy(
+                    voiceMode = voiceModeStateMachine.fail("Wait for the current response before starting Voice Mode."),
+                    lastNotice = "Wait for the current response before starting Voice Mode.",
+                )
+            }
+            return
+        }
+        if (mutableUiState.value.currentThread == null) {
+            mutableUiState.update { state ->
+                state.copy(
+                    voiceMode = voiceModeStateMachine.fail("No active chat is ready for Voice Mode."),
+                    lastNotice = "No active chat is ready for Voice Mode.",
+                )
+            }
+            return
+        }
+        mutableUiState.update { state ->
+            state.copy(
+                activePanel = SynapsePanel.CHAT,
+                voiceMode = voiceModeStateMachine.startListening(state.voiceMode),
+                lastNotice = "Voice Mode listening.",
+            )
+        }
+    }
+
+    private fun failVoiceMode(reason: String) {
+        val failedVoiceTurnJob = activeVoiceModeTurnJob
+        activeVoiceModeTurnJob = null
+        if (failedVoiceTurnJob != null && activeSendJob == failedVoiceTurnJob) {
+            activeSendJob = null
+        }
+        mutableUiState.update { state ->
+            state.copy(
+                voiceMode = voiceModeStateMachine.fail(reason),
+                lastNotice = reason,
+            )
+        }
+    }
+
     private fun exportMarkdownAsPdf(
         title: String,
         markdown: String,
@@ -661,6 +860,10 @@ class SynapseViewModel(
             isImportingModel = isImportingModel,
             lastNotice = lastNotice,
         )
+
+    private companion object {
+        const val VOICE_MODE_RECENT_MESSAGE_LIMIT = 12
+    }
 }
 
 class SynapseViewModelFactory(

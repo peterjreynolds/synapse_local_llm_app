@@ -15,7 +15,7 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Recent-chat management: pin to top, rename, archive, and delete from the
   long-press chat list menu.
 - Embedded ARM64 `llama.cpp` runtime with Termux server fallback.
-- Named debug APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
+- Named APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
 - App-local Room/SQLite chat and evidence-backed memory.
 - Storage-pressure guardrails for memory writes.
 - Synapse Guild branding.
@@ -28,6 +28,8 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Stale streaming-message cleanup on app start.
 - Assistant output filtering for hidden reasoning, fake role labels, and prompt leakage.
 - Per-message speaker playback with play, pause, and resume controls.
+- Hands-free Voice Mode foundation using explicit Android speech recognition
+  turns and TextToSpeech playback.
 - Basic attachment composer with text extraction for text-like files and explicit
   image/file metadata placeholders. Image understanding is not claimed until a
   multimodal runtime is added.
@@ -35,6 +37,8 @@ speech input, per-message playback, and no visible prompt scaffolding.
   Room-backed artifact catalog metadata, durable write receipts, safe path
   handling, and basic PDF export cache generation.
 - One-shot Android speech input through the system speech recognizer.
+- Voice Mode state-machine foundation; see
+  [`voice-mode-architecture.md`](voice-mode-architecture.md).
 - Full app-state debug ZIP export, excluding GGUF model files.
 - Persisted generation timing traces for diagnosing slow or blank local model responses.
 
@@ -67,6 +71,8 @@ Goal: make Synapse usable by voice without depending on Termux or cloud APIs.
   listen locally, transcribe locally, send to local LLM, speak locally, loop until stopped.
 - Full Voice Mode owns turn-taking, silence detection, TTS interruption, and
   cancellation state. It must not interfere with per-message speaker buttons.
+- Current first pass uses Android `RecognizerIntent` and `TextToSpeech`; fully
+  offline STT and selectable local voices remain future work.
 - Keep v1 push-to-talk / explicit voice mode only. No always-listening wake word.
 - Always expose stop/interrupt controls.
 
@@ -201,8 +207,8 @@ Goal: share one solid core between Synapse AI and later characters/products.
 - Diagnostics ZIP tests for app-state inclusion and GGUF exclusion.
 - Attachment tests for text extraction, URI failure handling, and future
   app-private original preservation.
-- Voice tests for per-message play/pause/resume state and future Voice Mode
-  interruption.
+- Voice tests for per-message play/pause/resume state, Voice Mode state
+  transitions, and future Voice Mode interruption.
 - Manual S25 Ultra QA for long streaming answers, old chats, keyboard typing,
   debug export, model import, and voice playback.
 

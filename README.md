@@ -71,16 +71,19 @@ The debug APK will be under `app/build/outputs/apk/debug/`.
 
 ## GitHub APK Delivery
 
-The repo includes `.github/workflows/android-debug-apk.yml`. Every push to
+The repo includes `.github/workflows/android-apk.yml`. Every push to
 `main` builds `Synapse-AI.apk`, uploads it as a workflow artifact, updates the
-rolling prerelease tag `synapse-ai-debug-latest`, and force-replaces the
+rolling release tag `synapse-ai`, and force-replaces the
 `apk-latest` branch with one canonical repo-file APK.
 
 That gives the phone a stable place to download the newest APK:
 
 ```text
-https://github.com/peterjreynolds/synapse_local_llm_app/releases/tag/synapse-ai-debug-latest
+https://github.com/peterjreynolds/synapse_local_llm_app/releases/tag/synapse-ai
 ```
+
+The old `synapse-ai-debug-latest` release/tag may still exist as a legacy
+alias, but future automation publishes to `synapse-ai`.
 
 If the release asset link gives a private-repo `404` on Android, open the
 single-APK branch file instead:

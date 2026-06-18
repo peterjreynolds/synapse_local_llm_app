@@ -96,6 +96,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -143,14 +144,33 @@ fun SynapseApp(viewModel: SynapseViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val messageSpeechController = rememberMessageSpeechPlaybackController()
+    val voiceModeSpeechController = rememberVoiceModeSpeechController(
+        onSpeechFinished = viewModel::onVoiceModeSpeechPlaybackFinished,
+        onSpeechError = viewModel::onVoiceModeSpeechPlaybackError,
+    )
+    var speechRecognitionTarget by remember {
+        mutableStateOf(SpeechRecognitionTarget.COMPOSER)
+    }
     val speechLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { activityResult ->
+        val recognitionTarget = speechRecognitionTarget
+        speechRecognitionTarget = SpeechRecognitionTarget.COMPOSER
         if (activityResult.resultCode == Activity.RESULT_OK) {
             val matches = activityResult.data
                 ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
                 .orEmpty()
-            matches.firstOrNull()?.let(viewModel::appendComposerText)
+            val transcript = matches.firstOrNull().orEmpty()
+            when (recognitionTarget) {
+                SpeechRecognitionTarget.COMPOSER ->
+                    transcript.takeIf { text -> text.isNotBlank() }
+                        ?.let(viewModel::appendComposerText)
+
+                SpeechRecognitionTarget.VOICE_MODE ->
+                    viewModel.onVoiceModeSpeechResult(transcript)
+            }
+        } else if (recognitionTarget == SpeechRecognitionTarget.VOICE_MODE) {
+            viewModel.onVoiceModeSpeechError("No speech was recognized.")
         }
     }
     val audioPermissionLauncher = rememberLauncherForActivityResult(
@@ -158,7 +178,11 @@ fun SynapseApp(viewModel: SynapseViewModel) {
     ) { granted ->
         if (granted) {
             speechLauncher.launch(createSpeechRecognitionIntent())
+        } else if (speechRecognitionTarget == SpeechRecognitionTarget.VOICE_MODE) {
+            speechRecognitionTarget = SpeechRecognitionTarget.COMPOSER
+            viewModel.onVoiceModeSpeechError("Microphone permission denied.")
         } else {
+            speechRecognitionTarget = SpeechRecognitionTarget.COMPOSER
             viewModel.publishNotice("Microphone permission denied.")
         }
     }
@@ -189,6 +213,34 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         }
     }
 
+    LaunchedEffect(uiState.voiceMode.recognitionRequestId) {
+        if (
+            uiState.voiceMode.status == VoiceModeStatus.LISTENING &&
+            uiState.voiceMode.recognitionRequestId > 0
+        ) {
+            speechRecognitionTarget = SpeechRecognitionTarget.VOICE_MODE
+            startSpeechRecognition(
+                context = context,
+                speechLauncher = speechLauncher,
+                audioPermissionLauncher = audioPermissionLauncher,
+            )
+        }
+    }
+    LaunchedEffect(uiState.voiceMode.speechRequestId) {
+        if (
+            uiState.voiceMode.status == VoiceModeStatus.SPEAKING &&
+            uiState.voiceMode.speechRequestId > 0 &&
+            uiState.voiceMode.speechText.isNotBlank()
+        ) {
+            voiceModeSpeechController.speak(uiState.voiceMode.speechText)
+        }
+    }
+    LaunchedEffect(uiState.voiceMode.status) {
+        if (uiState.voiceMode.status != VoiceModeStatus.SPEAKING) {
+            voiceModeSpeechController.stop()
+        }
+    }
+
     SynapseScreen(
         state = uiState,
         onComposerChanged = viewModel::updateComposer,
@@ -197,12 +249,14 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onAttach = { attachmentLauncher.launch(attachmentMimeTypes) },
         onRemoveAttachment = viewModel::removePendingAttachment,
         onStartSpeech = {
+            speechRecognitionTarget = SpeechRecognitionTarget.COMPOSER
             startSpeechRecognition(
                 context = context,
                 speechLauncher = speechLauncher,
                 audioPermissionLauncher = audioPermissionLauncher,
             )
         },
+        onVoiceModeToggle = viewModel::toggleVoiceMode,
         messageSpeechController = messageSpeechController,
         onPanelSelected = viewModel::selectPanel,
         onThreadDrawerOpen = viewModel::openThreadDrawer,
@@ -256,6 +310,7 @@ private fun SynapseScreen(
     onAttach: () -> Unit,
     onRemoveAttachment: (Int) -> Unit,
     onStartSpeech: () -> Unit,
+    onVoiceModeToggle: () -> Unit,
     messageSpeechController: MessageSpeechPlaybackController,
     onPanelSelected: (SynapsePanel) -> Unit,
     onThreadDrawerOpen: () -> Unit,
@@ -322,6 +377,7 @@ private fun SynapseScreen(
                         onAttach = onAttach,
                         onRemoveAttachment = onRemoveAttachment,
                         onStartSpeech = onStartSpeech,
+                        onVoiceModeToggle = onVoiceModeToggle,
                         modifier = Modifier.imePadding(),
                     )
                 }
@@ -1188,6 +1244,7 @@ private fun ComposerBar(
     onAttach: () -> Unit,
     onRemoveAttachment: (Int) -> Unit,
     onStartSpeech: () -> Unit,
+    onVoiceModeToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -1202,6 +1259,11 @@ private fun ComposerBar(
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
+        VoiceModeControlRow(
+            voiceMode = state.voiceMode,
+            onVoiceModeToggle = onVoiceModeToggle,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
         if (state.pendingAttachments.isNotEmpty()) {
             AttachmentStrip(
                 attachments = state.pendingAttachments,
@@ -1269,6 +1331,49 @@ private fun ComposerBar(
                         tint = MaterialTheme.colorScheme.onPrimary,
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceModeControlRow(
+    voiceMode: VoiceModeUiState,
+    onVoiceModeToggle: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = voiceMode.toDisplayLabel(),
+                modifier = Modifier.weight(1f),
+                color = if (voiceMode.status == VoiceModeStatus.ERROR) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            TextButton(onClick = onVoiceModeToggle) {
+                Icon(
+                    imageVector = if (voiceMode.isActive) {
+                        Icons.Rounded.Stop
+                    } else {
+                        Icons.Rounded.Mic
+                    },
+                    contentDescription = null,
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(voiceMode.toActionLabel())
             }
         }
     }
@@ -2057,6 +2162,110 @@ private class MessageSpeechPlaybackController {
     }
 }
 
+@Composable
+private fun rememberVoiceModeSpeechController(
+    onSpeechFinished: () -> Unit,
+    onSpeechError: (String) -> Unit,
+): VoiceModeSpeechController {
+    val context = LocalContext.current
+    val latestOnSpeechFinished by rememberUpdatedState(onSpeechFinished)
+    val latestOnSpeechError by rememberUpdatedState(onSpeechError)
+    val controller = remember { VoiceModeSpeechController() }
+
+    DisposableEffect(context) {
+        val createdEngine = TextToSpeech(context) { status ->
+            controller.updateEngineReadiness(status == TextToSpeech.SUCCESS)
+        }
+        createdEngine.language = Locale.getDefault()
+        controller.attachEngine(
+            createdEngine = createdEngine,
+            onSpeechFinished = { latestOnSpeechFinished() },
+            onSpeechError = { reason -> latestOnSpeechError(reason) },
+        )
+        onDispose {
+            controller.dispose()
+        }
+    }
+
+    return controller
+}
+
+private class VoiceModeSpeechController {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var engine: TextToSpeech? = null
+    private var ready = false
+    private var activeUtteranceId = ""
+    private var onSpeechFinished: () -> Unit = {}
+    private var onSpeechError: (String) -> Unit = {}
+
+    fun attachEngine(
+        createdEngine: TextToSpeech,
+        onSpeechFinished: () -> Unit,
+        onSpeechError: (String) -> Unit,
+    ) {
+        engine = createdEngine
+        this.onSpeechFinished = onSpeechFinished
+        this.onSpeechError = onSpeechError
+        createdEngine.setOnUtteranceProgressListener(
+            object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
+
+                override fun onDone(utteranceId: String?) {
+                    if (utteranceId == activeUtteranceId) {
+                        mainHandler.post { this@VoiceModeSpeechController.onSpeechFinished() }
+                    }
+                }
+
+                @Suppress("OVERRIDE_DEPRECATION")
+                override fun onError(utteranceId: String?) {
+                    if (utteranceId == activeUtteranceId) {
+                        mainHandler.post {
+                            this@VoiceModeSpeechController.onSpeechError("Voice Mode playback failed.")
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    fun updateEngineReadiness(isReady: Boolean) {
+        ready = isReady
+    }
+
+    fun speak(text: String) {
+        if (!ready) {
+            onSpeechError("Text-to-speech is not ready.")
+            return
+        }
+        val textToSpeak = text.trim()
+        if (textToSpeak.isBlank()) {
+            onSpeechError("Synapse had no speakable reply.")
+            return
+        }
+        activeUtteranceId = "synapse-voice-mode-${System.nanoTime()}"
+        val speakStatus = engine?.speak(
+            textToSpeak,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            activeUtteranceId,
+        )
+        if (speakStatus == TextToSpeech.ERROR) {
+            onSpeechError("Voice Mode playback failed.")
+        }
+    }
+
+    fun stop() {
+        engine?.stop()
+    }
+
+    fun dispose() {
+        stop()
+        engine?.shutdown()
+        engine = null
+        ready = false
+    }
+}
+
 private fun startSpeechRecognition(
     context: Context,
     speechLauncher: ActivityResultLauncher<Intent>,
@@ -2077,6 +2286,9 @@ private fun createSpeechRecognitionIntent(): Intent =
             RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
         )
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1_200L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)
     }
 
 private fun shareDebugArchive(context: Context, archiveUri: Uri) {
@@ -2192,6 +2404,25 @@ private fun RuntimeStatus.toActionableRuntimeLabel(): String? =
         is RuntimeStatus.Unreachable -> reason
     }
 
+private fun VoiceModeUiState.toDisplayLabel(): String =
+    when (status) {
+        VoiceModeStatus.OFF -> "Voice Mode off"
+        VoiceModeStatus.LISTENING -> "Voice Mode listening"
+        VoiceModeStatus.PROCESSING -> "Voice Mode processing"
+        VoiceModeStatus.SPEAKING -> "Voice Mode speaking"
+        VoiceModeStatus.ERROR -> errorMessage ?: "Voice Mode paused after an error"
+    }
+
+private fun VoiceModeUiState.toActionLabel(): String =
+    when (status) {
+        VoiceModeStatus.OFF -> "Voice Mode"
+        VoiceModeStatus.ERROR -> "Retry Voice"
+        VoiceModeStatus.LISTENING,
+        VoiceModeStatus.PROCESSING,
+        VoiceModeStatus.SPEAKING,
+        -> "Stop Voice"
+    }
+
 private fun MemoryKind.toDisplayLabel(): String =
     name.lowercase().replaceFirstChar { firstCharacter ->
         if (firstCharacter.isLowerCase()) {
@@ -2229,6 +2460,11 @@ private data class AttachmentMetadata(
     val displayName: String,
     val byteCount: Long?,
 )
+
+private enum class SpeechRecognitionTarget {
+    COMPOSER,
+    VOICE_MODE,
+}
 
 private val attachmentMimeTypes =
     arrayOf(

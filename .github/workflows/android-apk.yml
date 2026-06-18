@@ -14,14 +14,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-debug-apk:
-    name: Build debug APK
+  build-apk:
+    name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       APK_PATH: app/build/outputs/apk/synapse/Synapse-AI.apk
       APK_BRANCH: apk-latest
-      RELEASE_TAG: synapse-ai-debug-latest
+      RELEASE_TAG: synapse-ai
 
     steps:
       - name: Check out repository
@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: ./gradlew lintDebug --stacktrace
 
-      - name: Assemble debug APK
+      - name: Assemble APK
         shell: bash
         run: ./gradlew assembleDebug --stacktrace
 
@@ -99,7 +99,7 @@ jobs:
           cat > "$publish_root/APK/README.md" <<'EOF'
           # Synapse AI APK
 
-          `Synapse-AI.apk` is the latest debug APK built from `main`.
+          `Synapse-AI.apk` is the latest APK built from `main`.
 
           This branch is force-replaced by GitHub Actions so it exposes one
           canonical APK without retaining old APK commits on the branch.
@@ -123,7 +123,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish rolling debug release
+      - name: Publish rolling release
         if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         shell: bash
         env:
@@ -134,13 +134,13 @@ jobs:
           fi
           version_code=$((2000 + GITHUB_RUN_NUMBER))
           apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
-          release_notes="Latest automated debug APK from commit $GITHUB_SHA. "
+          release_notes="Latest automated Synapse AI APK from commit $GITHUB_SHA. "
           release_notes+="Version code: $version_code. SHA-256: $apk_sha256. "
           release_notes+="This rolling release is recreated after every successful main build "
           release_notes+="so the Releases page points at the newest APK."
 
           gh release create "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" \
             --target "$GITHUB_SHA" \
-            --title "Synapse AI Debug APK" \
+            --title "Synapse AI APK" \
             --notes "$release_notes" \
             --latest

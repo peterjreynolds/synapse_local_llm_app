@@ -29,6 +29,25 @@ data class RuntimeSettingsDraft(
     val maxTokens: String = "256",
 )
 
+enum class VoiceModeStatus {
+    OFF,
+    LISTENING,
+    PROCESSING,
+    SPEAKING,
+    ERROR,
+}
+
+data class VoiceModeUiState(
+    val status: VoiceModeStatus = VoiceModeStatus.OFF,
+    val recognitionRequestId: Long = 0,
+    val speechRequestId: Long = 0,
+    val speechText: String = "",
+    val errorMessage: String? = null,
+) {
+    val isActive: Boolean
+        get() = status != VoiceModeStatus.OFF && status != VoiceModeStatus.ERROR
+}
+
 data class SynapseUiState(
     val settings: SynapseSettings = SynapseSettings(),
     val settingsDraft: RuntimeSettingsDraft = RuntimeSettingsDraft(
@@ -53,5 +72,6 @@ data class SynapseUiState(
     val libraryArtifacts: List<LibraryArtifactRecord> = emptyList(),
     val isCreatingLibraryArtifact: Boolean = false,
     val isExportingLibraryPdf: Boolean = false,
+    val voiceMode: VoiceModeUiState = VoiceModeUiState(),
     val storageHealthSnapshot: StorageHealthSnapshot? = null,
 )
