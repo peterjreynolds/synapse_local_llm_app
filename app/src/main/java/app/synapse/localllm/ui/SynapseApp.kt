@@ -1696,7 +1696,7 @@ private fun MemoryResultRow(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    text = "${memory.kind.toDisplayLabel()} | ${(memory.confidence * 100).toInt()}%",
+                    text = buildMemoryMetadataLabel(memory),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -2431,6 +2431,14 @@ private fun MemoryKind.toDisplayLabel(): String =
             firstCharacter.toString()
         }
     }
+
+private fun buildMemoryMetadataLabel(memory: RetrievedMemoryRef): String =
+    listOfNotNull(
+        memory.kind.toDisplayLabel(),
+        memory.scope.name.lowercase(),
+        memory.subject?.takeIf { subject -> subject.isNotBlank() },
+        "${(memory.confidence * 100).toInt()}%",
+    ).joinToString(" | ")
 
 private fun ModelPromptProfile.toPromptProfileLabel(): String =
     when (this) {

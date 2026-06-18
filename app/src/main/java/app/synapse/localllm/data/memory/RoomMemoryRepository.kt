@@ -17,6 +17,7 @@ import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.ids.TraceEventId
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.MemoryRepository
+import app.synapse.localllm.domain.memory.MemoryScope
 import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.MemoryVersionRecord
 import app.synapse.localllm.domain.memory.MemoryWriteDecision
@@ -67,6 +68,13 @@ class RoomMemoryRepository(
                         text = acceptedCandidate.text,
                         confidence = acceptedCandidate.confidence,
                         surfacePolicy = acceptedCandidate.surfacePolicy.name,
+                        scope = acceptedCandidate.scope.name,
+                        subject = acceptedCandidate.subject?.takeIf { subject -> subject.isNotBlank() },
+                        keywordsCsv = acceptedCandidate.keywords
+                            .map { keyword -> keyword.trim() }
+                            .filter { keyword -> keyword.isNotBlank() }
+                            .distinct()
+                            .joinToString(","),
                         createdAtEpochMillis = decidedAt.toEpochMilli(),
                     ),
                 )
@@ -147,22 +155,20 @@ class RoomMemoryRepository(
     override suspend fun retrieveMemories(query: String, limit: Int): RetrievalBundle {
         val retrievedAt = clock.now()
         val queryTokens = tokenize(query)
-        val isPersonalRecallQuery = isPersonalMemoryRecallQuery(query)
+        val retrievalProfile = MemoryRetrievalProfile.classify(query)
         val candidates = listPromptVisibleMemoryRefs(
             limit = limit * CANDIDATE_MULTIPLIER,
         ) { versionWithKind ->
-            val lexicalReasonCodes = buildReasonCodes(queryTokens, versionWithKind.version.text)
-            if (lexicalReasonCodes.isNotEmpty()) {
-                lexicalReasonCodes
-            } else if (isPersonalRecallQuery) {
-                listOf("personal-memory-recall")
-            } else {
-                emptyList()
-            }
+            buildReasonCodes(
+                queryTokens = queryTokens,
+                retrievalProfile = retrievalProfile,
+                versionWithKind = versionWithKind,
+            )
         }
             .filter { retrievedMemory ->
                 retrievedMemory.reasonCodes.isNotEmpty() || queryTokens.isEmpty()
             }
+            .sortedByDescending(::scoreRetrievedMemory)
             .take(limit)
 
         val promptBlock = buildPromptBlock(candidates)
@@ -243,6 +249,9 @@ class RoomMemoryRepository(
             surfacePolicy = SurfacePolicy.valueOf(version.surfacePolicy),
             sourceTraceEventIds = supportTraceEventIds.map(::TraceEventId),
             createdAt = java.time.Instant.ofEpochMilli(version.createdAtEpochMillis),
+            scope = MemoryScope.valueOf(version.scope),
+            subject = version.subject,
+            keywords = parseKeywordsCsv(version.keywordsCsv),
         )
 
     private fun MemoryVersionRecord.toRetrievedMemoryRef(
@@ -256,21 +265,85 @@ class RoomMemoryRepository(
             text = text,
             confidence = confidence,
             reasonCodes = reasonCodes,
+            scope = scope,
+            subject = subject,
+            keywords = keywords,
         )
 
-    private fun buildReasonCodes(queryTokens: Set<String>, memoryText: String): List<String> {
+    private fun buildReasonCodes(
+        queryTokens: Set<String>,
+        retrievalProfile: MemoryRetrievalProfile,
+        versionWithKind: MemoryVersionWithKind,
+    ): List<String> {
         if (queryTokens.isEmpty()) return listOf("recent-memory")
-        val memoryTokens = tokenize(memoryText)
+
+        val memoryKind = MemoryKind.valueOf(versionWithKind.objectKind)
+        val searchableText = listOfNotNull(
+            versionWithKind.version.text,
+            versionWithKind.version.subject,
+            versionWithKind.version.keywordsCsv,
+        ).joinToString(" ")
+        val memoryTokens = tokenize(searchableText)
         val overlap = queryTokens.intersect(memoryTokens)
-        return overlap.take(MAX_REASON_CODES).map { token -> "token:$token" }
+        val lexicalReasonCodes = overlap
+            .take(MAX_REASON_CODES)
+            .map { token -> "token:$token" }
+
+        val intentReasonCodes = buildIntentReasonCodes(
+            retrievalProfile = retrievalProfile,
+            memoryKind = memoryKind,
+            memoryScope = MemoryScope.valueOf(versionWithKind.version.scope),
+        )
+
+        return (lexicalReasonCodes + intentReasonCodes).distinct()
     }
 
     private fun buildPromptBlock(candidates: List<RetrievedMemoryRef>): String {
         if (candidates.isEmpty()) return ""
         return candidates.joinToString(separator = "\n") { candidate ->
-            "- ${candidate.text}"
+            val subjectLabel = candidate.subject
+                ?.takeIf { subject -> subject.isNotBlank() }
+                ?.let { subject -> " / $subject" }
+                .orEmpty()
+            "- [${candidate.kind.name.lowercase()} / ${candidate.scope.name.lowercase()}$subjectLabel] ${candidate.text}"
         }
     }
+
+    private fun buildIntentReasonCodes(
+        retrievalProfile: MemoryRetrievalProfile,
+        memoryKind: MemoryKind,
+        memoryScope: MemoryScope,
+    ): List<String> {
+        if (retrievalProfile.includeAllPromptVisibleMemories) {
+            return listOf("all-memory-review")
+        }
+
+        val reasonCodes = mutableListOf<String>()
+        if (memoryKind in retrievalProfile.targetKinds) {
+            reasonCodes += "intent:${memoryKind.name.lowercase()}"
+        }
+        if (memoryScope in retrievalProfile.targetScopes) {
+            reasonCodes += "scope:${memoryScope.name.lowercase()}"
+        }
+        return reasonCodes
+    }
+
+    private fun scoreRetrievedMemory(memoryRef: RetrievedMemoryRef): Int =
+        memoryRef.reasonCodes.sumOf { reasonCode ->
+            when {
+                reasonCode == "all-memory-review" -> 2
+                reasonCode.startsWith("intent:") -> 8
+                reasonCode.startsWith("scope:") -> 5
+                reasonCode.startsWith("token:") -> 3
+                else -> 1
+            }
+        }
+
+    private fun parseKeywordsCsv(keywordsCsv: String): List<String> =
+        keywordsCsv
+            .split(",")
+            .map { keyword -> keyword.trim() }
+            .filter { keyword -> keyword.isNotBlank() }
 
     private fun tokenize(text: String): Set<String> =
         text.lowercase()
@@ -280,11 +353,6 @@ class RoomMemoryRepository(
             .filter { token -> token.length >= MINIMUM_TOKEN_LENGTH }
             .filterNot { token -> token in stopWords }
             .toSet()
-
-    private fun isPersonalMemoryRecallQuery(query: String): Boolean {
-        val normalizedQuery = query.lowercase()
-        return personalMemoryRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }
-    }
 
     private companion object {
         const val CANDIDATE_MULTIPLIER = 4
@@ -308,12 +376,78 @@ class RoomMemoryRepository(
             "need",
             "want",
         )
-        val personalMemoryRecallPatterns = listOf(
-            Regex("\\b(remember|memory|memories)\\b"),
-            Regex("\\babout\\s+me\\b"),
-            Regex("\\bknow\\s+about\\s+me\\b"),
+    }
+}
+
+private data class MemoryRetrievalProfile(
+    val targetKinds: Set<MemoryKind>,
+    val targetScopes: Set<MemoryScope>,
+    val includeAllPromptVisibleMemories: Boolean,
+) {
+    companion object {
+        fun classify(query: String): MemoryRetrievalProfile {
+            val normalizedQuery = query.lowercase()
+            val targetKinds = mutableSetOf<MemoryKind>()
+            val targetScopes = mutableSetOf<MemoryScope>()
+            var includeAllPromptVisibleMemories = false
+
+            if (generalMemoryRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
+                includeAllPromptVisibleMemories = true
+            }
+            if (identityRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
+                targetKinds += MemoryKind.IDENTITY
+                targetKinds += MemoryKind.RELATIONSHIP
+            }
+            if (preferenceRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
+                targetKinds += MemoryKind.PREFERENCE
+            }
+            if (projectRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
+                targetKinds += MemoryKind.PROJECT
+                targetKinds += MemoryKind.SUMMARY
+                targetScopes += MemoryScope.PROJECT
+            }
+            if (appointmentRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
+                targetKinds += MemoryKind.APPOINTMENT
+                targetKinds += MemoryKind.COMMITMENT
+            }
+            if (instructionRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
+                targetKinds += MemoryKind.INSTRUCTION
+                targetKinds += MemoryKind.PROCEDURE
+            }
+
+            return MemoryRetrievalProfile(
+                targetKinds = targetKinds,
+                targetScopes = targetScopes,
+                includeAllPromptVisibleMemories = includeAllPromptVisibleMemories,
+            )
+        }
+
+        private val generalMemoryRecallPatterns = listOf(
+            Regex("\\b(remember|memory|memories|saved memories|saved preferences)\\b"),
+            Regex("\\bwhat\\s+do\\s+you\\s+(know|remember)\\b"),
+            Regex("\\bwhat\\s+have\\s+you\\s+saved\\b"),
+        )
+        private val identityRecallPatterns = listOf(
+            Regex("\\bmy\\s+(full\\s+name|first\\s+name|middle\\s+name|last\\s+name|name|birthday|email|phone|address|location|role|job)\\b"),
+            Regex("\\bwho\\s+am\\s+i\\b"),
+            Regex("\\bwhat\\s+is\\s+my\\s+name\\b"),
+        )
+        private val preferenceRecallPatterns = listOf(
             Regex("\\bmy\\s+favou?rite\\b"),
-            Regex("\\bwhat\\s+do\\s+i\\s+(like|prefer|want|need)\\b"),
+            Regex("\\bwhat\\s+do\\s+i\\s+(like|love|prefer|hate|dislike|want|need)\\b"),
+            Regex("\\bmy\\s+preferences?\\b"),
+        )
+        private val projectRecallPatterns = listOf(
+            Regex("\\b(project|repo|app|website|workspace)\\b"),
+            Regex("\\bwhere\\s+were\\s+we\\b"),
+            Regex("\\bwhat\\s+are\\s+we\\s+(working\\s+on|building|planning)\\b"),
+        )
+        private val appointmentRecallPatterns = listOf(
+            Regex("\\b(appointments?|meetings?|calls?|deadlines?|due|schedule|calendar)\\b"),
+            Regex("\\bwhat\\s+do\\s+i\\s+have\\s+(today|tomorrow|this\\s+week)\\b"),
+        )
+        private val instructionRecallPatterns = listOf(
+            Regex("\\b(how\\s+do\\s+i\\s+like|how\\s+should\\s+you|instructions?|style|workflow)\\b"),
         )
     }
 }

@@ -38,6 +38,7 @@ class VerifiedPromptContextAssemblerTest {
         assertEquals(4, messages.size)
         assertEquals(ConversationRole.SYSTEM, messages[0].role)
         assertTrue(messages[0].content.contains("Verified local memory"))
+        assertTrue(messages[0].content.contains("say you do not know instead of guessing"))
         assertEquals("Remember I prefer native Android.", messages[1].content)
         assertEquals("Got it.", messages[2].content)
         assertEquals("What should we build next?", messages[3].content)

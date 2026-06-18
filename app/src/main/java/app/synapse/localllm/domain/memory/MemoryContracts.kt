@@ -14,11 +14,23 @@ import java.time.Instant
 enum class MemoryKind {
     TRACE,
     GIST,
+    IDENTITY,
     PREFERENCE,
     COMMITMENT,
     PROCEDURE,
     RELATIONSHIP,
+    PROJECT,
+    APPOINTMENT,
+    INSTRUCTION,
+    CORRECTION,
+    SUMMARY,
     ARCHIVE,
+}
+
+enum class MemoryScope {
+    GLOBAL,
+    PROJECT,
+    THREAD,
 }
 
 enum class MemoryStatus {
@@ -57,6 +69,9 @@ data class MemoryClaimCandidate(
     val sourceTraceEventIds: List<TraceEventId>,
     val surfacePolicy: SurfacePolicy,
     val reasonCodes: List<String>,
+    val scope: MemoryScope = MemoryScope.GLOBAL,
+    val subject: String? = null,
+    val keywords: List<String> = emptyList(),
 )
 
 data class MemoryWriteDecision(
@@ -92,6 +107,9 @@ data class MemoryVersionRecord(
     val surfacePolicy: SurfacePolicy,
     val sourceTraceEventIds: List<TraceEventId>,
     val createdAt: Instant,
+    val scope: MemoryScope = MemoryScope.GLOBAL,
+    val subject: String? = null,
+    val keywords: List<String> = emptyList(),
 )
 
 data class RetrievedMemoryRef(
@@ -101,6 +119,9 @@ data class RetrievedMemoryRef(
     val text: String,
     val confidence: Double,
     val reasonCodes: List<String>,
+    val scope: MemoryScope = MemoryScope.GLOBAL,
+    val subject: String? = null,
+    val keywords: List<String> = emptyList(),
 )
 
 data class RetrievalBundle(

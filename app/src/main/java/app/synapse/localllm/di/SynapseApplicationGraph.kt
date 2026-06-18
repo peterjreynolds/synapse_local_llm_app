@@ -9,6 +9,7 @@ import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.library.AndroidMarkdownPdfExporter
 import app.synapse.localllm.data.library.RoomLibraryWorkspaceRepository
@@ -52,6 +53,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_1_2,
         SYNAPSE_DATABASE_MIGRATION_2_3,
         SYNAPSE_DATABASE_MIGRATION_3_4,
+        SYNAPSE_DATABASE_MIGRATION_4_5,
     ).build()
 
     val settingsStore = SynapseSettingsStore(applicationContext)

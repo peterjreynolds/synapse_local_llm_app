@@ -10,6 +10,7 @@ import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.ids.TraceEventId
 import app.synapse.localllm.domain.memory.MemoryClaimCandidate
 import app.synapse.localllm.domain.memory.MemoryKind
+import app.synapse.localllm.domain.memory.MemoryScope
 import app.synapse.localllm.domain.memory.MemoryWriteDecision
 import app.synapse.localllm.domain.memory.MemoryWriteOutcome
 import app.synapse.localllm.domain.memory.SurfacePolicy
@@ -64,7 +65,7 @@ class RoomMemoryRepositoryTest {
 
         assertEquals(1, retrievalBundle.refs.size)
         assertEquals("User I like pizza.", retrievalBundle.refs.single().text)
-        assertTrue(retrievalBundle.refs.single().reasonCodes.contains("personal-memory-recall"))
+        assertTrue(retrievalBundle.refs.single().reasonCodes.contains("intent:preference"))
         assertTrue(retrievalBundle.promptBlock.contains("User I like pizza."))
     }
 
@@ -82,7 +83,97 @@ class RoomMemoryRepositoryTest {
         assertTrue(retrievalBundle.refs.single().reasonCodes.any { reason -> reason.startsWith("token:") })
     }
 
-    private suspend fun writeDurableMemory(text: String) {
+    @Test
+    fun identityRecallQueryRetrievesIdentityMemory() = runTest {
+        writeDurableMemory(
+            text = "User's full name is Peter Joseph Reynolds.",
+            kind = MemoryKind.IDENTITY,
+            subject = "User",
+            keywords = listOf("identity", "full", "name"),
+        )
+
+        val retrievalBundle = repository.retrieveMemories(
+            query = "What is my full name?",
+            limit = 5,
+        )
+
+        assertEquals(1, retrievalBundle.refs.size)
+        val memory = retrievalBundle.refs.single()
+        assertEquals(MemoryKind.IDENTITY, memory.kind)
+        assertEquals("User's full name is Peter Joseph Reynolds.", memory.text)
+        assertTrue(memory.reasonCodes.contains("intent:identity"))
+        assertTrue(retrievalBundle.promptBlock.contains("[identity / global / User]"))
+    }
+
+    @Test
+    fun projectRecallQueryRetrievesProjectScopedMemory() = runTest {
+        writeDurableMemory(
+            text = "All new proposals for Project Walby should be reviewed by Roberto Moreno.",
+            kind = MemoryKind.PROJECT,
+            scope = MemoryScope.PROJECT,
+            subject = "Walby",
+            keywords = listOf("project", "walby", "proposal", "review"),
+        )
+
+        val retrievalBundle = repository.retrieveMemories(
+            query = "What do we know about Project Walby?",
+            limit = 5,
+        )
+
+        assertEquals(1, retrievalBundle.refs.size)
+        val memory = retrievalBundle.refs.single()
+        assertEquals(MemoryKind.PROJECT, memory.kind)
+        assertEquals(MemoryScope.PROJECT, memory.scope)
+        assertEquals("Walby", memory.subject)
+        assertTrue(memory.reasonCodes.contains("intent:project"))
+        assertTrue(memory.reasonCodes.contains("scope:project"))
+    }
+
+    @Test
+    fun appointmentRecallQueryRetrievesAppointmentMemory() = runTest {
+        writeDurableMemory(
+            text = "User has a dentist appointment tomorrow at 3 PM.",
+            kind = MemoryKind.APPOINTMENT,
+            keywords = listOf("appointment", "dentist", "tomorrow"),
+        )
+
+        val retrievalBundle = repository.retrieveMemories(
+            query = "What appointments do I have?",
+            limit = 5,
+        )
+
+        assertEquals(1, retrievalBundle.refs.size)
+        assertEquals(MemoryKind.APPOINTMENT, retrievalBundle.refs.single().kind)
+        assertTrue(retrievalBundle.refs.single().reasonCodes.contains("intent:appointment"))
+    }
+
+    @Test
+    fun savedMemoryReviewRetrievesAllPromptVisibleMemory() = runTest {
+        writeDurableMemory(
+            text = "User's full name is Peter Joseph Reynolds.",
+            kind = MemoryKind.IDENTITY,
+        )
+        writeDurableMemory(
+            text = "User prefers concise Kotlin code.",
+            kind = MemoryKind.PREFERENCE,
+        )
+
+        val retrievalBundle = repository.retrieveMemories(
+            query = "What are my saved memories?",
+            limit = 10,
+        )
+
+        assertEquals(2, retrievalBundle.refs.size)
+        assertTrue(retrievalBundle.refs.all { memory -> memory.reasonCodes.contains("all-memory-review") })
+    }
+
+    private suspend fun writeDurableMemory(
+        text: String,
+        kind: MemoryKind = MemoryKind.PREFERENCE,
+        scope: MemoryScope = MemoryScope.GLOBAL,
+        subject: String? = null,
+        keywords: List<String> = emptyList(),
+    ) {
         val traceEvent = TraceEventRecord(
             id = TraceEventId("trace-${clock.tickCount}"),
             sourceMessageId = ChatMessageId("message-${clock.tickCount}"),
@@ -96,12 +187,15 @@ class RoomMemoryRepositoryTest {
             decision = MemoryWriteDecision(
                 outcome = MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN,
                 candidate = MemoryClaimCandidate(
-                    kind = MemoryKind.PREFERENCE,
+                    kind = kind,
                     text = text,
                     confidence = 0.86,
                     sourceTraceEventIds = listOf(traceEvent.id),
                     surfacePolicy = SurfacePolicy.PROMPT_VISIBLE,
                     reasonCodes = listOf("test-memory"),
+                    scope = scope,
+                    subject = subject,
+                    keywords = keywords,
                 ),
                 reason = "Test memory accepted.",
                 storageHealthSnapshot = null,

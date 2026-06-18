@@ -230,6 +230,7 @@ class AndroidDebugArchiveExporter(
                     appendSection("recentMessages", database.queryText(RECENT_MESSAGES_SQL))
                     appendSection("assistantGenerationTraces", database.queryText(GENERATION_TRACES_SQL))
                     appendSection("recentLibraryArtifacts", database.queryText(RECENT_LIBRARY_ARTIFACTS_SQL))
+                    appendSection("recentMemoryVersions", database.queryText(RECENT_MEMORY_VERSIONS_SQL))
                     appendSection("recentStorageHealth", database.queryText(RECENT_STORAGE_HEALTH_SQL))
                     appendSection("recentMemoryWriteReceipts", database.queryText(RECENT_MEMORY_WRITES_SQL))
                 }
@@ -431,6 +432,17 @@ class AndroidDebugArchiveExporter(
             FROM storage_health_snapshots
             ORDER BY checkedAtEpochMillis DESC
             LIMIT 20
+            """.trimIndent()
+
+        val RECENT_MEMORY_VERSIONS_SQL =
+            """
+            SELECT v.id, v.memoryObjectId, o.kind, o.status, v.scope, v.subject,
+                   substr(replace(replace(v.text, char(10), ' '), char(13), ' '), 1, 220) AS textPreview,
+                   v.confidence, v.surfacePolicy, v.keywordsCsv, v.createdAtEpochMillis
+            FROM memory_versions v
+            INNER JOIN memory_objects o ON o.id = v.memoryObjectId
+            ORDER BY v.createdAtEpochMillis DESC
+            LIMIT 80
             """.trimIndent()
 
         val RECENT_MEMORY_WRITES_SQL =

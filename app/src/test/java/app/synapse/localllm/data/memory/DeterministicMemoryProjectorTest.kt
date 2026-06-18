@@ -50,6 +50,65 @@ class DeterministicMemoryProjectorTest {
     }
 
     @Test
+    fun extractsCorrectedFullNameAsIdentityMemory() {
+        val traceEvent = userTrace("No, my full name is Peter Joseph Reynolds.")
+
+        val candidate = projector.extractMemoryCandidates(traceEvent).single()
+
+        assertEquals(MemoryKind.IDENTITY, candidate.kind)
+        assertEquals("User's full name is Peter Joseph Reynolds.", candidate.text)
+        assertEquals("User", candidate.subject)
+        assertTrue(candidate.reasonCodes.contains("explicit-user-identity"))
+        assertTrue(candidate.keywords.contains("identity"))
+    }
+
+    @Test
+    fun extractsExplicitProjectRuleAsProjectMemory() {
+        val traceEvent = userTrace(
+            "Remember that all new proposals for Project Walby should be reviewed by Roberto Moreno.",
+        )
+
+        val candidate = projector.extractMemoryCandidates(traceEvent).single()
+
+        assertEquals(MemoryKind.PROJECT, candidate.kind)
+        assertEquals("Walby", candidate.subject)
+        assertTrue(candidate.text.contains("Project Walby"))
+        assertTrue(candidate.reasonCodes.contains("explicit-user-memory-command"))
+        assertTrue(candidate.reasonCodes.contains("explicit-user-project-context"))
+    }
+
+    @Test
+    fun extractsAppointmentMemory() {
+        val traceEvent = userTrace("I have a dentist appointment tomorrow at 3 PM.")
+
+        val candidate = projector.extractMemoryCandidates(traceEvent).single()
+
+        assertEquals(MemoryKind.APPOINTMENT, candidate.kind)
+        assertTrue(candidate.text.contains("dentist appointment"))
+        assertTrue(candidate.reasonCodes.contains("explicit-user-appointment"))
+    }
+
+    @Test
+    fun genericRememberCommandCreatesGistMemory() {
+        val traceEvent = userTrace("Remember that the workshop door code is 4582.")
+
+        val candidate = projector.extractMemoryCandidates(traceEvent).single()
+
+        assertEquals(MemoryKind.GIST, candidate.kind)
+        assertEquals("the workshop door code is 4582.", candidate.text)
+        assertTrue(candidate.reasonCodes.contains("explicit-user-general-memory"))
+    }
+
+    @Test
+    fun forgetCommandDoesNotWriteNewMemory() {
+        val traceEvent = userTrace("Forget my memory about Project Walby proposals.")
+
+        val candidates = projector.extractMemoryCandidates(traceEvent)
+
+        assertTrue(candidates.isEmpty())
+    }
+
+    @Test
     fun ignoresAssistantTextForDurableMemoryExtraction() {
         val traceEvent = TraceEventRecord(
             id = TraceEventId("trace-1"),

@@ -17,6 +17,9 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Embedded ARM64 `llama.cpp` runtime with Termux server fallback.
 - Named APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
 - App-local Room/SQLite chat and evidence-backed memory.
+- Memory V6 foundation: structured memory kinds, scopes, subjects, keywords,
+  broader explicit extraction, intent-based retrieval routing, and visible
+  memory metadata in diagnostics/review surfaces.
 - Storage-pressure guardrails for memory writes.
 - Synapse Guild branding.
 - Persona and Custom Instructions settings.
@@ -116,6 +119,32 @@ Goal: make Synapse a local librarian plus analyst, not just a chatbot with memor
 - Exact URL import means user-supplied URLs only. No autonomous free browsing in
   v1.
 
+### Memory V6 Expansion
+
+Goal: make memory behave like a governed local assistant memory system, not a
+bag of regex hits.
+
+- Keep conversation traces as evidence, not prompt stuffing.
+- Keep durable saved memories separate from research/library documents.
+- Maintain structured memory metadata: kind, scope, subject, keywords,
+  confidence, evidence, status, and receipts.
+- Expand memory kinds across identity, preferences, projects, appointments,
+  relationships, commitments, procedures, instructions, corrections, summaries,
+  gist, trace, and archive.
+- Use deterministic extraction for explicit user commands and high-confidence
+  patterns.
+- Add LLM-assisted candidate extraction later, but require strict JSON schema
+  validation, evidence checks, conflict checks, and admission-gate approval.
+- Add chat-driven forget/update commands that tombstone or supersede durable
+  memories instead of writing correction text as a new fact.
+- Add rolling daily, chat, and project summaries so Synapse can answer what was
+  discussed yesterday or where a project was left.
+- Add project memory spaces similar to Claude project memory.
+- Add memory citations back to source chats when previous conversations are
+  referenced.
+- Never let the assistant claim a memory was saved unless a durable write
+  receipt exists.
+
 ### Synapse Governance V3 Mode
 
 Goal: let the user intentionally enter governed planning mode without turning the
@@ -184,16 +213,17 @@ Goal: share one solid core between Synapse AI and later characters/products.
 
 1. Finish phone QA of the current chat/prompt/diagnostics stabilization slice.
 2. Harden attachment persistence and debug export coverage.
-3. Offline voice selection and local speaker voice import.
-4. Full offline Voice Mode.
-5. Library core schema and text/Markdown ingestion.
-6. PDF/DOCX/exact-URL ingestion.
-7. Retrieval and citation injection.
-8. Research graph relationships.
-9. Synapse Governance V3 planning mode.
-10. Sandbox workspace tools.
-11. Model downloader/importer hardening.
-12. Pickle AI product flavor.
+3. Memory V6 LLM-assisted extraction, conflict handling, and summaries.
+4. Offline voice selection and local speaker voice import.
+5. Full offline Voice Mode.
+6. Library core schema and text/Markdown ingestion.
+7. PDF/DOCX/exact-URL ingestion.
+8. Retrieval and citation injection.
+9. Research graph relationships.
+10. Synapse Governance V3 planning mode.
+11. Sandbox workspace tools.
+12. Model downloader/importer hardening.
+13. Pickle AI product flavor.
 
 ## Test Plan
 
@@ -205,6 +235,9 @@ Goal: share one solid core between Synapse AI and later characters/products.
 - Output tests for no hidden reasoning, fake role labels, or diagnostic leakage.
 - Top-bar tests for hiding healthy runtime status and showing actionable issues.
 - Diagnostics ZIP tests for app-state inclusion and GGUF exclusion.
+- Memory tests for structured metadata, explicit remember commands, identity,
+  project, appointment, preference, retrieval intent routing, storage-paused
+  writes, and no fake saved-memory claim without receipts.
 - Attachment tests for text extraction, URI failure handling, and future
   app-private original preservation.
 - Voice tests for per-message play/pause/resume state, Voice Mode state

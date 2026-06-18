@@ -59,6 +59,9 @@ class VerifiedPromptContextAssembler : PromptContextAssembler {
 
         const val MEMORY_USE_POLICY =
             "Use verified local memory only when directly relevant. " +
-                "Do not expose memory IDs unless the user asks for diagnostics."
+                "Do not expose memory IDs unless the user asks for diagnostics. " +
+                "If verified local memory does not contain a personal, project, appointment, " +
+                "or preference fact needed to answer, say you do not know instead of guessing. " +
+                "Only say a memory was saved when verified local memory contains the matching saved fact."
     }
 }

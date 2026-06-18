@@ -176,7 +176,13 @@ data class MemoryObjectEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("memoryObjectId"), Index("createdAtEpochMillis"), Index("surfacePolicy")],
+    indices = [
+        Index("memoryObjectId"),
+        Index("createdAtEpochMillis"),
+        Index("surfacePolicy"),
+        Index("scope"),
+        Index("subject"),
+    ],
 )
 data class MemoryVersionEntity(
     @PrimaryKey val id: String,
@@ -184,6 +190,9 @@ data class MemoryVersionEntity(
     val text: String,
     val confidence: Double,
     val surfacePolicy: String,
+    val scope: String,
+    val subject: String?,
+    val keywordsCsv: String,
     val createdAtEpochMillis: Long,
 )
 
