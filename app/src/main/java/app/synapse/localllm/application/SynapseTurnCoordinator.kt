@@ -13,6 +13,8 @@ import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.memory.MemoryAdmissionGate
+import app.synapse.localllm.domain.memory.MemoryCommand
+import app.synapse.localllm.domain.memory.MemoryCommandInterpreter
 import app.synapse.localllm.domain.memory.MemoryProjector
 import app.synapse.localllm.domain.memory.MemoryRepository
 import app.synapse.localllm.domain.memory.MemoryWriteDecision
@@ -34,6 +36,7 @@ import kotlinx.coroutines.flow.collect
 class SynapseTurnCoordinator(
     private val conversationRepository: ConversationRepository,
     private val memoryRepository: MemoryRepository,
+    private val memoryCommandInterpreter: MemoryCommandInterpreter,
     private val memoryProjector: MemoryProjector,
     private val memoryAdmissionGate: MemoryAdmissionGate,
     private val storageHealthGovernor: StorageHealthGovernor,
@@ -244,6 +247,18 @@ class SynapseTurnCoordinator(
             observedAt = clock.now(),
         )
         memoryRepository.appendTraceEvent(traceEvent)
+
+        when (val memoryCommand = memoryCommandInterpreter.interpretMemoryCommand(traceEvent)) {
+            MemoryCommand.ContinueExtraction -> Unit
+            is MemoryCommand.TombstoneMatchingMemories -> {
+                memoryRepository.tombstoneMemoriesMatching(
+                    traceEvent = traceEvent,
+                    query = memoryCommand.query,
+                    reason = memoryCommand.reason,
+                )
+                return memoryRepository.retrieveMemories(query = promptText, limit = MEMORY_RETRIEVAL_LIMIT)
+            }
+        }
 
         val memoryCandidates = memoryProjector.extractMemoryCandidates(traceEvent)
         if (memoryCandidates.isEmpty()) {

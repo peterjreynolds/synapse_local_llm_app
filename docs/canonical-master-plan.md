@@ -17,9 +17,10 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Embedded ARM64 `llama.cpp` runtime with Termux server fallback.
 - Named APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
 - App-local Room/SQLite chat and evidence-backed memory.
-- Memory V6 foundation: structured memory kinds, scopes, subjects, keywords,
-  broader explicit extraction, intent-based retrieval routing, and visible
-  memory metadata in diagnostics/review surfaces.
+- Memory V7 governed-claim foundation: structured memory kinds, scopes,
+  subjects, keywords, claim keys, supersession, tombstone/delete commands,
+  intent-based retrieval routing, scored retrieval receipts, and visible memory
+  metadata in diagnostics/review surfaces.
 - Storage-pressure guardrails for memory writes.
 - Synapse Guild branding.
 - Persona and Custom Instructions settings.
@@ -119,15 +120,15 @@ Goal: make Synapse a local librarian plus analyst, not just a chatbot with memor
 - Exact URL import means user-supplied URLs only. No autonomous free browsing in
   v1.
 
-### Memory V6 Expansion
+### Memory V7 Expansion
 
 Goal: make memory behave like a governed local assistant memory system, not a
 bag of regex hits.
 
 - Keep conversation traces as evidence, not prompt stuffing.
 - Keep durable saved memories separate from research/library documents.
-- Maintain structured memory metadata: kind, scope, subject, keywords,
-  confidence, evidence, status, and receipts.
+- Maintain structured memory metadata: kind, status, claim key, scope, subject,
+  keywords, confidence, evidence, and receipts.
 - Expand memory kinds across identity, preferences, projects, appointments,
   relationships, commitments, procedures, instructions, corrections, summaries,
   gist, trace, and archive.
@@ -135,8 +136,10 @@ bag of regex hits.
   patterns.
 - Add LLM-assisted candidate extraction later, but require strict JSON schema
   validation, evidence checks, conflict checks, and admission-gate approval.
-- Add chat-driven forget/update commands that tombstone or supersede durable
-  memories instead of writing correction text as a new fact.
+- Keep deterministic chat-driven forget/update commands that tombstone or
+  supersede durable memories instead of writing correction text as a new fact.
+- Add a stricter conflict review UI for ambiguous same-key facts that should not
+  auto-supersede.
 - Add rolling daily, chat, and project summaries so Synapse can answer what was
   discussed yesterday or where a project was left.
 - Add project memory spaces similar to Claude project memory.

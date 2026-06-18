@@ -246,11 +246,18 @@ interface MemoryDao {
 
     @Query(
         """
-        SELECT v.*, o.kind AS objectKind
+        SELECT v.*, o.kind AS objectKind, o.status AS objectStatus, o.claimKey AS objectClaimKey
         FROM memory_versions v
         INNER JOIN memory_objects o ON o.id = v.memoryObjectId
         WHERE o.status = :activeStatus
           AND v.surfacePolicy = :surfacePolicy
+          AND v.id = (
+              SELECT v2.id
+              FROM memory_versions v2
+              WHERE v2.memoryObjectId = o.id
+              ORDER BY v2.createdAtEpochMillis DESC, v2.id DESC
+              LIMIT 1
+          )
         ORDER BY v.createdAtEpochMillis DESC
         LIMIT :limit
         """,
@@ -259,6 +266,50 @@ interface MemoryDao {
         activeStatus: String,
         surfacePolicy: String,
         limit: Int,
+    ): List<MemoryVersionWithKind>
+
+    @Query(
+        """
+        SELECT v.*, o.kind AS objectKind, o.status AS objectStatus, o.claimKey AS objectClaimKey
+        FROM memory_versions v
+        INNER JOIN memory_objects o ON o.id = v.memoryObjectId
+        WHERE o.status IN (:statuses)
+          AND v.id = (
+              SELECT v2.id
+              FROM memory_versions v2
+              WHERE v2.memoryObjectId = o.id
+              ORDER BY v2.createdAtEpochMillis DESC, v2.id DESC
+              LIMIT 1
+          )
+        ORDER BY v.createdAtEpochMillis DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun listLatestVersionsByStatuses(
+        statuses: List<String>,
+        limit: Int,
+    ): List<MemoryVersionWithKind>
+
+    @Query(
+        """
+        SELECT v.*, o.kind AS objectKind, o.status AS objectStatus, o.claimKey AS objectClaimKey
+        FROM memory_versions v
+        INNER JOIN memory_objects o ON o.id = v.memoryObjectId
+        WHERE o.status = :activeStatus
+          AND o.claimKey = :claimKey
+          AND v.id = (
+              SELECT v2.id
+              FROM memory_versions v2
+              WHERE v2.memoryObjectId = o.id
+              ORDER BY v2.createdAtEpochMillis DESC, v2.id DESC
+              LIMIT 1
+          )
+        ORDER BY v.createdAtEpochMillis DESC
+        """,
+    )
+    suspend fun listActiveVersionsByClaimKey(
+        activeStatus: String,
+        claimKey: String,
     ): List<MemoryVersionWithKind>
 
     @Query(
@@ -280,6 +331,20 @@ interface MemoryDao {
     )
     suspend fun updateMemoryStatus(
         memoryObjectId: String,
+        status: String,
+        updatedAtEpochMillis: Long,
+    )
+
+    @Query(
+        """
+        UPDATE memory_objects
+        SET status = :status,
+            updatedAtEpochMillis = :updatedAtEpochMillis
+        WHERE id IN (:memoryObjectIds)
+        """,
+    )
+    suspend fun updateMemoryStatuses(
+        memoryObjectIds: List<String>,
         status: String,
         updatedAtEpochMillis: Long,
     )

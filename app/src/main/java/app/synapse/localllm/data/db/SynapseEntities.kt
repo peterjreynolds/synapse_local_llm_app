@@ -157,11 +157,12 @@ data class TraceEventEntity(
     val observedAtEpochMillis: Long,
 )
 
-@Entity(tableName = "memory_objects", indices = [Index("kind"), Index("status")])
+@Entity(tableName = "memory_objects", indices = [Index("kind"), Index("status"), Index("claimKey")])
 data class MemoryObjectEntity(
     @PrimaryKey val id: String,
     val kind: String,
     val status: String,
+    val claimKey: String?,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
 )
@@ -199,6 +200,8 @@ data class MemoryVersionEntity(
 data class MemoryVersionWithKind(
     @Embedded val version: MemoryVersionEntity,
     @ColumnInfo(name = "objectKind") val objectKind: String,
+    @ColumnInfo(name = "objectStatus") val objectStatus: String,
+    @ColumnInfo(name = "objectClaimKey") val objectClaimKey: String?,
 )
 
 @Entity(
@@ -240,6 +243,7 @@ data class MemoryWriteReceiptEntity(
 data class RetrievalReceiptEntity(
     @PrimaryKey val id: String,
     val query: String,
+    val retrievalIntent: String,
     val promptBlock: String,
     val retrievedAtEpochMillis: Long,
 )
@@ -268,6 +272,7 @@ data class RetrievedMemoryReceiptEntity(
     val memoryVersionId: String,
     val memoryObjectId: String,
     val reasonCodes: String,
+    val rankScore: Double,
 )
 
 @Entity(tableName = "storage_health_snapshots", indices = [Index("checkedAtEpochMillis")])

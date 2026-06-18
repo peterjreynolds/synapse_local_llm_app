@@ -125,6 +125,8 @@ import app.synapse.localllm.domain.chat.MessageDeliveryState
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.MemoryKind
+import app.synapse.localllm.domain.memory.MemoryReviewFilter
+import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
@@ -285,6 +287,7 @@ fun SynapseApp(viewModel: SynapseViewModel) {
             }
         },
         onMemoryQueryChanged = viewModel::updateMemorySearchQuery,
+        onMemoryFilterChanged = viewModel::updateMemoryReviewFilter,
         onMemorySearch = viewModel::searchMemory,
         onTombstoneMemory = { memory -> viewModel.tombstoneMemory(memory.memoryObjectId) },
         onSettingsDraftChanged = viewModel::updateSettingsDraft,
@@ -331,6 +334,7 @@ private fun SynapseScreen(
     onExportLibraryDraftAsPdf: () -> Unit,
     onExportLibraryArtifactAsPdf: (LibraryArtifactRecord) -> Unit,
     onMemoryQueryChanged: (String) -> Unit,
+    onMemoryFilterChanged: (MemoryReviewFilter) -> Unit,
     onMemorySearch: () -> Unit,
     onTombstoneMemory: (RetrievedMemoryRef) -> Unit,
     onSettingsDraftChanged: (RuntimeSettingsDraft) -> Unit,
@@ -417,6 +421,7 @@ private fun SynapseScreen(
                         MemoryPanel(
                             state = state,
                             onMemoryQueryChanged = onMemoryQueryChanged,
+                            onMemoryFilterChanged = onMemoryFilterChanged,
                             onMemorySearch = onMemorySearch,
                             onTombstoneMemory = onTombstoneMemory,
                             onInspectStorage = onInspectStorage,
@@ -1592,6 +1597,7 @@ private fun LibraryArtifactRow(
 private fun MemoryPanel(
     state: SynapseUiState,
     onMemoryQueryChanged: (String) -> Unit,
+    onMemoryFilterChanged: (MemoryReviewFilter) -> Unit,
     onMemorySearch: () -> Unit,
     onTombstoneMemory: (RetrievedMemoryRef) -> Unit,
     onInspectStorage: () -> Unit,
@@ -1617,6 +1623,27 @@ private fun MemoryPanel(
             )
         }
         item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MemoryReviewFilter.values().forEach { filter ->
+                    val selected = filter == state.memoryReviewFilter
+                    TextButton(onClick = { onMemoryFilterChanged(filter) }) {
+                        Text(
+                            text = filter.toDisplayLabel(),
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+        }
+        item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = state.memorySearchQuery,
@@ -1634,7 +1661,11 @@ private fun MemoryPanel(
         if (state.memorySearchResults.isEmpty()) {
             item {
                 Text(
-                    text = "No active memories found.",
+                    text = when (state.memoryReviewFilter) {
+                        MemoryReviewFilter.ACTIVE -> "No active memories found."
+                        MemoryReviewFilter.INACTIVE -> "No inactive memories found."
+                        MemoryReviewFilter.ALL -> "No memories found."
+                    },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -1701,8 +1732,10 @@ private fun MemoryResultRow(
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
-            IconButton(onClick = { onTombstoneMemory(memory) }) {
-                Icon(Icons.Rounded.Delete, contentDescription = "Delete memory")
+            if (memory.status == MemoryStatus.ACTIVE) {
+                IconButton(onClick = { onTombstoneMemory(memory) }) {
+                    Icon(Icons.Rounded.Delete, contentDescription = "Delete memory")
+                }
             }
         }
     }
@@ -2432,12 +2465,27 @@ private fun MemoryKind.toDisplayLabel(): String =
         }
     }
 
+private fun MemoryReviewFilter.toDisplayLabel(): String =
+    name.lowercase().replaceFirstChar { firstCharacter ->
+        if (firstCharacter.isLowerCase()) {
+            firstCharacter.titlecase()
+        } else {
+            firstCharacter.toString()
+        }
+    }
+
 private fun buildMemoryMetadataLabel(memory: RetrievedMemoryRef): String =
     listOfNotNull(
         memory.kind.toDisplayLabel(),
+        memory.status.name.lowercase(),
         memory.scope.name.lowercase(),
         memory.subject?.takeIf { subject -> subject.isNotBlank() },
+        memory.claimKey?.takeIf { claimKey -> claimKey.isNotBlank() },
         "${(memory.confidence * 100).toInt()}%",
+        "evidence ${memory.sourceTraceEventIds.size}",
+        memory.rankScore
+            .takeIf { score -> score > 0.0 }
+            ?.let { score -> "rank ${"%.1f".format(Locale.US, score)}" },
     ).joinToString(" | ")
 
 private fun ModelPromptProfile.toPromptProfileLabel(): String =

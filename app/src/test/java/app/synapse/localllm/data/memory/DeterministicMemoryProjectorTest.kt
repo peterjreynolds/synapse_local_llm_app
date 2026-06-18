@@ -36,6 +36,7 @@ class DeterministicMemoryProjectorTest {
 
         assertEquals(MemoryKind.PREFERENCE, candidate.kind)
         assertEquals("User's favorite food is pizza.", candidate.text)
+        assertEquals("user.favorite.food", candidate.claimKey)
         assertTrue(candidate.reasonCodes.contains("explicit-user-favorite"))
     }
 
@@ -57,6 +58,7 @@ class DeterministicMemoryProjectorTest {
 
         assertEquals(MemoryKind.IDENTITY, candidate.kind)
         assertEquals("User's full name is Peter Joseph Reynolds.", candidate.text)
+        assertEquals("user.full_name", candidate.claimKey)
         assertEquals("User", candidate.subject)
         assertTrue(candidate.reasonCodes.contains("explicit-user-identity"))
         assertTrue(candidate.keywords.contains("identity"))

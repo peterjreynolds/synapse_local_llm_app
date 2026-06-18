@@ -15,6 +15,8 @@ import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.ids.MemoryObjectId
 import app.synapse.localllm.domain.library.CreateMarkdownArtifactCommand
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
+import app.synapse.localllm.domain.memory.MemoryReviewFilter
+import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
@@ -546,11 +548,27 @@ class SynapseViewModel(
         mutableUiState.update { state -> state.copy(memorySearchQuery = query) }
     }
 
+    fun updateMemoryReviewFilter(filter: MemoryReviewFilter) {
+        mutableUiState.update { state -> state.copy(memoryReviewFilter = filter) }
+        searchMemory()
+    }
+
     fun searchMemory() {
-        val query = mutableUiState.value.memorySearchQuery
+        val snapshot = mutableUiState.value
+        val query = snapshot.memorySearchQuery
         viewModelScope.launch {
-            val memoryRefs = if (query.isBlank()) {
-                graph.memoryRepository.listPromptVisibleMemories(limit = 50)
+            val shouldUseReviewList =
+                query.isBlank() || snapshot.memoryReviewFilter != MemoryReviewFilter.ACTIVE
+            val memoryRefs = if (shouldUseReviewList) {
+                val reviewRefs = graph.memoryRepository.listMemoriesForReview(
+                    filter = snapshot.memoryReviewFilter,
+                    limit = 100,
+                )
+                if (query.isBlank()) {
+                    reviewRefs.take(50)
+                } else {
+                    reviewRefs.filter { memory -> memory.matchesReviewQuery(query) }.take(50)
+                }
             } else {
                 graph.memoryRepository.retrieveMemories(query = query, limit = 20).refs
             }
@@ -566,10 +584,13 @@ class SynapseViewModel(
                 memoryObjectId = memoryObjectId,
                 reason = "Deleted from Synapse memory screen.",
             )
+            val memoryRefs = graph.memoryRepository.listMemoriesForReview(
+                filter = mutableUiState.value.memoryReviewFilter,
+                limit = 50,
+            )
             mutableUiState.update { state ->
                 state.copy(
-                    memorySearchResults = state.memorySearchResults
-                        .filterNot { memory -> memory.memoryObjectId == memoryObjectId },
+                    memorySearchResults = memoryRefs,
                     lastNotice = "Memory tombstoned: ${receipt.id.raw}",
                 )
             }
@@ -745,8 +766,27 @@ class SynapseViewModel(
 
     private fun loadMemoryList() {
         viewModelScope.launch {
-            val memoryRefs = graph.memoryRepository.listPromptVisibleMemories(limit = 50)
+            val memoryRefs = graph.memoryRepository.listMemoriesForReview(
+                filter = mutableUiState.value.memoryReviewFilter,
+                limit = 50,
+            )
             mutableUiState.update { state -> state.copy(memorySearchResults = memoryRefs) }
+        }
+    }
+
+    private fun RetrievedMemoryRef.matchesReviewQuery(query: String): Boolean {
+        val normalizedQuery = query.trim().lowercase()
+        if (normalizedQuery.isBlank()) return true
+        return listOfNotNull(
+            text,
+            kind.name,
+            status.name,
+            scope.name,
+            subject,
+            claimKey,
+            keywords.joinToString(" "),
+        ).any { searchableText ->
+            searchableText.lowercase().contains(normalizedQuery)
         }
     }
 

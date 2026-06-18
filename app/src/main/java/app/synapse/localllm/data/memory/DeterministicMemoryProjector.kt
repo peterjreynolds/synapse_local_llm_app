@@ -67,6 +67,7 @@ class DeterministicMemoryProjector : MemoryProjector {
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-favorite",
             keywords = listOf("favorite", category, favorite),
+            claimKey = buildClaimKey("user", "favorite", category),
         )
     }
 
@@ -87,6 +88,7 @@ class DeterministicMemoryProjector : MemoryProjector {
             reasonCodes = reasonCodes + "explicit-user-identity",
             subject = "User",
             keywords = listOf("identity", "name", identityField, identityValue),
+            claimKey = buildClaimKey("user", identityField),
         )
     }
 
@@ -105,6 +107,7 @@ class DeterministicMemoryProjector : MemoryProjector {
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-appointment",
             keywords = extractKeywords(appointmentText) + listOf("appointment", "schedule"),
+            claimKey = buildClaimKey("appointment", extractKeywords(appointmentText).take(4)),
         )
     }
 
@@ -131,6 +134,7 @@ class DeterministicMemoryProjector : MemoryProjector {
             scope = MemoryScope.PROJECT,
             subject = projectSubject,
             keywords = extractKeywords(projectText) + listOf(projectSubject, "project"),
+            claimKey = buildClaimKey("project", projectSubject, "context"),
         )
     }
 
@@ -152,6 +156,7 @@ class DeterministicMemoryProjector : MemoryProjector {
             reasonCodes = reasonCodes + "explicit-user-relationship",
             subject = relationship,
             keywords = listOf("relationship", relationship, relationshipValue),
+            claimKey = buildClaimKey("user", "relationship", relationship),
         )
     }
 
@@ -171,6 +176,7 @@ class DeterministicMemoryProjector : MemoryProjector {
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-preference",
             keywords = extractKeywords(preferenceText) + preferenceVerb,
+            claimKey = buildClaimKey(listOf("user", "preference") + extractKeywords(preferenceText).take(3)),
         )
     }
 
@@ -186,6 +192,7 @@ class DeterministicMemoryProjector : MemoryProjector {
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-commitment",
             keywords = extractKeywords(match.value),
+            claimKey = buildClaimKey("commitment", extractKeywords(match.value).take(4)),
         )
     }
 
@@ -201,6 +208,7 @@ class DeterministicMemoryProjector : MemoryProjector {
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-boundary-or-procedure",
             keywords = extractKeywords(match.value),
+            claimKey = buildClaimKey(listOf("user", "procedure") + extractKeywords(match.value).take(3)),
         )
     }
 
@@ -228,6 +236,7 @@ class DeterministicMemoryProjector : MemoryProjector {
         scope: MemoryScope = MemoryScope.GLOBAL,
         subject: String? = null,
         keywords: List<String> = emptyList(),
+        claimKey: String? = null,
     ): MemoryClaimCandidate =
         MemoryClaimCandidate(
             kind = kind,
@@ -244,6 +253,7 @@ class DeterministicMemoryProjector : MemoryProjector {
                 .filter { keyword -> keyword.length >= MINIMUM_KEYWORD_LENGTH }
                 .distinct()
                 .take(MAXIMUM_KEYWORDS),
+            claimKey = claimKey,
         )
 
     private fun extractExplicitMemoryClaim(normalizedText: String): String? {
@@ -297,12 +307,37 @@ class DeterministicMemoryProjector : MemoryProjector {
     private fun splitKeyword(keyword: String): List<String> =
         keyword.split(nonWordPattern).filter { token -> token.isNotBlank() }
 
+    private fun buildClaimKey(vararg parts: String?): String? =
+        buildClaimKey(parts.toList())
+
+    private fun buildClaimKey(prefix: String, parts: List<String>): String? =
+        buildClaimKey(listOf(prefix) + parts)
+
+    private fun buildClaimKey(parts: List<String?>): String? {
+        val normalizedParts = parts
+            .mapNotNull(::normalizeClaimKeyPart)
+            .take(MAXIMUM_CLAIM_KEY_PARTS)
+        return normalizedParts
+            .joinToString(".")
+            .takeIf { claimKey -> claimKey.isNotBlank() }
+    }
+
+    private fun normalizeClaimKeyPart(part: String?): String? {
+        val normalizedPart = part.orEmpty()
+            .split(nonWordPattern)
+            .map { token -> token.lowercase().trim() }
+            .filter { token -> token.length >= MINIMUM_KEYWORD_LENGTH }
+            .joinToString("_")
+        return normalizedPart.takeIf { claimKeyPart -> claimKeyPart.isNotBlank() }
+    }
+
     private companion object {
         const val MINIMUM_MEMORY_TEXT_LENGTH = 8
         const val MINIMUM_KEYWORD_LENGTH = 3
         const val MAXIMUM_MEMORY_TEXT_LENGTH = 280
         const val MAXIMUM_KEYWORDS = 16
-        const val DEFAULT_EXPLICIT_CONFIDENCE = 0.86
+        const val DEFAULT_EXPLICIT_CONFIDENCE = 0.95
+        const val MAXIMUM_CLAIM_KEY_PARTS = 6
 
         val sentenceTerminators = setOf('.', '!', '?')
         val nonWordPattern = Regex("[^a-zA-Z0-9']+")

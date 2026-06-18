@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RetrievedMemoryReceiptEntity::class,
         StorageHealthSnapshotEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -201,5 +201,20 @@ val SYNAPSE_DATABASE_MIGRATION_4_5 =
                 ON memory_versions(subject)
                 """.trimIndent(),
             )
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_5_6 =
+    object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE memory_objects ADD COLUMN claimKey TEXT DEFAULT NULL")
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_memory_objects_claimKey
+                ON memory_objects(claimKey)
+                """.trimIndent(),
+            )
+            db.execSQL("ALTER TABLE retrieval_receipts ADD COLUMN retrievalIntent TEXT NOT NULL DEFAULT 'GENERAL'")
+            db.execSQL("ALTER TABLE retrieved_memory_receipts ADD COLUMN rankScore REAL NOT NULL DEFAULT 0.0")
         }
     }

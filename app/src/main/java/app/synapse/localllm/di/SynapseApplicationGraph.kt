@@ -10,11 +10,13 @@ import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_5_6
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.library.AndroidMarkdownPdfExporter
 import app.synapse.localllm.data.library.RoomLibraryWorkspaceRepository
 import app.synapse.localllm.data.memory.DeterministicMemoryProjector
 import app.synapse.localllm.data.memory.EvidenceBackedMemoryAdmissionGate
+import app.synapse.localllm.data.memory.PatternMemoryCommandInterpreter
 import app.synapse.localllm.data.memory.RoomMemoryRepository
 import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
 import app.synapse.localllm.data.runtime.LlamaServerGateway
@@ -30,6 +32,7 @@ import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.library.LibraryWorkspaceRepository
 import app.synapse.localllm.domain.memory.MemoryAdmissionGate
+import app.synapse.localllm.domain.memory.MemoryCommandInterpreter
 import app.synapse.localllm.domain.memory.MemoryProjector
 import app.synapse.localllm.domain.memory.MemoryRepository
 import app.synapse.localllm.domain.memory.PromptContextAssembler
@@ -54,6 +57,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_2_3,
         SYNAPSE_DATABASE_MIGRATION_3_4,
         SYNAPSE_DATABASE_MIGRATION_4_5,
+        SYNAPSE_DATABASE_MIGRATION_5_6,
     ).build()
 
     val settingsStore = SynapseSettingsStore(applicationContext)
@@ -93,6 +97,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         )
 
     val memoryProjector: MemoryProjector = DeterministicMemoryProjector()
+    val memoryCommandInterpreter: MemoryCommandInterpreter = PatternMemoryCommandInterpreter()
     val memoryAdmissionGate: MemoryAdmissionGate = EvidenceBackedMemoryAdmissionGate()
     val storageHealthGovernor: StorageHealthGovernor =
         AndroidStorageHealthGovernor(applicationContext, clock)
@@ -122,6 +127,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SynapseTurnCoordinator(
             conversationRepository = conversationRepository,
             memoryRepository = memoryRepository,
+            memoryCommandInterpreter = memoryCommandInterpreter,
             memoryProjector = memoryProjector,
             memoryAdmissionGate = memoryAdmissionGate,
             storageHealthGovernor = storageHealthGovernor,

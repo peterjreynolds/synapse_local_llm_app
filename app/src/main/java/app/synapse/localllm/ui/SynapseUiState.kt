@@ -4,6 +4,7 @@ import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ChatThreadRecord
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
+import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStatus
@@ -66,6 +67,7 @@ data class SynapseUiState(
     val isImportingModel: Boolean = false,
     val lastNotice: String? = null,
     val memorySearchQuery: String = "",
+    val memoryReviewFilter: MemoryReviewFilter = MemoryReviewFilter.ACTIVE,
     val memorySearchResults: List<RetrievedMemoryRef> = emptyList(),
     val libraryDraftTitle: String = "",
     val libraryDraftMarkdown: String = "",

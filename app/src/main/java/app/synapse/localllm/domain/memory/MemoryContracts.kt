@@ -38,6 +38,7 @@ enum class MemoryStatus {
     ARCHIVED,
     SUPERSEDED,
     CONFLICTED,
+    QUARANTINED,
     TOMBSTONED,
 }
 
@@ -50,8 +51,19 @@ enum class SurfacePolicy {
 enum class MemoryWriteOutcome {
     TRACE_ONLY,
     DURABLE_MEMORY_WRITTEN,
+    MEMORY_UPDATED,
+    MEMORY_SUPERSEDED,
+    MEMORY_TOMBSTONED,
+    REQUIRES_CONFIRMATION,
+    QUARANTINED,
     REJECTED,
     PAUSED_FOR_STORAGE,
+}
+
+enum class MemoryReviewFilter {
+    ACTIVE,
+    INACTIVE,
+    ALL,
 }
 
 data class TraceEventRecord(
@@ -72,6 +84,7 @@ data class MemoryClaimCandidate(
     val scope: MemoryScope = MemoryScope.GLOBAL,
     val subject: String? = null,
     val keywords: List<String> = emptyList(),
+    val claimKey: String? = null,
 )
 
 data class MemoryWriteDecision(
@@ -95,6 +108,7 @@ data class MemoryObjectRecord(
     val id: MemoryObjectId,
     val kind: MemoryKind,
     val status: MemoryStatus,
+    val claimKey: String?,
     val createdAt: Instant,
     val updatedAt: Instant,
 )
@@ -116,13 +130,31 @@ data class RetrievedMemoryRef(
     val memoryObjectId: MemoryObjectId,
     val memoryVersionId: MemoryVersionId,
     val kind: MemoryKind,
+    val status: MemoryStatus = MemoryStatus.ACTIVE,
     val text: String,
     val confidence: Double,
     val reasonCodes: List<String>,
     val scope: MemoryScope = MemoryScope.GLOBAL,
     val subject: String? = null,
     val keywords: List<String> = emptyList(),
+    val claimKey: String? = null,
+    val sourceTraceEventIds: List<TraceEventId> = emptyList(),
+    val createdAt: Instant? = null,
+    val rankScore: Double = 0.0,
 )
+
+sealed interface MemoryCommand {
+    data object ContinueExtraction : MemoryCommand
+
+    data class TombstoneMatchingMemories(
+        val query: String,
+        val reason: String,
+    ) : MemoryCommand
+}
+
+interface MemoryCommandInterpreter {
+    fun interpretMemoryCommand(traceEvent: TraceEventRecord): MemoryCommand
+}
 
 data class RetrievalBundle(
     val retrievedAt: Instant,
@@ -151,7 +183,15 @@ interface MemoryRepository {
 
     suspend fun tombstoneMemory(memoryObjectId: MemoryObjectId, reason: String): MemoryWriteReceipt
 
+    suspend fun tombstoneMemoriesMatching(
+        traceEvent: TraceEventRecord,
+        query: String,
+        reason: String,
+    ): List<MemoryWriteReceipt>
+
     suspend fun listPromptVisibleMemories(limit: Int): List<RetrievedMemoryRef>
+
+    suspend fun listMemoriesForReview(filter: MemoryReviewFilter, limit: Int): List<RetrievedMemoryRef>
 
     suspend fun retrieveMemories(query: String, limit: Int): RetrievalBundle
 }

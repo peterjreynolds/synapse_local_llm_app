@@ -15,8 +15,10 @@ import app.synapse.localllm.domain.ids.MemoryObjectId
 import app.synapse.localllm.domain.ids.MemoryVersionId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.ids.TraceEventId
+import app.synapse.localllm.domain.memory.MemoryClaimCandidate
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.MemoryRepository
+import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.MemoryScope
 import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.MemoryVersionRecord
@@ -28,6 +30,7 @@ import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.memory.SurfacePolicy
 import app.synapse.localllm.domain.memory.TraceEventRecord
 import app.synapse.localllm.domain.time.SynapseClock
+import java.time.Instant
 
 class RoomMemoryRepository(
     private val database: SynapseDatabase,
@@ -46,68 +49,43 @@ class RoomMemoryRepository(
     ): MemoryWriteReceipt {
         val decidedAt = clock.now()
         val receiptId = idFactory.createReceiptId()
-        val acceptedCandidate = decision.candidate
-            ?.takeIf { decision.outcome == MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN }
-        val memoryObjectId = acceptedCandidate?.let { idFactory.createMemoryObjectId() }
-        val memoryVersionId = acceptedCandidate?.let { idFactory.createMemoryVersionId() }
+        var receiptOutcome = decision.outcome
+        var receiptMemoryObjectId: MemoryObjectId? = null
+        var receiptMemoryVersionId: MemoryVersionId? = null
 
         database.withTransaction {
-            if (acceptedCandidate != null && memoryObjectId != null && memoryVersionId != null) {
-                val memoryObject = MemoryObjectEntity(
-                    id = memoryObjectId.raw,
-                    kind = acceptedCandidate.kind.name,
-                    status = MemoryStatus.ACTIVE.name,
-                    createdAtEpochMillis = decidedAt.toEpochMilli(),
-                    updatedAtEpochMillis = decidedAt.toEpochMilli(),
+            val acceptedCandidate = decision.candidate
+                ?.takeIf { decision.outcome == MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN }
+            if (acceptedCandidate != null) {
+                val writeResult = persistAcceptedMemoryCandidate(
+                    candidate = acceptedCandidate,
+                    decidedAt = decidedAt,
                 )
-                memoryDao.upsertMemoryObject(memoryObject)
-                memoryDao.upsertMemoryVersion(
-                    MemoryVersionEntity(
-                        id = memoryVersionId.raw,
-                        memoryObjectId = memoryObjectId.raw,
-                        text = acceptedCandidate.text,
-                        confidence = acceptedCandidate.confidence,
-                        surfacePolicy = acceptedCandidate.surfacePolicy.name,
-                        scope = acceptedCandidate.scope.name,
-                        subject = acceptedCandidate.subject?.takeIf { subject -> subject.isNotBlank() },
-                        keywordsCsv = acceptedCandidate.keywords
-                            .map { keyword -> keyword.trim() }
-                            .filter { keyword -> keyword.isNotBlank() }
-                            .distinct()
-                            .joinToString(","),
-                        createdAtEpochMillis = decidedAt.toEpochMilli(),
-                    ),
-                )
-                memoryDao.upsertMemorySupports(
-                    acceptedCandidate.sourceTraceEventIds.map { supportTraceEventId ->
-                        MemorySupportEntity(
-                            memoryVersionId = memoryVersionId.raw,
-                            traceEventId = supportTraceEventId.raw,
-                        )
-                    },
-                )
+                receiptOutcome = writeResult.outcome
+                receiptMemoryObjectId = writeResult.memoryObjectId
+                receiptMemoryVersionId = writeResult.memoryVersionId
             }
             memoryDao.upsertMemoryWriteReceipt(
                 MemoryWriteReceiptEntity(
                     id = receiptId.raw,
-                    outcome = decision.outcome.name,
+                    outcome = receiptOutcome.name,
                     traceEventId = traceEvent.id.raw,
-                    memoryObjectId = memoryObjectId?.raw,
-                    memoryVersionId = memoryVersionId?.raw,
+                    memoryObjectId = receiptMemoryObjectId?.raw,
+                    memoryVersionId = receiptMemoryVersionId?.raw,
                     decidedAtEpochMillis = decidedAt.toEpochMilli(),
-                    reason = decision.reason,
+                    reason = buildWriteReceiptReason(decision.reason, receiptOutcome),
                 ),
             )
         }
 
         return MemoryWriteReceipt(
             id = receiptId,
-            outcome = decision.outcome,
+            outcome = receiptOutcome,
             traceEventId = traceEvent.id,
-            memoryObjectId = memoryObjectId,
-            memoryVersionId = memoryVersionId,
+            memoryObjectId = receiptMemoryObjectId,
+            memoryVersionId = receiptMemoryVersionId,
             decidedAt = decidedAt,
-            reason = decision.reason,
+            reason = buildWriteReceiptReason(decision.reason, receiptOutcome),
         )
     }
 
@@ -126,7 +104,7 @@ class RoomMemoryRepository(
             memoryDao.upsertMemoryWriteReceipt(
                 MemoryWriteReceiptEntity(
                     id = receiptId.raw,
-                    outcome = MemoryWriteOutcome.TRACE_ONLY.name,
+                    outcome = MemoryWriteOutcome.MEMORY_TOMBSTONED.name,
                     traceEventId = null,
                     memoryObjectId = memoryObjectId.raw,
                     memoryVersionId = null,
@@ -138,7 +116,7 @@ class RoomMemoryRepository(
 
         return MemoryWriteReceipt(
             id = receiptId,
-            outcome = MemoryWriteOutcome.TRACE_ONLY,
+            outcome = MemoryWriteOutcome.MEMORY_TOMBSTONED,
             traceEventId = null,
             memoryObjectId = memoryObjectId,
             memoryVersionId = null,
@@ -147,32 +125,154 @@ class RoomMemoryRepository(
         )
     }
 
-    override suspend fun listPromptVisibleMemories(limit: Int): List<RetrievedMemoryRef> =
-        listPromptVisibleMemoryRefs(limit = limit.coerceAtLeast(1)) {
-            listOf("review-list")
+    override suspend fun tombstoneMemoriesMatching(
+        traceEvent: TraceEventRecord,
+        query: String,
+        reason: String,
+    ): List<MemoryWriteReceipt> {
+        val decidedAt = clock.now()
+        val activeMemories = memoryDao.listLatestVersionsByStatuses(
+            statuses = listOf(MemoryStatus.ACTIVE.name),
+            limit = TOMBSTONE_SEARCH_LIMIT,
+        )
+        val queryTokens = tokenize(query)
+        val matchingMemories = activeMemories.filter { memory ->
+            matchesTombstoneQuery(
+                query = query,
+                queryTokens = queryTokens,
+                memory = memory,
+            )
         }
+
+        if (matchingMemories.isEmpty()) {
+            val receiptId = idFactory.createReceiptId()
+            database.withTransaction {
+                memoryDao.upsertMemoryWriteReceipt(
+                    MemoryWriteReceiptEntity(
+                        id = receiptId.raw,
+                        outcome = MemoryWriteOutcome.REJECTED.name,
+                        traceEventId = traceEvent.id.raw,
+                        memoryObjectId = null,
+                        memoryVersionId = null,
+                        decidedAtEpochMillis = decidedAt.toEpochMilli(),
+                        reason = "No active memories matched delete request: $query",
+                    ),
+                )
+            }
+            return listOf(
+                MemoryWriteReceipt(
+                    id = receiptId,
+                    outcome = MemoryWriteOutcome.REJECTED,
+                    traceEventId = traceEvent.id,
+                    memoryObjectId = null,
+                    memoryVersionId = null,
+                    decidedAt = decidedAt,
+                    reason = "No active memories matched delete request: $query",
+                ),
+            )
+        }
+
+        val receipts = matchingMemories.map { memory ->
+            val receiptId = idFactory.createReceiptId()
+            MemoryWriteReceipt(
+                id = receiptId,
+                outcome = MemoryWriteOutcome.MEMORY_TOMBSTONED,
+                traceEventId = traceEvent.id,
+                memoryObjectId = MemoryObjectId(memory.version.memoryObjectId),
+                memoryVersionId = MemoryVersionId(memory.version.id),
+                decidedAt = decidedAt,
+                reason = reason,
+            )
+        }
+        database.withTransaction {
+            memoryDao.updateMemoryStatuses(
+                memoryObjectIds = matchingMemories.map { memory -> memory.version.memoryObjectId },
+                status = MemoryStatus.TOMBSTONED.name,
+                updatedAtEpochMillis = decidedAt.toEpochMilli(),
+            )
+            receipts.forEach { receipt ->
+                memoryDao.upsertMemoryWriteReceipt(
+                    MemoryWriteReceiptEntity(
+                        id = receipt.id.raw,
+                        outcome = receipt.outcome.name,
+                        traceEventId = traceEvent.id.raw,
+                        memoryObjectId = receipt.memoryObjectId?.raw,
+                        memoryVersionId = receipt.memoryVersionId?.raw,
+                        decidedAtEpochMillis = decidedAt.toEpochMilli(),
+                        reason = reason,
+                    ),
+                )
+            }
+        }
+        return receipts
+    }
+
+    override suspend fun listPromptVisibleMemories(limit: Int): List<RetrievedMemoryRef> =
+        listPromptVisibleMemoryRefs(limit = limit.coerceAtLeast(1)) { versionWithKind ->
+            versionWithKind.toRetrievedMemoryRef(
+                supportTraceEventIds = memoryDao.listSupportTraceEventIds(versionWithKind.version.id),
+                reasonCodes = listOf("review-list"),
+            )
+        }
+
+    override suspend fun listMemoriesForReview(
+        filter: MemoryReviewFilter,
+        limit: Int,
+    ): List<RetrievedMemoryRef> {
+        val statuses = when (filter) {
+            MemoryReviewFilter.ACTIVE -> listOf(MemoryStatus.ACTIVE)
+            MemoryReviewFilter.INACTIVE -> inactiveReviewStatuses
+            MemoryReviewFilter.ALL -> listOf(MemoryStatus.ACTIVE) + inactiveReviewStatuses
+        }.map { status -> status.name }
+
+        return memoryDao.listLatestVersionsByStatuses(
+            statuses = statuses,
+            limit = limit.coerceAtLeast(1),
+        ).map { versionWithKind ->
+            versionWithKind.toRetrievedMemoryRef(
+                supportTraceEventIds = memoryDao.listSupportTraceEventIds(versionWithKind.version.id),
+                reasonCodes = listOf("review:${versionWithKind.objectStatus.lowercase()}"),
+            )
+        }
+    }
 
     override suspend fun retrieveMemories(query: String, limit: Int): RetrievalBundle {
         val retrievedAt = clock.now()
         val queryTokens = tokenize(query)
         val retrievalProfile = MemoryRetrievalProfile.classify(query)
         val candidates = listPromptVisibleMemoryRefs(
-            limit = limit * CANDIDATE_MULTIPLIER,
+            limit = limit.coerceAtLeast(1) * CANDIDATE_MULTIPLIER,
         ) { versionWithKind ->
-            buildReasonCodes(
+            val reasonCodes = buildReasonCodes(
                 queryTokens = queryTokens,
                 retrievalProfile = retrievalProfile,
                 versionWithKind = versionWithKind,
+            )
+            versionWithKind.toRetrievedMemoryRef(
+                supportTraceEventIds = memoryDao.listSupportTraceEventIds(versionWithKind.version.id),
+                reasonCodes = reasonCodes,
             )
         }
             .filter { retrievedMemory ->
                 retrievedMemory.reasonCodes.isNotEmpty() || queryTokens.isEmpty()
             }
-            .sortedByDescending(::scoreRetrievedMemory)
-            .take(limit)
+            .map { memoryRef ->
+                memoryRef.copy(rankScore = scoreRetrievedMemory(memoryRef, retrievalProfile))
+            }
+            .sortedWith(
+                compareByDescending<RetrievedMemoryRef> { memory -> memory.rankScore }
+                    .thenByDescending { memory -> memory.createdAt },
+            )
+            .take(limit.coerceAtLeast(1))
 
         val promptBlock = buildPromptBlock(candidates)
-        persistRetrievalReceipt(query, promptBlock, retrievedAt, candidates)
+        persistRetrievalReceipt(
+            query = query,
+            retrievalIntent = retrievalProfile.intent,
+            promptBlock = promptBlock,
+            retrievedAt = retrievedAt,
+            candidates = candidates,
+        )
 
         return RetrievalBundle(
             retrievedAt = retrievedAt,
@@ -181,9 +281,117 @@ class RoomMemoryRepository(
         )
     }
 
+    private suspend fun persistAcceptedMemoryCandidate(
+        candidate: MemoryClaimCandidate,
+        decidedAt: Instant,
+    ): PersistedMemoryWriteResult {
+        val normalizedClaimKey = candidate.claimKey?.trim()?.takeIf { claimKey -> claimKey.isNotBlank() }
+        val activeSameClaim = normalizedClaimKey
+            ?.let { claimKey ->
+                memoryDao.listActiveVersionsByClaimKey(
+                    activeStatus = MemoryStatus.ACTIVE.name,
+                    claimKey = claimKey,
+                )
+            }
+            .orEmpty()
+        val exactActiveMatch = activeSameClaim.firstOrNull { existingMemory ->
+            existingMemory.objectKind == candidate.kind.name &&
+                normalizeClaimText(existingMemory.version.text) == normalizeClaimText(candidate.text)
+        }
+        if (exactActiveMatch != null) {
+            val refreshedVersionId = idFactory.createMemoryVersionId()
+            memoryDao.updateMemoryStatus(
+                memoryObjectId = exactActiveMatch.version.memoryObjectId,
+                status = MemoryStatus.ACTIVE.name,
+                updatedAtEpochMillis = decidedAt.toEpochMilli(),
+            )
+            upsertMemoryVersionWithSupports(
+                memoryObjectId = MemoryObjectId(exactActiveMatch.version.memoryObjectId),
+                memoryVersionId = refreshedVersionId,
+                candidate = candidate,
+                decidedAt = decidedAt,
+            )
+            return PersistedMemoryWriteResult(
+                outcome = MemoryWriteOutcome.MEMORY_UPDATED,
+                memoryObjectId = MemoryObjectId(exactActiveMatch.version.memoryObjectId),
+                memoryVersionId = refreshedVersionId,
+            )
+        }
+
+        val supersededMemoryObjectIds = activeSameClaim.map { memory -> memory.version.memoryObjectId }
+        if (supersededMemoryObjectIds.isNotEmpty()) {
+            memoryDao.updateMemoryStatuses(
+                memoryObjectIds = supersededMemoryObjectIds,
+                status = MemoryStatus.SUPERSEDED.name,
+                updatedAtEpochMillis = decidedAt.toEpochMilli(),
+            )
+        }
+
+        val memoryObjectId = idFactory.createMemoryObjectId()
+        val memoryVersionId = idFactory.createMemoryVersionId()
+        memoryDao.upsertMemoryObject(
+            MemoryObjectEntity(
+                id = memoryObjectId.raw,
+                kind = candidate.kind.name,
+                status = MemoryStatus.ACTIVE.name,
+                claimKey = normalizedClaimKey,
+                createdAtEpochMillis = decidedAt.toEpochMilli(),
+                updatedAtEpochMillis = decidedAt.toEpochMilli(),
+            ),
+        )
+        upsertMemoryVersionWithSupports(
+            memoryObjectId = memoryObjectId,
+            memoryVersionId = memoryVersionId,
+            candidate = candidate,
+            decidedAt = decidedAt,
+        )
+        return PersistedMemoryWriteResult(
+            outcome = if (supersededMemoryObjectIds.isEmpty()) {
+                MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN
+            } else {
+                MemoryWriteOutcome.MEMORY_SUPERSEDED
+            },
+            memoryObjectId = memoryObjectId,
+            memoryVersionId = memoryVersionId,
+        )
+    }
+
+    private suspend fun upsertMemoryVersionWithSupports(
+        memoryObjectId: MemoryObjectId,
+        memoryVersionId: MemoryVersionId,
+        candidate: MemoryClaimCandidate,
+        decidedAt: Instant,
+    ) {
+        memoryDao.upsertMemoryVersion(
+            MemoryVersionEntity(
+                id = memoryVersionId.raw,
+                memoryObjectId = memoryObjectId.raw,
+                text = candidate.text,
+                confidence = candidate.confidence,
+                surfacePolicy = candidate.surfacePolicy.name,
+                scope = candidate.scope.name,
+                subject = candidate.subject?.takeIf { subject -> subject.isNotBlank() },
+                keywordsCsv = candidate.keywords
+                    .map { keyword -> keyword.trim() }
+                    .filter { keyword -> keyword.isNotBlank() }
+                    .distinct()
+                    .joinToString(","),
+                createdAtEpochMillis = decidedAt.toEpochMilli(),
+            ),
+        )
+        memoryDao.upsertMemorySupports(
+            candidate.sourceTraceEventIds.map { supportTraceEventId ->
+                MemorySupportEntity(
+                    memoryVersionId = memoryVersionId.raw,
+                    traceEventId = supportTraceEventId.raw,
+                )
+            },
+        )
+    }
+
     private suspend fun listPromptVisibleMemoryRefs(
         limit: Int,
-        buildReasonCodes: (MemoryVersionWithKind) -> List<String>,
+        mapMemory: suspend (MemoryVersionWithKind) -> RetrievedMemoryRef,
     ): List<RetrievedMemoryRef> =
         memoryDao
             .listPromptVisibleVersions(
@@ -191,19 +399,13 @@ class RoomMemoryRepository(
                 surfacePolicy = SurfacePolicy.PROMPT_VISIBLE.name,
                 limit = limit,
             )
-            .map { versionWithKind ->
-                val supportTraceEventIds = memoryDao.listSupportTraceEventIds(versionWithKind.version.id)
-                versionWithKind.toMemoryVersionRecord(supportTraceEventIds)
-                    .toRetrievedMemoryRef(
-                        kind = MemoryKind.valueOf(versionWithKind.objectKind),
-                        reasonCodes = buildReasonCodes(versionWithKind),
-                    )
-            }
+            .map { versionWithKind -> mapMemory(versionWithKind) }
 
     private suspend fun persistRetrievalReceipt(
         query: String,
+        retrievalIntent: String,
         promptBlock: String,
-        retrievedAt: java.time.Instant,
+        retrievedAt: Instant,
         candidates: List<RetrievedMemoryRef>,
     ) {
         val receiptId = idFactory.createReceiptId()
@@ -212,6 +414,7 @@ class RoomMemoryRepository(
                 RetrievalReceiptEntity(
                     id = receiptId.raw,
                     query = query,
+                    retrievalIntent = retrievalIntent,
                     promptBlock = promptBlock,
                     retrievedAtEpochMillis = retrievedAt.toEpochMilli(),
                 ),
@@ -223,6 +426,7 @@ class RoomMemoryRepository(
                         memoryVersionId = candidate.memoryVersionId.raw,
                         memoryObjectId = candidate.memoryObjectId.raw,
                         reasonCodes = candidate.reasonCodes.joinToString(separator = ","),
+                        rankScore = candidate.rankScore,
                     )
                 },
             )
@@ -248,27 +452,33 @@ class RoomMemoryRepository(
             confidence = version.confidence,
             surfacePolicy = SurfacePolicy.valueOf(version.surfacePolicy),
             sourceTraceEventIds = supportTraceEventIds.map(::TraceEventId),
-            createdAt = java.time.Instant.ofEpochMilli(version.createdAtEpochMillis),
+            createdAt = Instant.ofEpochMilli(version.createdAtEpochMillis),
             scope = MemoryScope.valueOf(version.scope),
             subject = version.subject,
             keywords = parseKeywordsCsv(version.keywordsCsv),
         )
 
-    private fun MemoryVersionRecord.toRetrievedMemoryRef(
-        kind: MemoryKind,
+    private fun MemoryVersionWithKind.toRetrievedMemoryRef(
+        supportTraceEventIds: List<String>,
         reasonCodes: List<String>,
-    ): RetrievedMemoryRef =
-        RetrievedMemoryRef(
-            memoryObjectId = memoryObjectId,
-            memoryVersionId = id,
-            kind = kind,
-            text = text,
-            confidence = confidence,
+    ): RetrievedMemoryRef {
+        val memoryVersion = toMemoryVersionRecord(supportTraceEventIds)
+        return RetrievedMemoryRef(
+            memoryObjectId = memoryVersion.memoryObjectId,
+            memoryVersionId = memoryVersion.id,
+            kind = MemoryKind.valueOf(objectKind),
+            status = MemoryStatus.valueOf(objectStatus),
+            text = memoryVersion.text,
+            confidence = memoryVersion.confidence,
             reasonCodes = reasonCodes,
-            scope = scope,
-            subject = subject,
-            keywords = keywords,
+            scope = memoryVersion.scope,
+            subject = memoryVersion.subject,
+            keywords = memoryVersion.keywords,
+            claimKey = objectClaimKey,
+            sourceTraceEventIds = memoryVersion.sourceTraceEventIds,
+            createdAt = memoryVersion.createdAt,
         )
+    }
 
     private fun buildReasonCodes(
         queryTokens: Set<String>,
@@ -278,11 +488,7 @@ class RoomMemoryRepository(
         if (queryTokens.isEmpty()) return listOf("recent-memory")
 
         val memoryKind = MemoryKind.valueOf(versionWithKind.objectKind)
-        val searchableText = listOfNotNull(
-            versionWithKind.version.text,
-            versionWithKind.version.subject,
-            versionWithKind.version.keywordsCsv,
-        ).joinToString(" ")
+        val searchableText = buildSearchableMemoryText(versionWithKind)
         val memoryTokens = tokenize(searchableText)
         val overlap = queryTokens.intersect(memoryTokens)
         val lexicalReasonCodes = overlap
@@ -294,8 +500,14 @@ class RoomMemoryRepository(
             memoryKind = memoryKind,
             memoryScope = MemoryScope.valueOf(versionWithKind.version.scope),
         )
+        val claimKeyReasonCodes = versionWithKind.objectClaimKey
+            ?.let(::tokenize)
+            ?.intersect(queryTokens)
+            ?.take(MAX_REASON_CODES)
+            ?.map { token -> "claim-key:$token" }
+            .orEmpty()
 
-        return (lexicalReasonCodes + intentReasonCodes).distinct()
+        return (lexicalReasonCodes + intentReasonCodes + claimKeyReasonCodes).distinct()
     }
 
     private fun buildPromptBlock(candidates: List<RetrievedMemoryRef>): String {
@@ -328,15 +540,57 @@ class RoomMemoryRepository(
         return reasonCodes
     }
 
-    private fun scoreRetrievedMemory(memoryRef: RetrievedMemoryRef): Int =
-        memoryRef.reasonCodes.sumOf { reasonCode ->
+    private fun scoreRetrievedMemory(
+        memoryRef: RetrievedMemoryRef,
+        retrievalProfile: MemoryRetrievalProfile,
+    ): Double {
+        val reasonScore = memoryRef.reasonCodes.sumOf { reasonCode ->
             when {
-                reasonCode == "all-memory-review" -> 2
-                reasonCode.startsWith("intent:") -> 8
-                reasonCode.startsWith("scope:") -> 5
-                reasonCode.startsWith("token:") -> 3
-                else -> 1
+                reasonCode == "all-memory-review" -> 2.0
+                reasonCode.startsWith("intent:") -> 8.0
+                reasonCode.startsWith("scope:") -> 5.0
+                reasonCode.startsWith("claim-key:") -> 4.0
+                reasonCode.startsWith("token:") -> 3.0
+                else -> 1.0
             }
+        }
+        val kindBoost = if (memoryRef.kind in retrievalProfile.targetKinds) 3.0 else 0.0
+        return reasonScore + kindBoost + (memoryRef.confidence * 2.0)
+    }
+
+    private fun buildSearchableMemoryText(memory: MemoryVersionWithKind): String =
+        listOfNotNull(
+            memory.version.text,
+            memory.version.subject,
+            memory.version.keywordsCsv,
+            memory.objectClaimKey,
+            memory.objectKind,
+        ).joinToString(" ")
+
+    private fun matchesTombstoneQuery(
+        query: String,
+        queryTokens: Set<String>,
+        memory: MemoryVersionWithKind,
+    ): Boolean {
+        if (queryTokens.isEmpty()) return false
+        val searchableText = buildSearchableMemoryText(memory)
+        val memoryTokens = tokenize(searchableText)
+        val overlap = queryTokens.intersect(memoryTokens)
+        if (overlap.isEmpty()) return false
+        if (overlap.size >= MINIMUM_TOMBSTONE_TOKEN_OVERLAP) return true
+        val normalizedQuery = query.lowercase()
+        val claimKey = memory.objectClaimKey.orEmpty().replace('.', ' ')
+        return claimKey.isNotBlank() && tokenize(claimKey).any { token -> token in tokenize(normalizedQuery) }
+    }
+
+    private fun buildWriteReceiptReason(
+        originalReason: String,
+        outcome: MemoryWriteOutcome,
+    ): String =
+        when (outcome) {
+            MemoryWriteOutcome.MEMORY_UPDATED -> "$originalReason Existing claim refreshed."
+            MemoryWriteOutcome.MEMORY_SUPERSEDED -> "$originalReason Older active claim superseded."
+            else -> originalReason
         }
 
     private fun parseKeywordsCsv(keywordsCsv: String): List<String> =
@@ -354,11 +608,26 @@ class RoomMemoryRepository(
             .filterNot { token -> token in stopWords }
             .toSet()
 
+    private fun normalizeClaimText(text: String): String =
+        text.lowercase()
+            .replace(nonWordPattern, " ")
+            .trim()
+            .replace(Regex("\\s+"), " ")
+
     private companion object {
         const val CANDIDATE_MULTIPLIER = 4
         const val MAX_REASON_CODES = 4
         const val MINIMUM_TOKEN_LENGTH = 3
+        const val TOMBSTONE_SEARCH_LIMIT = 200
+        const val MINIMUM_TOMBSTONE_TOKEN_OVERLAP = 2
 
+        val inactiveReviewStatuses = listOf(
+            MemoryStatus.ARCHIVED,
+            MemoryStatus.SUPERSEDED,
+            MemoryStatus.CONFLICTED,
+            MemoryStatus.QUARANTINED,
+            MemoryStatus.TOMBSTONED,
+        )
         val nonWordPattern = Regex("[^a-z0-9']+")
         val stopWords = setOf(
             "the",
@@ -375,11 +644,25 @@ class RoomMemoryRepository(
             "where",
             "need",
             "want",
+            "memory",
+            "memories",
+            "remember",
+            "forget",
+            "delete",
+            "remove",
+            "from",
         )
     }
 }
 
+private data class PersistedMemoryWriteResult(
+    val outcome: MemoryWriteOutcome,
+    val memoryObjectId: MemoryObjectId,
+    val memoryVersionId: MemoryVersionId,
+)
+
 private data class MemoryRetrievalProfile(
+    val intent: String,
     val targetKinds: Set<MemoryKind>,
     val targetScopes: Set<MemoryScope>,
     val includeAllPromptVisibleMemories: Boolean,
@@ -390,37 +673,53 @@ private data class MemoryRetrievalProfile(
             val targetKinds = mutableSetOf<MemoryKind>()
             val targetScopes = mutableSetOf<MemoryScope>()
             var includeAllPromptVisibleMemories = false
+            var intent = GENERAL_INTENT
 
             if (generalMemoryRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
                 includeAllPromptVisibleMemories = true
+                intent = MEMORY_REVIEW_INTENT
             }
             if (identityRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
                 targetKinds += MemoryKind.IDENTITY
                 targetKinds += MemoryKind.RELATIONSHIP
+                intent = IDENTITY_INTENT
             }
             if (preferenceRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
                 targetKinds += MemoryKind.PREFERENCE
+                intent = PREFERENCE_INTENT
             }
             if (projectRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
                 targetKinds += MemoryKind.PROJECT
                 targetKinds += MemoryKind.SUMMARY
                 targetScopes += MemoryScope.PROJECT
+                intent = PROJECT_INTENT
             }
             if (appointmentRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
                 targetKinds += MemoryKind.APPOINTMENT
                 targetKinds += MemoryKind.COMMITMENT
+                intent = APPOINTMENT_INTENT
             }
             if (instructionRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
                 targetKinds += MemoryKind.INSTRUCTION
                 targetKinds += MemoryKind.PROCEDURE
+                intent = INSTRUCTION_INTENT
             }
 
             return MemoryRetrievalProfile(
+                intent = intent,
                 targetKinds = targetKinds,
                 targetScopes = targetScopes,
                 includeAllPromptVisibleMemories = includeAllPromptVisibleMemories,
             )
         }
+
+        private const val GENERAL_INTENT = "GENERAL"
+        private const val MEMORY_REVIEW_INTENT = "MEMORY_REVIEW"
+        private const val IDENTITY_INTENT = "IDENTITY"
+        private const val PREFERENCE_INTENT = "PREFERENCE"
+        private const val PROJECT_INTENT = "PROJECT"
+        private const val APPOINTMENT_INTENT = "APPOINTMENT"
+        private const val INSTRUCTION_INTENT = "INSTRUCTION"
 
         private val generalMemoryRecallPatterns = listOf(
             Regex("\\b(remember|memory|memories|saved memories|saved preferences)\\b"),
@@ -428,7 +727,10 @@ private data class MemoryRetrievalProfile(
             Regex("\\bwhat\\s+have\\s+you\\s+saved\\b"),
         )
         private val identityRecallPatterns = listOf(
-            Regex("\\bmy\\s+(full\\s+name|first\\s+name|middle\\s+name|last\\s+name|name|birthday|email|phone|address|location|role|job)\\b"),
+            Regex(
+                "\\bmy\\s+(full\\s+name|first\\s+name|middle\\s+name|last\\s+name|name|" +
+                    "birthday|email|phone|address|location|role|job)\\b",
+            ),
             Regex("\\bwho\\s+am\\s+i\\b"),
             Regex("\\bwhat\\s+is\\s+my\\s+name\\b"),
         )

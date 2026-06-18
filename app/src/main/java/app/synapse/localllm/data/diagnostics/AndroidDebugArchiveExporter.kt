@@ -233,6 +233,8 @@ class AndroidDebugArchiveExporter(
                     appendSection("recentMemoryVersions", database.queryText(RECENT_MEMORY_VERSIONS_SQL))
                     appendSection("recentStorageHealth", database.queryText(RECENT_STORAGE_HEALTH_SQL))
                     appendSection("recentMemoryWriteReceipts", database.queryText(RECENT_MEMORY_WRITES_SQL))
+                    appendSection("recentRetrievalReceipts", database.queryText(RECENT_RETRIEVAL_RECEIPTS_SQL))
+                    appendSection("recentRetrievedMemoryReceipts", database.queryText(RECENT_RETRIEVED_MEMORY_RECEIPTS_SQL))
                 }
             }
         }.getOrElse { exception ->
@@ -436,7 +438,7 @@ class AndroidDebugArchiveExporter(
 
         val RECENT_MEMORY_VERSIONS_SQL =
             """
-            SELECT v.id, v.memoryObjectId, o.kind, o.status, v.scope, v.subject,
+            SELECT v.id, v.memoryObjectId, o.kind, o.status, o.claimKey, v.scope, v.subject,
                    substr(replace(replace(v.text, char(10), ' '), char(13), ' '), 1, 220) AS textPreview,
                    v.confidence, v.surfacePolicy, v.keywordsCsv, v.createdAtEpochMillis
             FROM memory_versions v
@@ -452,6 +454,24 @@ class AndroidDebugArchiveExporter(
             FROM memory_write_receipts
             ORDER BY decidedAtEpochMillis DESC
             LIMIT 40
+            """.trimIndent()
+
+        val RECENT_RETRIEVAL_RECEIPTS_SQL =
+            """
+            SELECT id, retrievalIntent,
+                   substr(replace(replace(query, char(10), ' '), char(13), ' '), 1, 180) AS queryPreview,
+                   length(promptBlock) AS promptBlockChars,
+                   retrievedAtEpochMillis
+            FROM retrieval_receipts
+            ORDER BY retrievedAtEpochMillis DESC
+            LIMIT 40
+            """.trimIndent()
+
+        val RECENT_RETRIEVED_MEMORY_RECEIPTS_SQL =
+            """
+            SELECT retrievalReceiptId, memoryObjectId, memoryVersionId, reasonCodes, rankScore
+            FROM retrieved_memory_receipts
+            LIMIT 80
             """.trimIndent()
     }
 }
