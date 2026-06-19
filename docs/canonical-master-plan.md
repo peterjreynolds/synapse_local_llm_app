@@ -16,6 +16,9 @@ speech input, per-message playback, and no visible prompt scaffolding.
   long-press chat list menu.
 - Embedded ARM64 `llama.cpp` runtime with Termux server fallback.
 - Named APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
+- Rolling GitHub APK delivery through the `synapse-ai` release and `apk-latest`
+  branch, plus in-app update checks that download the newest `Synapse-AI.apk`
+  and hand it to Android's installer.
 - App-local Room/SQLite chat and evidence-backed memory.
 - Memory V8 generalized governed-claim foundation: structured memory kinds,
   scopes, domains, subjects, predicates, values, source quotes, write intents,
@@ -206,6 +209,9 @@ Goal: make embedded local inference feel reliable on Samsung S25 Ultra.
 - Add performance presets for speed/battery/quality.
 - Expand the first-run model downloader/importer beyond the built-in Qwen GGUF
   catalog entry to a remote HTTPS catalog.
+- Harden in-app APK updates with optional remote update metadata, richer
+  installer failure guidance, and background-friendly update downloads if
+  Android permits that without weakening install approval.
 - Keep normal APKs free of GGUF model weights.
 - Consider optional release packs with APK and model as separate assets.
 - Add clear receipts for model import, hash verification, runtime start, runtime

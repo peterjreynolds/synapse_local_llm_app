@@ -2,6 +2,7 @@ package app.synapse.localllm.di
 
 import android.content.Context
 import androidx.room.Room
+import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
@@ -33,6 +34,8 @@ import app.synapse.localllm.data.runtime.embedded.EmbeddedLlamaRuntime
 import app.synapse.localllm.data.settings.SynapseSettingsStore
 import app.synapse.localllm.data.storage.AndroidStorageHealthGovernor
 import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
+import app.synapse.localllm.data.update.AndroidAppUpdateDownloader
+import app.synapse.localllm.data.update.GitHubReleaseAppUpdateRepository
 import app.synapse.localllm.domain.chat.ConversationRepository
 import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.SynapseIdFactory
@@ -50,6 +53,8 @@ import app.synapse.localllm.domain.runtime.ModelDownloader
 import app.synapse.localllm.domain.storage.StorageHealthGovernor
 import app.synapse.localllm.domain.time.SynapseClock
 import app.synapse.localllm.domain.time.SystemSynapseClock
+import app.synapse.localllm.domain.update.AppUpdateDownloader
+import app.synapse.localllm.domain.update.AppUpdateRepository
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 
@@ -76,6 +81,12 @@ class SynapseApplicationGraph private constructor(context: Context) {
     val modelCatalogRepository: ModelCatalogRepository = BuiltInModelCatalogRepository()
     val modelDownloader: ModelDownloader = AndroidModelDownloader(applicationContext, createHttpClient())
     val modelDownloadController = AndroidForegroundModelDownloadController(applicationContext)
+    val appUpdateRepository: AppUpdateRepository =
+        GitHubReleaseAppUpdateRepository(
+            httpClient = createHttpClient(),
+            currentVersionCode = BuildConfig.VERSION_CODE,
+        )
+    val appUpdateDownloader: AppUpdateDownloader = AndroidAppUpdateDownloader(applicationContext, createHttpClient())
     val debugArchiveExporter = AndroidDebugArchiveExporter(applicationContext, clock)
     val markdownPdfExporter = AndroidMarkdownPdfExporter(applicationContext, clock)
 

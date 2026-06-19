@@ -17,10 +17,10 @@ class LibraryWorkspacePathsTest {
 
         val filePlan = paths.planMarkdownArtifact(
             artifactId = LibraryArtifactId("artifact-123"),
-            title = "../../Peter's Plan: Draft?.md",
+            title = "../../Launch Plan: Draft?.md",
         )
 
-        assertEquals("peter-s-plan-draft.md", filePlan.displayName)
+        assertEquals("launch-plan-draft.md", filePlan.displayName)
         assertTrue(filePlan.relativePath.startsWith("library/workspace/artifact-123/"))
         assertFalse(filePlan.relativePath.contains(".."))
         assertTrue(

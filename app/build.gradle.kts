@@ -126,7 +126,7 @@ android {
         disable +=
             setOf(
                 "AndroidGradlePluginVersion",
-                // Exception scope: Synapse phone APK builds only for Peter's ARM64 Android phone.
+                // Exception scope: Synapse phone APK builds only for the primary ARM64 Android target.
                 // Reason: bundling x86_64 llama.cpp doubles native build/output cost for no target device.
                 // Owner: Synapse Local LLM app. Removal: add x86_64 when ChromeOS/emulator distribution is required.
                 "ChromeOsAbiSupport",

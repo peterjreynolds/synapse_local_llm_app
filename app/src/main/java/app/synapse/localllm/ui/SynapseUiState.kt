@@ -12,6 +12,7 @@ import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageHealthSnapshot
+import app.synapse.localllm.domain.update.AvailableAppUpdate
 
 enum class SynapsePanel {
     CHAT,
@@ -67,6 +68,32 @@ data class ModelDownloadUiState(
         }
 }
 
+enum class AppUpdateStatus {
+    IDLE,
+    CHECKING,
+    AVAILABLE,
+    DOWNLOADING,
+    READY_TO_INSTALL,
+    UP_TO_DATE,
+    FAILED,
+}
+
+data class AppUpdateUiState(
+    val status: AppUpdateStatus = AppUpdateStatus.IDLE,
+    val availableUpdate: AvailableAppUpdate? = null,
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+    val installerUri: android.net.Uri? = null,
+    val message: String? = null,
+) {
+    val progressFraction: Float
+        get() = if (totalBytes > 0L) {
+            (downloadedBytes.toDouble() / totalBytes.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        } else {
+            0f
+        }
+}
+
 data class SynapseUiState(
     val settings: SynapseSettings = SynapseSettings(),
     val settingsDraft: RuntimeSettingsDraft = RuntimeSettingsDraft(
@@ -85,6 +112,7 @@ data class SynapseUiState(
     val isImportingModel: Boolean = false,
     val modelCatalogEntries: List<ModelCatalogEntry> = emptyList(),
     val activeModelDownload: ModelDownloadUiState? = null,
+    val appUpdate: AppUpdateUiState = AppUpdateUiState(),
     val lastNotice: String? = null,
     val memorySearchQuery: String = "",
     val memoryReviewFilter: MemoryReviewFilter = MemoryReviewFilter.ACTIVE,

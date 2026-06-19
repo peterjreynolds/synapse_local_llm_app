@@ -85,6 +85,22 @@ https://github.com/peterjreynolds/synapse_local_llm_app/releases/tag/synapse-ai
 The old `synapse-ai-debug-latest` release/tag may still exist as a legacy
 alias, but future automation publishes to `synapse-ai`.
 
+On launch, Synapse checks the public `synapse-ai` release for a newer
+`Synapse-AI.apk`. If one exists, the app shows an in-app update banner. Tapping
+`Download now` downloads the APK, verifies the release checksum when GitHub
+provides one, then opens Android's installer. Android still requires user
+approval; the app cannot silently self-update.
+
+Installed data is preserved when all Android package rules match:
+
+- the package name stays the same;
+- the APK is signed with the same signing key;
+- the new `versionCode` is higher than the installed one.
+
+If those rules fail, Android may show a package conflict or require uninstalling
+first. Uninstalling deletes app-private chats, memory, settings, and downloaded
+models, so stable signing is required for sane updates.
+
 If the release asset link gives a private-repo `404` on Android, open the
 single-APK branch file instead:
 

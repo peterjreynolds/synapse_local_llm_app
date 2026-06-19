@@ -60,8 +60,8 @@ Synapse should follow the same shape on-device:
 
 Memory remains for personal facts and preferences:
 
-- "Peter likes pizza."
-- "Peter prefers concise engineering answers."
+- "The user likes pizza."
+- "The user prefers concise engineering answers."
 
 Research library/workspace artifacts are not memory:
 

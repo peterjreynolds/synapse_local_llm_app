@@ -261,6 +261,9 @@ fun SynapseApp(viewModel: SynapseViewModel) {
             voiceModeSpeechController.stop()
         }
     }
+    LaunchedEffect(Unit) {
+        viewModel.checkForAppUpdate(automatic = true)
+    }
 
     SynapseScreen(
         state = uiState,
@@ -290,6 +293,20 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onThreadDeleted = viewModel::deleteThread,
         onRuntimeCheck = viewModel::checkRuntimeStatus,
         onRuntimeStart = viewModel::startRuntime,
+        onCheckAppUpdate = { viewModel.checkForAppUpdate(automatic = false) },
+        onDownloadAppUpdate = {
+            viewModel.downloadAvailableAppUpdate { updateUri ->
+                if (!launchAppUpdateInstaller(context, updateUri)) {
+                    viewModel.publishNotice("Android could not open the update installer.")
+                }
+            }
+        },
+        onInstallAppUpdate = { updateUri ->
+            if (!launchAppUpdateInstaller(context, updateUri)) {
+                viewModel.publishNotice("Android could not open the update installer.")
+            }
+        },
+        onDismissAppUpdate = viewModel::dismissAppUpdate,
         onImportEmbeddedModel = { modelImportLauncher.launch(modelMimeTypes) },
         onDownloadCatalogModel = { entry ->
             if (
@@ -360,6 +377,10 @@ private fun SynapseScreen(
     onThreadDeleted: (ChatThreadRecord) -> Unit,
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
+    onCheckAppUpdate: () -> Unit,
+    onDownloadAppUpdate: () -> Unit,
+    onInstallAppUpdate: (Uri) -> Unit,
+    onDismissAppUpdate: () -> Unit,
     onImportEmbeddedModel: () -> Unit,
     onDownloadCatalogModel: (ModelCatalogEntry) -> Unit,
     onLibraryTitleChanged: (String) -> Unit,
@@ -432,6 +453,13 @@ private fun SynapseScreen(
                     notice = state.lastNotice,
                     storageHealthSnapshot = state.storageHealthSnapshot,
                     onDismissNotice = onDismissNotice,
+                )
+                AppUpdateBanner(
+                    appUpdate = state.appUpdate,
+                    onCheckAppUpdate = onCheckAppUpdate,
+                    onDownloadAppUpdate = onDownloadAppUpdate,
+                    onInstallAppUpdate = onInstallAppUpdate,
+                    onDismissAppUpdate = onDismissAppUpdate,
                 )
                 when (state.activePanel) {
                     SynapsePanel.CHAT ->
@@ -960,6 +988,112 @@ private fun NoticeBanner(
 }
 
 @Composable
+private fun AppUpdateBanner(
+    appUpdate: AppUpdateUiState,
+    onCheckAppUpdate: () -> Unit,
+    onDownloadAppUpdate: () -> Unit,
+    onInstallAppUpdate: (Uri) -> Unit,
+    onDismissAppUpdate: () -> Unit,
+) {
+    val update = appUpdate.availableUpdate
+    if (
+        update == null ||
+        appUpdate.status !in setOf(
+            AppUpdateStatus.AVAILABLE,
+            AppUpdateStatus.DOWNLOADING,
+            AppUpdateStatus.READY_TO_INSTALL,
+        )
+    ) {
+        return
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "New Synapse update available",
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "Version code ${update.versionCode}. Updating preserves chats, memory, settings, and models " +
+                    "when the APK package and signing key match.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            when (appUpdate.status) {
+                AppUpdateStatus.DOWNLOADING -> {
+                    LinearProgressIndicator(
+                        progress = { appUpdate.progressFraction },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = formatModelDownloadProgressText(appUpdate.downloadedBytes, appUpdate.totalBytes),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+
+                AppUpdateStatus.READY_TO_INSTALL -> {
+                    Text(
+                        text = "Download complete. Android will ask you to approve the update install.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
+                else -> Unit
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                when (appUpdate.status) {
+                    AppUpdateStatus.AVAILABLE ->
+                        Button(
+                            onClick = onDownloadAppUpdate,
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text("Download now")
+                        }
+
+                    AppUpdateStatus.READY_TO_INSTALL ->
+                        Button(
+                            onClick = {
+                                appUpdate.installerUri?.let(onInstallAppUpdate) ?: onCheckAppUpdate()
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text("Install")
+                        }
+
+                    AppUpdateStatus.DOWNLOADING ->
+                        Text(
+                            text = "Downloading...",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+
+                    else -> Unit
+                }
+                TextButton(onClick = onDismissAppUpdate) {
+                    Text("Later")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ChatWorkspace(
     modifier: Modifier = Modifier,
     state: SynapseUiState,
@@ -993,24 +1127,25 @@ private fun ChatPanel(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var autoFollowLatest by remember { mutableStateOf(true) }
-    val isAtLatestMessage by remember {
-        derivedStateOf { listState.isAtLatestMessage(messages.lastIndex) }
+    val bottomAnchorIndex = messages.size
+    val isAtChatBottom by remember {
+        derivedStateOf { listState.isAtChatBottom(bottomAnchorIndex) }
     }
     val isAssistantTyping = messages.any { message ->
         message.role == ConversationRole.ASSISTANT &&
             message.deliveryState == MessageDeliveryState.STREAMING
     }
 
-    LaunchedEffect(isAtLatestMessage, listState.isScrollInProgress) {
-        if (isAtLatestMessage) {
+    LaunchedEffect(isAtChatBottom, listState.isScrollInProgress) {
+        if (isAtChatBottom) {
             autoFollowLatest = true
         } else if (listState.isScrollInProgress) {
             autoFollowLatest = false
         }
     }
     LaunchedEffect(messages.size, messages.lastOrNull()?.body, autoFollowLatest) {
-        if (autoFollowLatest && messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
+        if (autoFollowLatest && messages.isNotEmpty() && !listState.isScrollInProgress) {
+            listState.scrollToItem(bottomAnchorIndex)
         }
     }
 
@@ -1033,8 +1168,11 @@ private fun ChatPanel(
                     messageSpeechController = messageSpeechController,
                 )
             }
+            item(key = "chat-bottom-anchor") {
+                Spacer(modifier = Modifier.height(1.dp))
+            }
         }
-        if (isAssistantTyping && !isAtLatestMessage && !autoFollowLatest) {
+        if (isAssistantTyping && !isAtChatBottom && !autoFollowLatest) {
             DetachedTypingIndicator(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -1042,7 +1180,7 @@ private fun ChatPanel(
                 onClick = {
                     autoFollowLatest = true
                     coroutineScope.launch {
-                        listState.animateScrollToItem(messages.lastIndex)
+                        listState.animateScrollToItem(bottomAnchorIndex)
                     }
                 },
             )
@@ -1067,7 +1205,7 @@ private fun EmptyChat(modifier: Modifier = Modifier) {
         )
         Spacer(modifier = Modifier.height(22.dp))
         Text(
-            text = "Let's jump in, Peter",
+            text = "Let's jump in",
             color = MaterialTheme.colorScheme.onBackground,
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Light,
@@ -1075,10 +1213,12 @@ private fun EmptyChat(modifier: Modifier = Modifier) {
     }
 }
 
-private fun LazyListState.isAtLatestMessage(lastMessageIndex: Int): Boolean {
-    if (lastMessageIndex < 0) return true
-    val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return true
-    return lastVisibleIndex >= lastMessageIndex
+private fun LazyListState.isAtChatBottom(bottomAnchorIndex: Int): Boolean {
+    if (bottomAnchorIndex <= 0) return true
+    val visibleItems = layoutInfo.visibleItemsInfo
+    if (visibleItems.isEmpty()) return true
+    val bottomAnchor = visibleItems.firstOrNull { item -> item.index == bottomAnchorIndex } ?: return false
+    return bottomAnchor.offset + bottomAnchor.size <= layoutInfo.viewportEndOffset
 }
 
 @Composable
@@ -2506,6 +2646,17 @@ private fun sharePdfExport(context: Context, pdfUri: Uri) {
     }
     context.startActivity(Intent.createChooser(sendIntent, "Share Synapse PDF"))
 }
+
+private fun launchAppUpdateInstaller(context: Context, apkUri: Uri): Boolean =
+    runCatching {
+        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(installIntent)
+        true
+    }.getOrDefault(false)
 
 private fun buildPendingAttachment(context: Context, uri: Uri): PendingAttachment? {
     val resolver = context.contentResolver

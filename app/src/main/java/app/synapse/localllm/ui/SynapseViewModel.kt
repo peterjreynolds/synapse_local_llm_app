@@ -1,6 +1,7 @@
 package app.synapse.localllm.ui
 
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -28,6 +29,9 @@ import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageThresholds
+import app.synapse.localllm.domain.update.AppUpdateCheckResult
+import app.synapse.localllm.domain.update.AppUpdateDownloadEvent
+import app.synapse.localllm.domain.update.DownloadAppUpdateCommand
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -197,6 +201,123 @@ class SynapseViewModel(
 
     fun publishNotice(message: String) {
         mutableUiState.update { state -> state.copy(lastNotice = message) }
+    }
+
+    fun checkForAppUpdate(automatic: Boolean = false) {
+        val currentUpdateState = mutableUiState.value.appUpdate
+        if (currentUpdateState.status == AppUpdateStatus.DOWNLOADING) return
+        if (!automatic) {
+            mutableUiState.update { state ->
+                state.copy(
+                    appUpdate = AppUpdateUiState(status = AppUpdateStatus.CHECKING),
+                    lastNotice = "Checking for updates...",
+                )
+            }
+        }
+        viewModelScope.launch {
+            when (val result = withContext(ioDispatcher) { graph.appUpdateRepository.checkForAppUpdate() }) {
+                is AppUpdateCheckResult.Available ->
+                    mutableUiState.update { state ->
+                        state.copy(
+                            appUpdate = AppUpdateUiState(
+                                status = AppUpdateStatus.AVAILABLE,
+                                availableUpdate = result.update,
+                                totalBytes = result.update.byteCount ?: 0L,
+                                message = "New update available.",
+                            ),
+                            lastNotice = null,
+                        )
+                    }
+
+                AppUpdateCheckResult.UpToDate ->
+                    mutableUiState.update { state ->
+                        state.copy(
+                            appUpdate = AppUpdateUiState(status = AppUpdateStatus.UP_TO_DATE),
+                            lastNotice = if (automatic) state.lastNotice else "Synapse is up to date.",
+                        )
+                    }
+
+                is AppUpdateCheckResult.Unavailable ->
+                    mutableUiState.update { state ->
+                        state.copy(
+                            appUpdate = AppUpdateUiState(
+                                status = AppUpdateStatus.FAILED,
+                                message = result.reason,
+                            ),
+                            lastNotice = if (automatic) state.lastNotice else result.reason,
+                        )
+                    }
+            }
+        }
+    }
+
+    fun dismissAppUpdate() {
+        mutableUiState.update { state -> state.copy(appUpdate = AppUpdateUiState()) }
+    }
+
+    fun downloadAvailableAppUpdate(onUpdateReady: (Uri) -> Unit) {
+        val update = mutableUiState.value.appUpdate.availableUpdate ?: return
+        mutableUiState.update { state ->
+            state.copy(
+                appUpdate = state.appUpdate.copy(
+                    status = AppUpdateStatus.DOWNLOADING,
+                    downloadedBytes = 0L,
+                    totalBytes = update.byteCount ?: 0L,
+                    message = "Downloading update...",
+                ),
+                lastNotice = null,
+            )
+        }
+        viewModelScope.launch {
+            try {
+                graph.appUpdateDownloader.downloadAppUpdate(DownloadAppUpdateCommand(update)).collect { event ->
+                    when (event) {
+                        is AppUpdateDownloadEvent.Progress ->
+                            mutableUiState.update { state ->
+                                state.copy(
+                                    appUpdate = state.appUpdate.copy(
+                                        status = AppUpdateStatus.DOWNLOADING,
+                                        availableUpdate = event.update,
+                                        downloadedBytes = event.downloadedBytes,
+                                        totalBytes = event.totalBytes,
+                                        message = "Downloading update...",
+                                    ),
+                                )
+                            }
+
+                        is AppUpdateDownloadEvent.Completed -> {
+                            val installerUri = event.receipt.uri.toUri()
+                            mutableUiState.update { state ->
+                                state.copy(
+                                    appUpdate = state.appUpdate.copy(
+                                        status = AppUpdateStatus.READY_TO_INSTALL,
+                                        availableUpdate = event.update,
+                                        installerUri = installerUri,
+                                        downloadedBytes = event.receipt.byteCount,
+                                        totalBytes = event.receipt.byteCount,
+                                        message = "Update downloaded.",
+                                    ),
+                                    lastNotice = "Update downloaded. Android installer opened.",
+                                )
+                            }
+                            onUpdateReady(installerUri)
+                        }
+                    }
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                mutableUiState.update { state ->
+                    state.copy(
+                        appUpdate = state.appUpdate.copy(
+                            status = AppUpdateStatus.FAILED,
+                            message = exception.message ?: "Update download failed.",
+                        ),
+                        lastNotice = exception.message ?: "Update download failed.",
+                    )
+                }
+            }
+        }
     }
 
     fun sendComposerMessage() {

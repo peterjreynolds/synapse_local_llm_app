@@ -147,7 +147,7 @@ internal val SynapseThinkingPhrases =
         "Camping spawn until coherence appears.",
         "Running a raid on your ambiguity.",
         "The boss is easier than this wording.",
-        "I was mid-combo, Peter.",
+        "I was mid-combo.",
         "Pausing the victory screen for this.",
         "My score was respectable before you arrived.",
         "Defusing the bomb named context loss.",

@@ -68,17 +68,17 @@ class DeterministicMemoryProjectorTest {
 
     @Test
     fun extractsCorrectedFullNameAsIdentityMemory() {
-        val traceEvent = userTrace("No, my full name is Peter Joseph Reynolds.")
+        val traceEvent = userTrace("No, my full name is Jordan Taylor.")
 
         val candidate = projector.extractMemoryCandidates(traceEvent).single()
 
         assertEquals(MemoryKind.IDENTITY, candidate.kind)
-        assertEquals("User's full name is Peter Joseph Reynolds.", candidate.text)
+        assertEquals("User's full name is Jordan Taylor.", candidate.text)
         assertEquals(MemoryClaimDomain.IDENTITY, candidate.domain)
         assertEquals("user.identity.self.full_name", candidate.claimKey)
         assertEquals("self", candidate.subject)
         assertEquals("full name", candidate.predicate)
-        assertEquals("Peter Joseph Reynolds", candidate.value)
+        assertEquals("Jordan Taylor", candidate.value)
         assertTrue(candidate.reasonCodes.contains("explicit-user-identity"))
         assertTrue(candidate.keywords.contains("identity"))
     }

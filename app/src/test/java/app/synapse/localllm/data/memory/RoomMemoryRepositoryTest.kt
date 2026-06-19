@@ -92,7 +92,7 @@ class RoomMemoryRepositoryTest {
     @Test
     fun identityRecallQueryRetrievesIdentityMemory() = runTest {
         writeDurableMemory(
-            text = "User's full name is Peter Joseph Reynolds.",
+            text = "User's full name is Jordan Taylor.",
             kind = MemoryKind.IDENTITY,
             subject = "User",
             keywords = listOf("identity", "full", "name"),
@@ -106,7 +106,7 @@ class RoomMemoryRepositoryTest {
         assertEquals(1, retrievalBundle.refs.size)
         val memory = retrievalBundle.refs.single()
         assertEquals(MemoryKind.IDENTITY, memory.kind)
-        assertEquals("User's full name is Peter Joseph Reynolds.", memory.text)
+        assertEquals("User's full name is Jordan Taylor.", memory.text)
         assertTrue(memory.reasonCodes.contains("intent:identity"))
         assertTrue(retrievalBundle.promptBlock.contains("[identity / global / User]"))
     }
@@ -156,7 +156,7 @@ class RoomMemoryRepositoryTest {
     @Test
     fun savedMemoryReviewRetrievesAllPromptVisibleMemory() = runTest {
         writeDurableMemory(
-            text = "User's full name is Peter Joseph Reynolds.",
+            text = "User's full name is Jordan Taylor.",
             kind = MemoryKind.IDENTITY,
         )
         writeDurableMemory(
@@ -176,7 +176,7 @@ class RoomMemoryRepositoryTest {
     @Test
     fun sameClaimKeySupersedesOlderActiveMemory() = runTest {
         writeDurableMemory(
-            text = "User's full name is Peter Andrew Brown.",
+            text = "User's full name is Jordan Blake.",
             kind = MemoryKind.IDENTITY,
             subject = "User",
             keywords = listOf("identity", "full", "name"),
@@ -184,7 +184,7 @@ class RoomMemoryRepositoryTest {
         )
 
         val receipt = writeDurableMemory(
-            text = "User's full name is Peter Joseph Reynolds.",
+            text = "User's full name is Jordan Taylor.",
             kind = MemoryKind.IDENTITY,
             subject = "User",
             keywords = listOf("identity", "full", "name"),
@@ -197,13 +197,13 @@ class RoomMemoryRepositoryTest {
             limit = 5,
         )
         assertEquals(1, retrievalBundle.refs.size)
-        assertEquals("User's full name is Peter Joseph Reynolds.", retrievalBundle.refs.single().text)
+        assertEquals("User's full name is Jordan Taylor.", retrievalBundle.refs.single().text)
         assertEquals("user.identity.self.full_name", retrievalBundle.refs.single().claimKey)
 
         val inactiveMemories = repository.listMemoriesForReview(MemoryReviewFilter.INACTIVE, limit = 10)
         assertEquals(1, inactiveMemories.size)
         assertEquals(MemoryStatus.SUPERSEDED, inactiveMemories.single().status)
-        assertEquals("User's full name is Peter Andrew Brown.", inactiveMemories.single().text)
+        assertEquals("User's full name is Jordan Blake.", inactiveMemories.single().text)
     }
 
     @Test
