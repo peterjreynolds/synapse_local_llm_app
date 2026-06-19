@@ -15,9 +15,25 @@ persist the selected filesystem path in settings. Catalog downloads also verify
 the expected byte count and SHA-256 checksum before the model is selected. This
 avoids giant APKs and keeps model files out of git history.
 
-The first built-in catalog entry is `Qwen3.5 9B Q4_K_M`, downloaded as the
-single file `Qwen3.5-9B-Q4_K_M.gguf` from Hugging Face's `resolve/main` URL.
-The app does not clone or download the rest of the Hugging Face repository.
+Built-in catalog entries are direct single-file GGUF downloads from Hugging
+Face `resolve/main` URLs. The app does not clone or download the rest of a
+Hugging Face repository. Each entry must include a known byte count and SHA-256
+checksum before it can ship in the built-in catalog.
+
+Current built-in entries:
+
+- `Qwen3.5 9B Q4_K_M`: recommended first model for the S25 Ultra.
+- `Llama 3.2 3B Instruct Q4_K_M`: smaller phone-friendly Llama option.
+- `Dolphin 3.0 Llama 3.1 8B Q4_K_M`: heavier uncensored-style Dolphin/Llama option.
+- `TinyLlama 1.1B Chat Q4_K_M`: tiny quick-test fallback.
+
+Catalog downloads run through a foreground data-sync service. That keeps the
+download alive when the user locks the phone or switches apps, subject to
+Android's battery-saver and OEM background restrictions. Partial downloads are
+stored as `.part` files and resume from the existing byte count when restarted.
+The notification and Settings UI show percent plus decimal MB/GB progress so
+multi-gigabyte transfers do not look frozen while waiting for the next whole
+gigabyte.
 
 The embedded adapter resets prompt state for each Synapse turn, decodes the
 system prompt plus assembled chat/memory prompt, and streams generated tokens

@@ -57,6 +57,7 @@ data class ModelDownloadUiState(
     val totalBytes: Long = 0L,
     val statusText: String = "Starting download...",
     val isActive: Boolean = true,
+    val powerSaveMode: Boolean = false,
 ) {
     val progressFraction: Float
         get() = if (totalBytes > 0L) {

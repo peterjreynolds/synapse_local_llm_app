@@ -20,7 +20,9 @@ import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.DownloadModelCommand
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
-import app.synapse.localllm.domain.runtime.ModelDownloadEvent
+import app.synapse.localllm.domain.runtime.ModelDownloadStage
+import app.synapse.localllm.domain.runtime.ModelDownloadStartStatus
+import app.synapse.localllm.domain.runtime.ModelDownloadState
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
@@ -51,6 +53,7 @@ class SynapseViewModel(
     init {
         observeSettings()
         observeStorageHealth()
+        observeModelDownloadState()
         observeThreads()
         loadModelCatalog()
         bindDefaultThread()
@@ -667,81 +670,15 @@ class SynapseViewModel(
     }
 
     fun downloadCatalogModel(entry: ModelCatalogEntry) {
-        if (mutableUiState.value.activeModelDownload?.isActive == true) return
+        val receipt = graph.modelDownloadController.startModelDownload(DownloadModelCommand(entry))
         mutableUiState.update { state ->
             state.copy(
-                activeModelDownload = ModelDownloadUiState(
-                    entryId = entry.id,
-                    displayName = entry.name,
-                    totalBytes = entry.sizeBytes,
-                ),
-                lastNotice = "Downloading ${entry.name}...",
+                lastNotice = when (receipt.status) {
+                    ModelDownloadStartStatus.STARTED -> receipt.message
+                    ModelDownloadStartStatus.ALREADY_RUNNING -> receipt.message
+                    ModelDownloadStartStatus.FAILED_TO_START -> receipt.message
+                },
             )
-        }
-        viewModelScope.launch {
-            try {
-                graph.modelDownloader.downloadModel(DownloadModelCommand(entry)).collect { event ->
-                    when (event) {
-                        is ModelDownloadEvent.Progress ->
-                            mutableUiState.update { state ->
-                                state.copy(
-                                    activeModelDownload = ModelDownloadUiState(
-                                        entryId = event.entry.id,
-                                        displayName = event.entry.name,
-                                        downloadedBytes = event.downloadedBytes,
-                                        totalBytes = event.totalBytes,
-                                        statusText = "Downloading",
-                                    ),
-                                )
-                            }
-
-                        is ModelDownloadEvent.Verifying ->
-                            mutableUiState.update { state ->
-                                state.copy(
-                                    activeModelDownload = ModelDownloadUiState(
-                                        entryId = event.entry.id,
-                                        displayName = event.entry.name,
-                                        downloadedBytes = event.downloadedBytes,
-                                        totalBytes = event.totalBytes,
-                                        statusText = "Verifying GGUF",
-                                    ),
-                                )
-                            }
-
-                        is ModelDownloadEvent.Completed -> {
-                            graph.settingsStore.updateEmbeddedModel(
-                                modelPath = event.receipt.modelPath,
-                                displayName = event.receipt.displayName,
-                                byteCount = event.receipt.byteCount,
-                                modelPromptProfile = event.entry.promptProfile,
-                            )
-                            mutableUiState.update { state ->
-                                state.copy(
-                                    activeModelDownload = ModelDownloadUiState(
-                                        entryId = event.entry.id,
-                                        displayName = event.entry.name,
-                                        downloadedBytes = event.entry.sizeBytes,
-                                        totalBytes = event.entry.sizeBytes,
-                                        statusText = "Downloaded and selected",
-                                        isActive = false,
-                                    ),
-                                    lastNotice = "Downloaded and selected ${event.entry.name}.",
-                                )
-                            }
-                        }
-                    }
-                }
-            } catch (exception: Exception) {
-                mutableUiState.update { state ->
-                    state.copy(
-                        activeModelDownload = state.activeModelDownload?.copy(
-                            statusText = exception.message ?: "Model download failed.",
-                            isActive = false,
-                        ),
-                        lastNotice = exception.message ?: "Model download failed.",
-                    )
-                }
-            }
         }
     }
 
@@ -820,6 +757,47 @@ class SynapseViewModel(
         viewModelScope.launch {
             graph.storageHealthSnapshotRepository.observeLatestStorageHealth().collect { snapshot ->
                 mutableUiState.update { state -> state.copy(storageHealthSnapshot = snapshot) }
+            }
+        }
+    }
+
+    private fun observeModelDownloadState() {
+        viewModelScope.launch {
+            graph.modelDownloadController.modelDownloadState.collect { modelDownloadState ->
+                mutableUiState.update { state ->
+                    when (modelDownloadState) {
+                        ModelDownloadState.Idle -> state.copy(activeModelDownload = null)
+                        is ModelDownloadState.Active ->
+                            state.copy(activeModelDownload = modelDownloadState.toUiState(isActive = true))
+
+                        is ModelDownloadState.Completed ->
+                            state.copy(
+                                activeModelDownload = ModelDownloadUiState(
+                                    entryId = modelDownloadState.entry.id,
+                                    displayName = modelDownloadState.entry.name,
+                                    downloadedBytes = modelDownloadState.entry.sizeBytes,
+                                    totalBytes = modelDownloadState.entry.sizeBytes,
+                                    statusText = "Downloaded and selected",
+                                    isActive = false,
+                                ),
+                                lastNotice = "Downloaded and selected ${modelDownloadState.entry.name}.",
+                            )
+
+                        is ModelDownloadState.Failed ->
+                            state.copy(
+                                activeModelDownload = ModelDownloadUiState(
+                                    entryId = modelDownloadState.entry.id,
+                                    displayName = modelDownloadState.entry.name,
+                                    downloadedBytes = modelDownloadState.downloadedBytes,
+                                    totalBytes = modelDownloadState.totalBytes,
+                                    statusText = modelDownloadState.message,
+                                    isActive = false,
+                                    powerSaveMode = modelDownloadState.powerSaveMode,
+                                ),
+                                lastNotice = modelDownloadState.message,
+                            )
+                    }
+                }
             }
         }
     }
@@ -998,6 +976,26 @@ class SynapseViewModel(
             .firstOrNull { line -> line.isNotBlank() }
             ?.take(180)
             ?.trimEnd()
+
+    private fun ModelDownloadState.Active.toUiState(isActive: Boolean): ModelDownloadUiState =
+        ModelDownloadUiState(
+            entryId = entry.id,
+            displayName = entry.name,
+            downloadedBytes = downloadedBytes,
+            totalBytes = totalBytes,
+            statusText = stage.toStatusText(),
+            isActive = isActive,
+            powerSaveMode = powerSaveMode,
+        )
+
+    private fun ModelDownloadStage.toStatusText(): String =
+        when (this) {
+            ModelDownloadStage.STARTING -> "Starting background download"
+            ModelDownloadStage.DOWNLOADING -> "Downloading in background"
+            ModelDownloadStage.VERIFYING -> "Verifying GGUF"
+            ModelDownloadStage.COMPLETED -> "Downloaded and selected"
+            ModelDownloadStage.FAILED -> "Model download failed"
+        }
 
     private fun SynapseSettings.toStorageThresholds(): StorageThresholds =
         StorageThresholds(

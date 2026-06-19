@@ -23,6 +23,7 @@ import app.synapse.localllm.data.memory.RuleBasedMemoryCandidateProposer
 import app.synapse.localllm.data.memory.RoomMemoryRepository
 import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
 import app.synapse.localllm.data.runtime.AndroidEmbeddedModelStore
+import app.synapse.localllm.data.runtime.AndroidForegroundModelDownloadController
 import app.synapse.localllm.data.runtime.AndroidModelDownloader
 import app.synapse.localllm.data.runtime.BuiltInModelCatalogRepository
 import app.synapse.localllm.data.runtime.LlamaServerGateway
@@ -74,6 +75,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
     val modelCatalogRepository: ModelCatalogRepository = BuiltInModelCatalogRepository()
     val modelDownloader: ModelDownloader = AndroidModelDownloader(applicationContext, createHttpClient())
+    val modelDownloadController = AndroidForegroundModelDownloadController(applicationContext)
     val debugArchiveExporter = AndroidDebugArchiveExporter(applicationContext, clock)
     val markdownPdfExporter = AndroidMarkdownPdfExporter(applicationContext, clock)
 

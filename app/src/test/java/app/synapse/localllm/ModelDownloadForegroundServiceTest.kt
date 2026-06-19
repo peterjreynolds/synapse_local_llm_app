@@ -1,0 +1,45 @@
+package app.synapse.localllm
+
+import android.content.Context
+import android.content.Intent
+import androidx.test.core.app.ApplicationProvider
+import app.synapse.localllm.domain.runtime.ModelCatalogEntry
+import app.synapse.localllm.domain.runtime.ModelPromptProfile
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
+class ModelDownloadForegroundServiceTest {
+    @Test
+    fun startIntentRoundTripsCatalogEntry() {
+        val context: Context = ApplicationProvider.getApplicationContext()
+        val entry = ModelCatalogEntry(
+            id = "llama-test",
+            name = "Llama Test",
+            fileName = "llama-test.gguf",
+            sizeBytes = 1024L,
+            downloadUrl = "https://example.com/llama-test.gguf",
+            sha256 = "a".repeat(64),
+            promptProfile = ModelPromptProfile.LLAMA_INSTRUCT,
+            compatibilityNotes = "Test entry.",
+            sourceLabel = "Test source",
+            recommended = false,
+        )
+
+        val parsedEntry = ModelDownloadForegroundService.parseStartIntent(
+            ModelDownloadForegroundService.createStartIntent(context, entry),
+        )
+
+        assertEquals(entry, parsedEntry)
+    }
+
+    @Test
+    fun parserRejectsWrongAction() {
+        assertNull(ModelDownloadForegroundService.parseStartIntent(Intent("wrong.action")))
+    }
+}

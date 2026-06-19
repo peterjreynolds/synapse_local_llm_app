@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.ClipData
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
@@ -135,6 +136,8 @@ import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStartStatus
 import app.synapse.localllm.domain.runtime.RuntimeStatus
+import app.synapse.localllm.domain.runtime.formatModelDownloadByteCount
+import app.synapse.localllm.domain.runtime.formatModelDownloadProgressText
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.storage.StorageHealthSnapshot
 import app.synapse.localllm.domain.storage.StorageHealthState
@@ -155,6 +158,9 @@ fun SynapseApp(viewModel: SynapseViewModel) {
     )
     var speechRecognitionTarget by remember {
         mutableStateOf(SpeechRecognitionTarget.COMPOSER)
+    }
+    var pendingCatalogDownload by remember {
+        mutableStateOf<ModelCatalogEntry?>(null)
     }
     val speechLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
@@ -190,6 +196,16 @@ fun SynapseApp(viewModel: SynapseViewModel) {
             speechRecognitionTarget = SpeechRecognitionTarget.COMPOSER
             viewModel.publishNotice("Microphone permission denied.")
         }
+    }
+    val modelDownloadNotificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val entry = pendingCatalogDownload
+        pendingCatalogDownload = null
+        if (!granted) {
+            viewModel.publishNotice("Model download will continue, but Android may hide its notification.")
+        }
+        entry?.let(viewModel::downloadCatalogModel)
     }
     val attachmentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -275,7 +291,20 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onRuntimeCheck = viewModel::checkRuntimeStatus,
         onRuntimeStart = viewModel::startRuntime,
         onImportEmbeddedModel = { modelImportLauncher.launch(modelMimeTypes) },
-        onDownloadCatalogModel = viewModel::downloadCatalogModel,
+        onDownloadCatalogModel = { entry ->
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                pendingCatalogDownload = entry
+                modelDownloadNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                viewModel.downloadCatalogModel(entry)
+            }
+        },
         onLibraryTitleChanged = viewModel::updateLibraryDraftTitle,
         onLibraryMarkdownChanged = viewModel::updateLibraryDraftMarkdown,
         onCreateLibraryMarkdownArtifact = viewModel::createLibraryMarkdownArtifact,
@@ -1913,6 +1942,13 @@ private fun SettingsPanel(
                 Text("Save")
             }
         }
+        item {
+            Spacer(
+                modifier = Modifier
+                    .height(16.dp)
+                    .navigationBarsPadding(),
+            )
+        }
     }
 }
 
@@ -2071,7 +2107,7 @@ private fun ModelCatalogEntryRow(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = "${formatByteCount(entry.sizeBytes)} | ${entry.sourceLabel}",
+                        text = "${formatModelDownloadByteCount(entry.sizeBytes)} | ${entry.sourceLabel}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -2101,11 +2137,20 @@ private fun ModelCatalogEntryRow(
                 )
                 Text(
                     text = "${activeDownload.statusText}: " +
-                        "${formatByteCount(activeDownload.downloadedBytes)} / " +
-                        formatByteCount(activeDownload.totalBytes),
+                        formatModelDownloadProgressText(
+                            activeDownload.downloadedBytes,
+                            activeDownload.totalBytes,
+                        ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall,
                 )
+                if (activeDownload.powerSaveMode) {
+                    Text(
+                        text = "Battery saver is on; Android may pause or throttle this background download.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
         }
     }
