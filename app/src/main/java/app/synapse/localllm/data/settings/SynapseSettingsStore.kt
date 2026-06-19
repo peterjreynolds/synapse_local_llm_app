@@ -90,6 +90,7 @@ class SynapseSettingsStore(context: Context) {
         modelPath: String,
         displayName: String,
         byteCount: Long?,
+        modelPromptProfile: ModelPromptProfile? = null,
     ) {
         dataStore.edit { preferences ->
             preferences[RUNTIME_BACKEND] = InferenceRuntimeBackend.EMBEDDED_LLAMA.name
@@ -101,7 +102,7 @@ class SynapseSettingsStore(context: Context) {
                 preferences[EMBEDDED_MODEL_BYTE_COUNT] = byteCount
             }
             preferences[MODEL_NAME] = displayName.removeSuffix(".gguf").ifBlank { "embedded-gguf" }
-            preferences[MODEL_PROMPT_PROFILE] = inferModelPromptProfile(displayName).name
+            preferences[MODEL_PROMPT_PROFILE] = (modelPromptProfile ?: inferModelPromptProfile(displayName)).name
         }
     }
 

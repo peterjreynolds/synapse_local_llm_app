@@ -8,10 +8,16 @@ The default backend is embedded `llama.cpp`. The APK builds ARM64 native
 libraries from the pinned `third_party/llama.cpp` submodule and loads them
 through `EmbeddedLlamaRuntime`.
 
-The APK does not package GGUF weights. A model is imported from Android's
-document picker, validated by GGUF magic bytes, copied into app-private
-`files/models`, and persisted in settings as a filesystem path. This avoids
-giant APKs and keeps model files out of git history.
+The APK does not package GGUF weights. A model can be installed through manual
+Android document-picker import or through Synapse's vetted in-app model catalog.
+Both paths validate GGUF magic bytes, write into app-private `files/models`, and
+persist the selected filesystem path in settings. Catalog downloads also verify
+the expected byte count and SHA-256 checksum before the model is selected. This
+avoids giant APKs and keeps model files out of git history.
+
+The first built-in catalog entry is `Qwen3.5 9B Q4_K_M`, downloaded as the
+single file `Qwen3.5-9B-Q4_K_M.gguf` from Hugging Face's `resolve/main` URL.
+The app does not clone or download the rest of the Hugging Face repository.
 
 The embedded adapter resets prompt state for each Synapse turn, decodes the
 system prompt plus assembled chat/memory prompt, and streams generated tokens

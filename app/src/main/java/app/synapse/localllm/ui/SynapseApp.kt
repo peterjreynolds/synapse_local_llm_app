@@ -79,6 +79,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -130,6 +131,7 @@ import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
+import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStartStatus
 import app.synapse.localllm.domain.runtime.RuntimeStatus
@@ -273,6 +275,7 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onRuntimeCheck = viewModel::checkRuntimeStatus,
         onRuntimeStart = viewModel::startRuntime,
         onImportEmbeddedModel = { modelImportLauncher.launch(modelMimeTypes) },
+        onDownloadCatalogModel = viewModel::downloadCatalogModel,
         onLibraryTitleChanged = viewModel::updateLibraryDraftTitle,
         onLibraryMarkdownChanged = viewModel::updateLibraryDraftMarkdown,
         onCreateLibraryMarkdownArtifact = viewModel::createLibraryMarkdownArtifact,
@@ -329,6 +332,7 @@ private fun SynapseScreen(
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
     onImportEmbeddedModel: () -> Unit,
+    onDownloadCatalogModel: (ModelCatalogEntry) -> Unit,
     onLibraryTitleChanged: (String) -> Unit,
     onLibraryMarkdownChanged: (String) -> Unit,
     onCreateLibraryMarkdownArtifact: () -> Unit,
@@ -437,6 +441,7 @@ private fun SynapseScreen(
                             onSettingsDraftChanged = onSettingsDraftChanged,
                             onSaveSettings = onSaveSettings,
                             onImportEmbeddedModel = onImportEmbeddedModel,
+                            onDownloadCatalogModel = onDownloadCatalogModel,
                             onMemoryWritesChanged = onMemoryWritesChanged,
                             onSpeechPlaybackChanged = onSpeechPlaybackChanged,
                             onExportDebugArchive = onExportDebugArchive,
@@ -1774,6 +1779,7 @@ private fun SettingsPanel(
     onSettingsDraftChanged: (RuntimeSettingsDraft) -> Unit,
     onSaveSettings: () -> Unit,
     onImportEmbeddedModel: () -> Unit,
+    onDownloadCatalogModel: (ModelCatalogEntry) -> Unit,
     onMemoryWritesChanged: (Boolean) -> Unit,
     onSpeechPlaybackChanged: (Boolean) -> Unit,
     onExportDebugArchive: () -> Unit,
@@ -1803,6 +1809,7 @@ private fun SettingsPanel(
                 EmbeddedModelSettingsCard(
                     state = state,
                     onImportEmbeddedModel = onImportEmbeddedModel,
+                    onDownloadCatalogModel = onDownloadCatalogModel,
                 )
             }
             item {
@@ -1984,6 +1991,7 @@ private fun RuntimeBackendSelector(
 private fun EmbeddedModelSettingsCard(
     state: SynapseUiState,
     onImportEmbeddedModel: () -> Unit,
+    onDownloadCatalogModel: (ModelCatalogEntry) -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
         Column(
@@ -2006,13 +2014,98 @@ private fun EmbeddedModelSettingsCard(
             )
             Button(
                 onClick = onImportEmbeddedModel,
-                enabled = !state.isImportingModel,
+                enabled = !state.isImportingModel && state.activeModelDownload?.isActive != true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp),
             ) {
                 Icon(Icons.Rounded.FolderOpen, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(if (state.isImportingModel) "Importing..." else "Import GGUF")
+            }
+            if (state.modelCatalogEntries.isNotEmpty()) {
+                Text(
+                    text = "Recommended downloads",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                state.modelCatalogEntries.forEach { entry ->
+                    ModelCatalogEntryRow(
+                        entry = entry,
+                        activeDownload = state.activeModelDownload,
+                        selectedDisplayName = state.settings.embeddedModelDisplayName,
+                        onDownloadCatalogModel = onDownloadCatalogModel,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelCatalogEntryRow(
+    entry: ModelCatalogEntry,
+    activeDownload: ModelDownloadUiState?,
+    selectedDisplayName: String?,
+    onDownloadCatalogModel: (ModelCatalogEntry) -> Unit,
+) {
+    val isSelected = selectedDisplayName == entry.fileName
+    val isDownloading = activeDownload?.entryId == entry.id && activeDownload.isActive
+    Surface(
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (entry.recommended) "${entry.name} | recommended" else entry.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "${formatByteCount(entry.sizeBytes)} | ${entry.sourceLabel}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                TextButton(
+                    onClick = { onDownloadCatalogModel(entry) },
+                    enabled = !isSelected && !isDownloading,
+                ) {
+                    Text(
+                        when {
+                            isSelected -> "Selected"
+                            isDownloading -> "Downloading"
+                            else -> "Download"
+                        },
+                    )
+                }
+            }
+            Text(
+                text = entry.compatibilityNotes,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (activeDownload?.entryId == entry.id) {
+                LinearProgressIndicator(
+                    progress = { activeDownload.progressFraction },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = "${activeDownload.statusText}: " +
+                        "${formatByteCount(activeDownload.downloadedBytes)} / " +
+                        formatByteCount(activeDownload.totalBytes),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                )
             }
         }
     }

@@ -204,7 +204,8 @@ Goal: make embedded local inference feel reliable on Samsung S25 Ultra.
 - Add clearer embedded model health and load receipts.
 - Add model metadata/hashing during import.
 - Add performance presets for speed/battery/quality.
-- Add first-run model downloader/importer with hash verification.
+- Expand the first-run model downloader/importer beyond the built-in Qwen GGUF
+  catalog entry to a remote HTTPS catalog.
 - Keep normal APKs free of GGUF model weights.
 - Consider optional release packs with APK and model as separate assets.
 - Add clear receipts for model import, hash verification, runtime start, runtime

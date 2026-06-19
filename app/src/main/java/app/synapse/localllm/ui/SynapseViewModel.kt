@@ -17,7 +17,10 @@ import app.synapse.localllm.domain.library.CreateMarkdownArtifactCommand
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
+import app.synapse.localllm.domain.runtime.DownloadModelCommand
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
+import app.synapse.localllm.domain.runtime.ModelCatalogEntry
+import app.synapse.localllm.domain.runtime.ModelDownloadEvent
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
@@ -49,6 +52,7 @@ class SynapseViewModel(
         observeSettings()
         observeStorageHealth()
         observeThreads()
+        loadModelCatalog()
         bindDefaultThread()
     }
 
@@ -662,6 +666,85 @@ class SynapseViewModel(
         }
     }
 
+    fun downloadCatalogModel(entry: ModelCatalogEntry) {
+        if (mutableUiState.value.activeModelDownload?.isActive == true) return
+        mutableUiState.update { state ->
+            state.copy(
+                activeModelDownload = ModelDownloadUiState(
+                    entryId = entry.id,
+                    displayName = entry.name,
+                    totalBytes = entry.sizeBytes,
+                ),
+                lastNotice = "Downloading ${entry.name}...",
+            )
+        }
+        viewModelScope.launch {
+            try {
+                graph.modelDownloader.downloadModel(DownloadModelCommand(entry)).collect { event ->
+                    when (event) {
+                        is ModelDownloadEvent.Progress ->
+                            mutableUiState.update { state ->
+                                state.copy(
+                                    activeModelDownload = ModelDownloadUiState(
+                                        entryId = event.entry.id,
+                                        displayName = event.entry.name,
+                                        downloadedBytes = event.downloadedBytes,
+                                        totalBytes = event.totalBytes,
+                                        statusText = "Downloading",
+                                    ),
+                                )
+                            }
+
+                        is ModelDownloadEvent.Verifying ->
+                            mutableUiState.update { state ->
+                                state.copy(
+                                    activeModelDownload = ModelDownloadUiState(
+                                        entryId = event.entry.id,
+                                        displayName = event.entry.name,
+                                        downloadedBytes = event.downloadedBytes,
+                                        totalBytes = event.totalBytes,
+                                        statusText = "Verifying GGUF",
+                                    ),
+                                )
+                            }
+
+                        is ModelDownloadEvent.Completed -> {
+                            graph.settingsStore.updateEmbeddedModel(
+                                modelPath = event.receipt.modelPath,
+                                displayName = event.receipt.displayName,
+                                byteCount = event.receipt.byteCount,
+                                modelPromptProfile = event.entry.promptProfile,
+                            )
+                            mutableUiState.update { state ->
+                                state.copy(
+                                    activeModelDownload = ModelDownloadUiState(
+                                        entryId = event.entry.id,
+                                        displayName = event.entry.name,
+                                        downloadedBytes = event.entry.sizeBytes,
+                                        totalBytes = event.entry.sizeBytes,
+                                        statusText = "Downloaded and selected",
+                                        isActive = false,
+                                    ),
+                                    lastNotice = "Downloaded and selected ${event.entry.name}.",
+                                )
+                            }
+                        }
+                    }
+                }
+            } catch (exception: Exception) {
+                mutableUiState.update { state ->
+                    state.copy(
+                        activeModelDownload = state.activeModelDownload?.copy(
+                            statusText = exception.message ?: "Model download failed.",
+                            isActive = false,
+                        ),
+                        lastNotice = exception.message ?: "Model download failed.",
+                    )
+                }
+            }
+        }
+    }
+
     fun updateMemoryWritesEnabled(enabled: Boolean) {
         viewModelScope.launch {
             graph.settingsStore.updateMemoryWritesEnabled(enabled)
@@ -715,6 +798,20 @@ class SynapseViewModel(
                     )
                 }
                 inspectStorageHealth()
+            }
+        }
+    }
+
+    private fun loadModelCatalog() {
+        viewModelScope.launch {
+            runCatching {
+                graph.modelCatalogRepository.listModelCatalogEntries()
+            }.onSuccess { catalogEntries ->
+                mutableUiState.update { state -> state.copy(modelCatalogEntries = catalogEntries) }
+            }.onFailure { exception ->
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Model catalog could not be loaded.")
+                }
             }
         }
     }

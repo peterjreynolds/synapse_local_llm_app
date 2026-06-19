@@ -6,6 +6,7 @@ import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
+import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
@@ -49,6 +50,22 @@ data class VoiceModeUiState(
         get() = status != VoiceModeStatus.OFF && status != VoiceModeStatus.ERROR
 }
 
+data class ModelDownloadUiState(
+    val entryId: String,
+    val displayName: String,
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+    val statusText: String = "Starting download...",
+    val isActive: Boolean = true,
+) {
+    val progressFraction: Float
+        get() = if (totalBytes > 0L) {
+            (downloadedBytes.toDouble() / totalBytes.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        } else {
+            0f
+        }
+}
+
 data class SynapseUiState(
     val settings: SynapseSettings = SynapseSettings(),
     val settingsDraft: RuntimeSettingsDraft = RuntimeSettingsDraft(
@@ -65,6 +82,8 @@ data class SynapseUiState(
     val activePanel: SynapsePanel = SynapsePanel.CHAT,
     val isSending: Boolean = false,
     val isImportingModel: Boolean = false,
+    val modelCatalogEntries: List<ModelCatalogEntry> = emptyList(),
+    val activeModelDownload: ModelDownloadUiState? = null,
     val lastNotice: String? = null,
     val memorySearchQuery: String = "",
     val memoryReviewFilter: MemoryReviewFilter = MemoryReviewFilter.ACTIVE,
