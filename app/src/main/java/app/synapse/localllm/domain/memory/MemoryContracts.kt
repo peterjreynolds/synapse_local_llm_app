@@ -33,6 +33,58 @@ enum class MemoryScope {
     THREAD,
 }
 
+enum class MemoryClaimDomain {
+    IDENTITY,
+    PREFERENCE,
+    RELATIONSHIP,
+    PROJECT,
+    TASK,
+    APPOINTMENT,
+    ROUTINE,
+    INSTRUCTION,
+    CORRECTION,
+    SUMMARY,
+    ALIAS,
+    CONSTRAINT,
+    WORKSPACE,
+    GIST,
+    TRACE,
+    ARCHIVE;
+
+    companion object {
+        fun fromKind(kind: MemoryKind): MemoryClaimDomain =
+            when (kind) {
+                MemoryKind.TRACE -> TRACE
+                MemoryKind.GIST -> GIST
+                MemoryKind.IDENTITY -> IDENTITY
+                MemoryKind.PREFERENCE -> PREFERENCE
+                MemoryKind.COMMITMENT -> TASK
+                MemoryKind.PROCEDURE -> INSTRUCTION
+                MemoryKind.RELATIONSHIP -> RELATIONSHIP
+                MemoryKind.PROJECT -> PROJECT
+                MemoryKind.APPOINTMENT -> APPOINTMENT
+                MemoryKind.INSTRUCTION -> INSTRUCTION
+                MemoryKind.CORRECTION -> CORRECTION
+                MemoryKind.SUMMARY -> SUMMARY
+                MemoryKind.ARCHIVE -> ARCHIVE
+            }
+    }
+}
+
+enum class MemoryWriteIntent {
+    EXPLICIT_SAVE,
+    EXPLICIT_CORRECTION,
+    IMPLICIT_CANDIDATE,
+    SUMMARY,
+    IMPORTED,
+}
+
+enum class MemorySensitivity {
+    LOW,
+    MEDIUM,
+    HIGH,
+}
+
 enum class MemoryStatus {
     ACTIVE,
     ARCHIVED,
@@ -62,6 +114,7 @@ enum class MemoryWriteOutcome {
 
 enum class MemoryReviewFilter {
     ACTIVE,
+    REVIEW_NEEDED,
     INACTIVE,
     ALL,
 }
@@ -82,7 +135,15 @@ data class MemoryClaimCandidate(
     val surfacePolicy: SurfacePolicy,
     val reasonCodes: List<String>,
     val scope: MemoryScope = MemoryScope.GLOBAL,
+    val domain: MemoryClaimDomain = MemoryClaimDomain.fromKind(kind),
     val subject: String? = null,
+    val predicate: String? = null,
+    val value: String? = null,
+    val sourceQuote: String? = null,
+    val writeIntent: MemoryWriteIntent = MemoryWriteIntent.EXPLICIT_SAVE,
+    val durabilityScore: Double = 1.0,
+    val futureUsefulnessScore: Double = 1.0,
+    val sensitivity: MemorySensitivity = MemorySensitivity.LOW,
     val keywords: List<String> = emptyList(),
     val claimKey: String? = null,
 )
@@ -122,7 +183,15 @@ data class MemoryVersionRecord(
     val sourceTraceEventIds: List<TraceEventId>,
     val createdAt: Instant,
     val scope: MemoryScope = MemoryScope.GLOBAL,
+    val domain: MemoryClaimDomain = MemoryClaimDomain.GIST,
     val subject: String? = null,
+    val predicate: String? = null,
+    val value: String? = null,
+    val sourceQuote: String? = null,
+    val writeIntent: MemoryWriteIntent = MemoryWriteIntent.EXPLICIT_SAVE,
+    val durabilityScore: Double = 1.0,
+    val futureUsefulnessScore: Double = 1.0,
+    val sensitivity: MemorySensitivity = MemorySensitivity.LOW,
     val keywords: List<String> = emptyList(),
 )
 
@@ -135,7 +204,15 @@ data class RetrievedMemoryRef(
     val confidence: Double,
     val reasonCodes: List<String>,
     val scope: MemoryScope = MemoryScope.GLOBAL,
+    val domain: MemoryClaimDomain = MemoryClaimDomain.fromKind(kind),
     val subject: String? = null,
+    val predicate: String? = null,
+    val value: String? = null,
+    val sourceQuote: String? = null,
+    val writeIntent: MemoryWriteIntent = MemoryWriteIntent.EXPLICIT_SAVE,
+    val durabilityScore: Double = 1.0,
+    val futureUsefulnessScore: Double = 1.0,
+    val sensitivity: MemorySensitivity = MemorySensitivity.LOW,
     val keywords: List<String> = emptyList(),
     val claimKey: String? = null,
     val sourceTraceEventIds: List<TraceEventId> = emptyList(),
@@ -164,6 +241,39 @@ data class RetrievalBundle(
 
 interface MemoryProjector {
     fun extractMemoryCandidates(traceEvent: TraceEventRecord): List<MemoryClaimCandidate>
+}
+
+data class MemoryCandidateParseReceipt(
+    val candidates: List<MemoryClaimCandidate>,
+    val rejectionReason: String?,
+)
+
+interface MemoryCandidateProposalParser {
+    fun parseCandidateProposal(
+        rawJson: String,
+        traceEvent: TraceEventRecord,
+    ): MemoryCandidateParseReceipt
+}
+
+interface MemoryCandidateNormalizer {
+    fun normalizeMemoryCandidate(
+        candidate: MemoryClaimCandidate,
+        traceEvent: TraceEventRecord,
+    ): MemoryClaimCandidate
+}
+
+interface MemoryCandidateProposer {
+    fun proposeMemoryCandidates(traceEvent: TraceEventRecord): List<MemoryClaimCandidate>
+}
+
+data class MemoryImplicitScore(
+    val score: Double,
+    val outcome: MemoryWriteOutcome,
+    val reason: String,
+)
+
+interface MemoryImplicitScorer {
+    fun scoreImplicitMemoryCandidate(candidate: MemoryClaimCandidate): MemoryImplicitScore
 }
 
 interface MemoryAdmissionGate {

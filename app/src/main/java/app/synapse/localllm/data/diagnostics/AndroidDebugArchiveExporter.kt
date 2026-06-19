@@ -438,8 +438,11 @@ class AndroidDebugArchiveExporter(
 
         val RECENT_MEMORY_VERSIONS_SQL =
             """
-            SELECT v.id, v.memoryObjectId, o.kind, o.status, o.claimKey, v.scope, v.subject,
+            SELECT v.id, v.memoryObjectId, o.kind, o.status, o.claimKey, v.scope, v.domain,
+                   v.subject, v.predicate, v.valueText, v.writeIntent, v.sensitivity,
+                   v.durabilityScore, v.futureUsefulnessScore,
                    substr(replace(replace(v.text, char(10), ' '), char(13), ' '), 1, 220) AS textPreview,
+                   substr(replace(replace(v.sourceQuote, char(10), ' '), char(13), ' '), 1, 220) AS sourceQuotePreview,
                    v.confidence, v.surfacePolicy, v.keywordsCsv, v.createdAtEpochMillis
             FROM memory_versions v
             INNER JOIN memory_objects o ON o.id = v.memoryObjectId

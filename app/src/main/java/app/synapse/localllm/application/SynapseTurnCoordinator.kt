@@ -13,6 +13,8 @@ import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.memory.MemoryAdmissionGate
+import app.synapse.localllm.domain.memory.MemoryCandidateNormalizer
+import app.synapse.localllm.domain.memory.MemoryCandidateProposer
 import app.synapse.localllm.domain.memory.MemoryCommand
 import app.synapse.localllm.domain.memory.MemoryCommandInterpreter
 import app.synapse.localllm.domain.memory.MemoryProjector
@@ -38,6 +40,8 @@ class SynapseTurnCoordinator(
     private val memoryRepository: MemoryRepository,
     private val memoryCommandInterpreter: MemoryCommandInterpreter,
     private val memoryProjector: MemoryProjector,
+    private val memoryCandidateNormalizer: MemoryCandidateNormalizer,
+    private val memoryCandidateProposer: MemoryCandidateProposer,
     private val memoryAdmissionGate: MemoryAdmissionGate,
     private val storageHealthGovernor: StorageHealthGovernor,
     private val storageHealthSnapshotRepository: RoomStorageHealthSnapshotRepository,
@@ -260,7 +264,18 @@ class SynapseTurnCoordinator(
             }
         }
 
-        val memoryCandidates = memoryProjector.extractMemoryCandidates(traceEvent)
+        val deterministicCandidates = memoryProjector.extractMemoryCandidates(traceEvent)
+        val proposedCandidates = if (deterministicCandidates.isEmpty()) {
+            memoryCandidateProposer.proposeMemoryCandidates(traceEvent)
+        } else {
+            emptyList()
+        }
+        val memoryCandidates = (deterministicCandidates + proposedCandidates).map { memoryCandidate ->
+            memoryCandidateNormalizer.normalizeMemoryCandidate(
+                candidate = memoryCandidate,
+                traceEvent = traceEvent,
+            )
+        }
         if (memoryCandidates.isEmpty()) {
             memoryRepository.persistMemoryDecision(
                 traceEvent = traceEvent,

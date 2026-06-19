@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RetrievedMemoryReceiptEntity::class,
         StorageHealthSnapshotEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -216,5 +216,43 @@ val SYNAPSE_DATABASE_MIGRATION_5_6 =
             )
             db.execSQL("ALTER TABLE retrieval_receipts ADD COLUMN retrievalIntent TEXT NOT NULL DEFAULT 'GENERAL'")
             db.execSQL("ALTER TABLE retrieved_memory_receipts ADD COLUMN rankScore REAL NOT NULL DEFAULT 0.0")
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_6_7 =
+    object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE memory_versions ADD COLUMN domain TEXT NOT NULL DEFAULT 'GIST'")
+            db.execSQL("ALTER TABLE memory_versions ADD COLUMN predicate TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE memory_versions ADD COLUMN valueText TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE memory_versions ADD COLUMN sourceQuote TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE memory_versions ADD COLUMN writeIntent TEXT NOT NULL DEFAULT 'EXPLICIT_SAVE'")
+            db.execSQL("ALTER TABLE memory_versions ADD COLUMN durabilityScore REAL NOT NULL DEFAULT 1.0")
+            db.execSQL("ALTER TABLE memory_versions ADD COLUMN futureUsefulnessScore REAL NOT NULL DEFAULT 1.0")
+            db.execSQL("ALTER TABLE memory_versions ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'LOW'")
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_memory_versions_domain
+                ON memory_versions(domain)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_memory_versions_predicate
+                ON memory_versions(predicate)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_memory_versions_writeIntent
+                ON memory_versions(writeIntent)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_memory_versions_sensitivity
+                ON memory_versions(sensitivity)
+                """.trimIndent(),
+            )
         }
     }

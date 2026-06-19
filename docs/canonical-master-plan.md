@@ -17,10 +17,12 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Embedded ARM64 `llama.cpp` runtime with Termux server fallback.
 - Named APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
 - App-local Room/SQLite chat and evidence-backed memory.
-- Memory V7 governed-claim foundation: structured memory kinds, scopes,
-  subjects, keywords, claim keys, supersession, tombstone/delete commands,
-  intent-based retrieval routing, scored retrieval receipts, and visible memory
-  metadata in diagnostics/review surfaces.
+- Memory V8 generalized governed-claim foundation: structured memory kinds,
+  scopes, domains, subjects, predicates, values, source quotes, write intents,
+  sensitivity, claim keys, supersession, tombstone/delete commands, conservative
+  implicit candidate proposal, strict JSON proposer validation boundary,
+  review-needed states, intent-based retrieval routing, scored retrieval
+  receipts, and visible memory metadata in diagnostics/review surfaces.
 - Storage-pressure guardrails for memory writes.
 - Synapse Guild branding.
 - Persona and Custom Instructions settings.
@@ -120,26 +122,32 @@ Goal: make Synapse a local librarian plus analyst, not just a chatbot with memor
 - Exact URL import means user-supplied URLs only. No autonomous free browsing in
   v1.
 
-### Memory V7 Expansion
+### Memory V8 Expansion
 
 Goal: make memory behave like a governed local assistant memory system, not a
 bag of regex hits.
 
 - Keep conversation traces as evidence, not prompt stuffing.
 - Keep durable saved memories separate from research/library documents.
-- Maintain structured memory metadata: kind, status, claim key, scope, subject,
-  keywords, confidence, evidence, and receipts.
+- Maintain structured memory metadata: kind, status, claim key, scope, domain,
+  subject, predicate, value, source quote, write intent, durability score, future
+  usefulness score, sensitivity, keywords, confidence, evidence, and receipts.
 - Expand memory kinds across identity, preferences, projects, appointments,
   relationships, commitments, procedures, instructions, corrections, summaries,
   gist, trace, and archive.
 - Use deterministic extraction for explicit user commands and high-confidence
   patterns.
-- Add LLM-assisted candidate extraction later, but require strict JSON schema
-  validation, evidence checks, conflict checks, and admission-gate approval.
+- Use conservative implicit candidate proposal after the user turn for narrow,
+  source-backed project/routine continuity without blocking first-token latency.
+- Add local-model candidate extraction later behind an experimental setting, but
+  require strict JSON validation, exact source quotes, evidence checks, conflict
+  checks, and admission-gate approval.
 - Keep deterministic chat-driven forget/update commands that tombstone or
   supersede durable memories instead of writing correction text as a new fact.
 - Add a stricter conflict review UI for ambiguous same-key facts that should not
   auto-supersede.
+- Expand the current Memory panel beyond Active/Review/Inactive/All into a full
+  approve/reject/edit review workflow for quarantined and conflicted claims.
 - Add rolling daily, chat, and project summaries so Synapse can answer what was
   discussed yesterday or where a project was left.
 - Add project memory spaces similar to Claude project memory.
@@ -216,7 +224,8 @@ Goal: share one solid core between Synapse AI and later characters/products.
 
 1. Finish phone QA of the current chat/prompt/diagnostics stabilization slice.
 2. Harden attachment persistence and debug export coverage.
-3. Memory V6 LLM-assisted extraction, conflict handling, and summaries.
+3. Memory V8 review workflows, summaries, and experimental local-model
+   candidate extraction.
 4. Offline voice selection and local speaker voice import.
 5. Full offline Voice Mode.
 6. Library core schema and text/Markdown ingestion.

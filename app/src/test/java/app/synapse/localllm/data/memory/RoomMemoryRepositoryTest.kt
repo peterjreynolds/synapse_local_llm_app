@@ -9,11 +9,13 @@ import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.ids.TraceEventId
 import app.synapse.localllm.domain.memory.MemoryClaimCandidate
+import app.synapse.localllm.domain.memory.MemoryClaimDomain
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.MemoryScope
 import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.MemoryWriteDecision
+import app.synapse.localllm.domain.memory.MemoryWriteIntent
 import app.synapse.localllm.domain.memory.MemoryWriteOutcome
 import app.synapse.localllm.domain.memory.MemoryWriteReceipt
 import app.synapse.localllm.domain.memory.SurfacePolicy
@@ -177,7 +179,7 @@ class RoomMemoryRepositoryTest {
             kind = MemoryKind.IDENTITY,
             subject = "User",
             keywords = listOf("identity", "full", "name"),
-            claimKey = "user.full_name",
+            claimKey = "user.identity.self.full_name",
         )
 
         val receipt = writeDurableMemory(
@@ -185,7 +187,7 @@ class RoomMemoryRepositoryTest {
             kind = MemoryKind.IDENTITY,
             subject = "User",
             keywords = listOf("identity", "full", "name"),
-            claimKey = "user.full_name",
+            claimKey = "user.identity.self.full_name",
         )
 
         assertEquals(MemoryWriteOutcome.MEMORY_SUPERSEDED, receipt.outcome)
@@ -195,7 +197,7 @@ class RoomMemoryRepositoryTest {
         )
         assertEquals(1, retrievalBundle.refs.size)
         assertEquals("User's full name is Peter Joseph Reynolds.", retrievalBundle.refs.single().text)
-        assertEquals("user.full_name", retrievalBundle.refs.single().claimKey)
+        assertEquals("user.identity.self.full_name", retrievalBundle.refs.single().claimKey)
 
         val inactiveMemories = repository.listMemoriesForReview(MemoryReviewFilter.INACTIVE, limit = 10)
         assertEquals(1, inactiveMemories.size)
@@ -209,14 +211,14 @@ class RoomMemoryRepositoryTest {
             text = "User's favorite food is pizza.",
             kind = MemoryKind.PREFERENCE,
             keywords = listOf("favorite", "food", "pizza"),
-            claimKey = "user.favorite.food",
+            claimKey = "user.preference.food.favorite",
         )
 
         val receipt = writeDurableMemory(
             text = "User's favorite food is pizza.",
             kind = MemoryKind.PREFERENCE,
             keywords = listOf("favorite", "food", "pizza"),
-            claimKey = "user.favorite.food",
+            claimKey = "user.preference.food.favorite",
         )
 
         assertEquals(MemoryWriteOutcome.MEMORY_UPDATED, receipt.outcome)
@@ -226,12 +228,74 @@ class RoomMemoryRepositoryTest {
     }
 
     @Test
+    fun quarantinedMemoryIsReviewableButNotPromptVisible() = runTest {
+        val receipt = writeDurableMemory(
+            text = "User's address is 123 Example Street.",
+            kind = MemoryKind.IDENTITY,
+            domain = MemoryClaimDomain.IDENTITY,
+            subject = "self",
+            predicate = "address",
+            value = "123 Example Street",
+            keywords = listOf("identity", "address"),
+            claimKey = "user.identity.self.address",
+            requestedOutcome = MemoryWriteOutcome.REQUIRES_CONFIRMATION,
+        )
+
+        assertEquals(MemoryWriteOutcome.REQUIRES_CONFIRMATION, receipt.outcome)
+        assertTrue(repository.retrieveMemories("What is my address?", limit = 5).refs.isEmpty())
+
+        val reviewMemories = repository.listMemoriesForReview(MemoryReviewFilter.REVIEW_NEEDED, limit = 10)
+        assertEquals(1, reviewMemories.size)
+        assertEquals(MemoryStatus.QUARANTINED, reviewMemories.single().status)
+        assertEquals("address", reviewMemories.single().predicate)
+    }
+
+    @Test
+    fun implicitConflictGoesToReviewWithoutReplacingActiveClaim() = runTest {
+        writeDurableMemory(
+            text = "For Stuart, diarization is the main priority.",
+            kind = MemoryKind.PROJECT,
+            domain = MemoryClaimDomain.PROJECT,
+            scope = MemoryScope.PROJECT,
+            subject = "Stuart",
+            predicate = "priority",
+            value = "diarization is the main priority",
+            keywords = listOf("stuart", "diarization", "priority"),
+            claimKey = "project.project.stuart.priority",
+        )
+
+        val receipt = writeDurableMemory(
+            text = "For Stuart, visual design is the main priority.",
+            kind = MemoryKind.PROJECT,
+            domain = MemoryClaimDomain.PROJECT,
+            scope = MemoryScope.PROJECT,
+            subject = "Stuart",
+            predicate = "priority",
+            value = "visual design is the main priority",
+            keywords = listOf("stuart", "visual", "design", "priority"),
+            claimKey = "project.project.stuart.priority",
+            requestedOutcome = MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN,
+            writeIntent = MemoryWriteIntent.IMPLICIT_CANDIDATE,
+        )
+
+        assertEquals(MemoryWriteOutcome.QUARANTINED, receipt.outcome)
+        val activeMemories = repository.listMemoriesForReview(MemoryReviewFilter.ACTIVE, limit = 10)
+        assertEquals(1, activeMemories.size)
+        assertEquals("For Stuart, diarization is the main priority.", activeMemories.single().text)
+
+        val reviewMemories = repository.listMemoriesForReview(MemoryReviewFilter.REVIEW_NEEDED, limit = 10)
+        assertEquals(1, reviewMemories.size)
+        assertEquals(MemoryStatus.CONFLICTED, reviewMemories.single().status)
+        assertEquals("For Stuart, visual design is the main priority.", reviewMemories.single().text)
+    }
+
+    @Test
     fun tombstoneMatchingMemoriesRemovesMemoryFromPromptRetrieval() = runTest {
         writeDurableMemory(
             text = "User's favorite food is sushi.",
             kind = MemoryKind.PREFERENCE,
             keywords = listOf("favorite", "food", "sushi"),
-            claimKey = "user.favorite.food",
+            claimKey = "user.preference.food.favorite",
         )
         val traceEvent = TraceEventRecord(
             id = TraceEventId("trace-delete"),
@@ -258,10 +322,15 @@ class RoomMemoryRepositoryTest {
     private suspend fun writeDurableMemory(
         text: String,
         kind: MemoryKind = MemoryKind.PREFERENCE,
+        domain: MemoryClaimDomain = MemoryClaimDomain.fromKind(kind),
         scope: MemoryScope = MemoryScope.GLOBAL,
         subject: String? = null,
+        predicate: String? = null,
+        value: String? = null,
         keywords: List<String> = emptyList(),
         claimKey: String? = null,
+        requestedOutcome: MemoryWriteOutcome = MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN,
+        writeIntent: MemoryWriteIntent = MemoryWriteIntent.EXPLICIT_SAVE,
     ): MemoryWriteReceipt {
         val traceEvent = TraceEventRecord(
             id = TraceEventId("trace-${clock.tickCount}"),
@@ -274,7 +343,7 @@ class RoomMemoryRepositoryTest {
         return repository.persistMemoryDecision(
             traceEvent = traceEvent,
             decision = MemoryWriteDecision(
-                outcome = MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN,
+                outcome = requestedOutcome,
                 candidate = MemoryClaimCandidate(
                     kind = kind,
                     text = text,
@@ -283,7 +352,12 @@ class RoomMemoryRepositoryTest {
                     surfacePolicy = SurfacePolicy.PROMPT_VISIBLE,
                     reasonCodes = listOf("test-memory"),
                     scope = scope,
+                    domain = domain,
                     subject = subject,
+                    predicate = predicate,
+                    value = value,
+                    sourceQuote = traceEvent.text,
+                    writeIntent = writeIntent,
                     keywords = keywords,
                     claimKey = claimKey,
                 ),

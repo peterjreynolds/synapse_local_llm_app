@@ -16,13 +16,16 @@ import app.synapse.localllm.domain.ids.MemoryVersionId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.ids.TraceEventId
 import app.synapse.localllm.domain.memory.MemoryClaimCandidate
+import app.synapse.localllm.domain.memory.MemoryClaimDomain
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.MemoryRepository
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.MemoryScope
+import app.synapse.localllm.domain.memory.MemorySensitivity
 import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.MemoryVersionRecord
 import app.synapse.localllm.domain.memory.MemoryWriteDecision
+import app.synapse.localllm.domain.memory.MemoryWriteIntent
 import app.synapse.localllm.domain.memory.MemoryWriteOutcome
 import app.synapse.localllm.domain.memory.MemoryWriteReceipt
 import app.synapse.localllm.domain.memory.RetrievalBundle
@@ -55,10 +58,11 @@ class RoomMemoryRepository(
 
         database.withTransaction {
             val acceptedCandidate = decision.candidate
-                ?.takeIf { decision.outcome == MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN }
+                ?.takeIf { decision.outcome in persistableWriteOutcomes }
             if (acceptedCandidate != null) {
-                val writeResult = persistAcceptedMemoryCandidate(
+                val writeResult = persistMemoryCandidate(
                     candidate = acceptedCandidate,
+                    requestedOutcome = decision.outcome,
                     decidedAt = decidedAt,
                 )
                 receiptOutcome = writeResult.outcome
@@ -221,8 +225,9 @@ class RoomMemoryRepository(
     ): List<RetrievedMemoryRef> {
         val statuses = when (filter) {
             MemoryReviewFilter.ACTIVE -> listOf(MemoryStatus.ACTIVE)
+            MemoryReviewFilter.REVIEW_NEEDED -> reviewNeededStatuses
             MemoryReviewFilter.INACTIVE -> inactiveReviewStatuses
-            MemoryReviewFilter.ALL -> listOf(MemoryStatus.ACTIVE) + inactiveReviewStatuses
+            MemoryReviewFilter.ALL -> listOf(MemoryStatus.ACTIVE) + reviewNeededStatuses + inactiveReviewStatuses
         }.map { status -> status.name }
 
         return memoryDao.listLatestVersionsByStatuses(
@@ -281,11 +286,18 @@ class RoomMemoryRepository(
         )
     }
 
-    private suspend fun persistAcceptedMemoryCandidate(
+    private suspend fun persistMemoryCandidate(
         candidate: MemoryClaimCandidate,
+        requestedOutcome: MemoryWriteOutcome,
         decidedAt: Instant,
     ): PersistedMemoryWriteResult {
         val normalizedClaimKey = candidate.claimKey?.trim()?.takeIf { claimKey -> claimKey.isNotBlank() }
+        val reviewStatus = when (requestedOutcome) {
+            MemoryWriteOutcome.QUARANTINED,
+            MemoryWriteOutcome.REQUIRES_CONFIRMATION,
+            -> MemoryStatus.QUARANTINED
+            else -> null
+        }
         val activeSameClaim = normalizedClaimKey
             ?.let { claimKey ->
                 memoryDao.listActiveVersionsByClaimKey(
@@ -298,7 +310,7 @@ class RoomMemoryRepository(
             existingMemory.objectKind == candidate.kind.name &&
                 normalizeClaimText(existingMemory.version.text) == normalizeClaimText(candidate.text)
         }
-        if (exactActiveMatch != null) {
+        if (exactActiveMatch != null && requestedOutcome == MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN) {
             val refreshedVersionId = idFactory.createMemoryVersionId()
             memoryDao.updateMemoryStatus(
                 memoryObjectId = exactActiveMatch.version.memoryObjectId,
@@ -318,6 +330,28 @@ class RoomMemoryRepository(
             )
         }
 
+        if (
+            activeSameClaim.isNotEmpty() &&
+            candidate.writeIntent == MemoryWriteIntent.IMPLICIT_CANDIDATE &&
+            exactActiveMatch == null
+        ) {
+            return persistNewMemoryCandidate(
+                candidate = candidate,
+                status = MemoryStatus.CONFLICTED,
+                outcome = MemoryWriteOutcome.QUARANTINED,
+                decidedAt = decidedAt,
+            )
+        }
+
+        if (reviewStatus != null) {
+            return persistNewMemoryCandidate(
+                candidate = candidate,
+                status = reviewStatus,
+                outcome = requestedOutcome,
+                decidedAt = decidedAt,
+            )
+        }
+
         val supersededMemoryObjectIds = activeSameClaim.map { memory -> memory.version.memoryObjectId }
         if (supersededMemoryObjectIds.isNotEmpty()) {
             memoryDao.updateMemoryStatuses(
@@ -327,13 +361,32 @@ class RoomMemoryRepository(
             )
         }
 
+        return persistNewMemoryCandidate(
+            candidate = candidate,
+            status = MemoryStatus.ACTIVE,
+            outcome = if (supersededMemoryObjectIds.isEmpty()) {
+                MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN
+            } else {
+                MemoryWriteOutcome.MEMORY_SUPERSEDED
+            },
+            decidedAt = decidedAt,
+        )
+    }
+
+    private suspend fun persistNewMemoryCandidate(
+        candidate: MemoryClaimCandidate,
+        status: MemoryStatus,
+        outcome: MemoryWriteOutcome,
+        decidedAt: Instant,
+    ): PersistedMemoryWriteResult {
         val memoryObjectId = idFactory.createMemoryObjectId()
         val memoryVersionId = idFactory.createMemoryVersionId()
+        val normalizedClaimKey = candidate.claimKey?.trim()?.takeIf { claimKey -> claimKey.isNotBlank() }
         memoryDao.upsertMemoryObject(
             MemoryObjectEntity(
                 id = memoryObjectId.raw,
                 kind = candidate.kind.name,
-                status = MemoryStatus.ACTIVE.name,
+                status = status.name,
                 claimKey = normalizedClaimKey,
                 createdAtEpochMillis = decidedAt.toEpochMilli(),
                 updatedAtEpochMillis = decidedAt.toEpochMilli(),
@@ -346,11 +399,7 @@ class RoomMemoryRepository(
             decidedAt = decidedAt,
         )
         return PersistedMemoryWriteResult(
-            outcome = if (supersededMemoryObjectIds.isEmpty()) {
-                MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN
-            } else {
-                MemoryWriteOutcome.MEMORY_SUPERSEDED
-            },
+            outcome = outcome,
             memoryObjectId = memoryObjectId,
             memoryVersionId = memoryVersionId,
         )
@@ -370,7 +419,15 @@ class RoomMemoryRepository(
                 confidence = candidate.confidence,
                 surfacePolicy = candidate.surfacePolicy.name,
                 scope = candidate.scope.name,
+                domain = candidate.domain.name,
                 subject = candidate.subject?.takeIf { subject -> subject.isNotBlank() },
+                predicate = candidate.predicate?.takeIf { predicate -> predicate.isNotBlank() },
+                valueText = candidate.value?.takeIf { value -> value.isNotBlank() },
+                sourceQuote = candidate.sourceQuote?.takeIf { sourceQuote -> sourceQuote.isNotBlank() },
+                writeIntent = candidate.writeIntent.name,
+                durabilityScore = candidate.durabilityScore,
+                futureUsefulnessScore = candidate.futureUsefulnessScore,
+                sensitivity = candidate.sensitivity.name,
                 keywordsCsv = candidate.keywords
                     .map { keyword -> keyword.trim() }
                     .filter { keyword -> keyword.isNotBlank() }
@@ -454,7 +511,15 @@ class RoomMemoryRepository(
             sourceTraceEventIds = supportTraceEventIds.map(::TraceEventId),
             createdAt = Instant.ofEpochMilli(version.createdAtEpochMillis),
             scope = MemoryScope.valueOf(version.scope),
+            domain = parseMemoryClaimDomain(version.domain),
             subject = version.subject,
+            predicate = version.predicate,
+            value = version.valueText,
+            sourceQuote = version.sourceQuote,
+            writeIntent = parseMemoryWriteIntent(version.writeIntent),
+            durabilityScore = version.durabilityScore,
+            futureUsefulnessScore = version.futureUsefulnessScore,
+            sensitivity = parseMemorySensitivity(version.sensitivity),
             keywords = parseKeywordsCsv(version.keywordsCsv),
         )
 
@@ -472,7 +537,15 @@ class RoomMemoryRepository(
             confidence = memoryVersion.confidence,
             reasonCodes = reasonCodes,
             scope = memoryVersion.scope,
+            domain = memoryVersion.domain,
             subject = memoryVersion.subject,
+            predicate = memoryVersion.predicate,
+            value = memoryVersion.value,
+            sourceQuote = memoryVersion.sourceQuote,
+            writeIntent = memoryVersion.writeIntent,
+            durabilityScore = memoryVersion.durabilityScore,
+            futureUsefulnessScore = memoryVersion.futureUsefulnessScore,
+            sensitivity = memoryVersion.sensitivity,
             keywords = memoryVersion.keywords,
             claimKey = objectClaimKey,
             sourceTraceEventIds = memoryVersion.sourceTraceEventIds,
@@ -506,8 +579,19 @@ class RoomMemoryRepository(
             ?.take(MAX_REASON_CODES)
             ?.map { token -> "claim-key:$token" }
             .orEmpty()
+        val domainReasonCodes = buildMetadataReasonCodes(
+            label = "domain",
+            rawValue = versionWithKind.version.domain,
+            queryTokens = queryTokens,
+        )
+        val predicateReasonCodes = buildMetadataReasonCodes(
+            label = "predicate",
+            rawValue = versionWithKind.version.predicate,
+            queryTokens = queryTokens,
+        )
 
-        return (lexicalReasonCodes + intentReasonCodes + claimKeyReasonCodes).distinct()
+        return (lexicalReasonCodes + intentReasonCodes + claimKeyReasonCodes + domainReasonCodes + predicateReasonCodes)
+            .distinct()
     }
 
     private fun buildPromptBlock(candidates: List<RetrievedMemoryRef>): String {
@@ -550,6 +634,8 @@ class RoomMemoryRepository(
                 reasonCode.startsWith("intent:") -> 8.0
                 reasonCode.startsWith("scope:") -> 5.0
                 reasonCode.startsWith("claim-key:") -> 4.0
+                reasonCode.startsWith("domain:") -> 3.5
+                reasonCode.startsWith("predicate:") -> 3.5
                 reasonCode.startsWith("token:") -> 3.0
                 else -> 1.0
             }
@@ -562,10 +648,26 @@ class RoomMemoryRepository(
         listOfNotNull(
             memory.version.text,
             memory.version.subject,
+            memory.version.predicate,
+            memory.version.valueText,
+            memory.version.sourceQuote,
             memory.version.keywordsCsv,
+            memory.version.domain,
             memory.objectClaimKey,
             memory.objectKind,
         ).joinToString(" ")
+
+    private fun buildMetadataReasonCodes(
+        label: String,
+        rawValue: String?,
+        queryTokens: Set<String>,
+    ): List<String> =
+        rawValue
+            ?.let(::tokenize)
+            ?.intersect(queryTokens)
+            ?.take(MAX_REASON_CODES)
+            ?.map { token -> "$label:$token" }
+            .orEmpty()
 
     private fun matchesTombstoneQuery(
         query: String,
@@ -590,6 +692,8 @@ class RoomMemoryRepository(
         when (outcome) {
             MemoryWriteOutcome.MEMORY_UPDATED -> "$originalReason Existing claim refreshed."
             MemoryWriteOutcome.MEMORY_SUPERSEDED -> "$originalReason Older active claim superseded."
+            MemoryWriteOutcome.QUARANTINED -> "$originalReason Candidate stored for memory review."
+            MemoryWriteOutcome.REQUIRES_CONFIRMATION -> "$originalReason Candidate stored for confirmation."
             else -> originalReason
         }
 
@@ -598,6 +702,15 @@ class RoomMemoryRepository(
             .split(",")
             .map { keyword -> keyword.trim() }
             .filter { keyword -> keyword.isNotBlank() }
+
+    private fun parseMemoryClaimDomain(rawDomain: String): MemoryClaimDomain =
+        MemoryClaimDomain.entries.firstOrNull { domain -> domain.name == rawDomain } ?: MemoryClaimDomain.GIST
+
+    private fun parseMemoryWriteIntent(rawWriteIntent: String): MemoryWriteIntent =
+        MemoryWriteIntent.entries.firstOrNull { intent -> intent.name == rawWriteIntent } ?: MemoryWriteIntent.EXPLICIT_SAVE
+
+    private fun parseMemorySensitivity(rawSensitivity: String): MemorySensitivity =
+        MemorySensitivity.entries.firstOrNull { sensitivity -> sensitivity.name == rawSensitivity } ?: MemorySensitivity.LOW
 
     private fun tokenize(text: String): Set<String> =
         text.lowercase()
@@ -624,9 +737,16 @@ class RoomMemoryRepository(
         val inactiveReviewStatuses = listOf(
             MemoryStatus.ARCHIVED,
             MemoryStatus.SUPERSEDED,
+            MemoryStatus.TOMBSTONED,
+        )
+        val reviewNeededStatuses = listOf(
             MemoryStatus.CONFLICTED,
             MemoryStatus.QUARANTINED,
-            MemoryStatus.TOMBSTONED,
+        )
+        val persistableWriteOutcomes = setOf(
+            MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN,
+            MemoryWriteOutcome.QUARANTINED,
+            MemoryWriteOutcome.REQUIRES_CONFIRMATION,
         )
         val nonWordPattern = Regex("[^a-z0-9']+")
         val stopWords = setOf(

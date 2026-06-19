@@ -1663,6 +1663,7 @@ private fun MemoryPanel(
                 Text(
                     text = when (state.memoryReviewFilter) {
                         MemoryReviewFilter.ACTIVE -> "No active memories found."
+                        MemoryReviewFilter.REVIEW_NEEDED -> "No memories need review."
                         MemoryReviewFilter.INACTIVE -> "No inactive memories found."
                         MemoryReviewFilter.ALL -> "No memories found."
                     },
@@ -1731,6 +1732,17 @@ private fun MemoryResultRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall,
                 )
+                memory.sourceQuote
+                    ?.takeIf { sourceQuote -> sourceQuote.isNotBlank() }
+                    ?.let { sourceQuote ->
+                        Text(
+                            text = "Source: $sourceQuote",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
             }
             if (memory.status == MemoryStatus.ACTIVE) {
                 IconButton(onClick = { onTombstoneMemory(memory) }) {
@@ -2466,12 +2478,11 @@ private fun MemoryKind.toDisplayLabel(): String =
     }
 
 private fun MemoryReviewFilter.toDisplayLabel(): String =
-    name.lowercase().replaceFirstChar { firstCharacter ->
-        if (firstCharacter.isLowerCase()) {
-            firstCharacter.titlecase()
-        } else {
-            firstCharacter.toString()
-        }
+    when (this) {
+        MemoryReviewFilter.ACTIVE -> "Active"
+        MemoryReviewFilter.REVIEW_NEEDED -> "Review"
+        MemoryReviewFilter.INACTIVE -> "Inactive"
+        MemoryReviewFilter.ALL -> "All"
     }
 
 private fun buildMemoryMetadataLabel(memory: RetrievedMemoryRef): String =
@@ -2479,8 +2490,11 @@ private fun buildMemoryMetadataLabel(memory: RetrievedMemoryRef): String =
         memory.kind.toDisplayLabel(),
         memory.status.name.lowercase(),
         memory.scope.name.lowercase(),
+        memory.domain.name.lowercase(),
         memory.subject?.takeIf { subject -> subject.isNotBlank() },
+        memory.predicate?.takeIf { predicate -> predicate.isNotBlank() },
         memory.claimKey?.takeIf { claimKey -> claimKey.isNotBlank() },
+        memory.sensitivity.name.lowercase(),
         "${(memory.confidence * 100).toInt()}%",
         "evidence ${memory.sourceTraceEventIds.size}",
         memory.rankScore

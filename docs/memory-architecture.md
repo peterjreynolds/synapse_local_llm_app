@@ -7,29 +7,45 @@ The memory pipeline is receipt-backed and app-owned:
 1. Persist chat messages.
 2. Append a user trace event.
 3. Interpret explicit memory commands.
-4. Extract memory candidates from explicit user text when the command is not a
-   delete/forget command.
-5. Check storage health.
-6. Admit or reject each candidate.
-7. Persist a memory write receipt for every outcome.
-8. Retrieve active prompt-visible memories for future prompts.
+4. Extract deterministic memory candidates from explicit user text when the
+   command is not a delete/forget command.
+5. Propose conservative implicit candidates when no explicit deterministic
+   candidate exists.
+6. Normalize every candidate into the same governed claim format.
+7. Check storage health.
+8. Admit, quarantine, require confirmation, trace, or reject each candidate.
+9. Persist a memory write receipt for every outcome.
+10. Retrieve active prompt-visible memories for future prompts.
 
 The local model can be added later as a structured candidate proposer, but it
 must not directly write memory. A model suggestion must still pass schema
 validation, evidence checks, storage checks, and the admission gate before
 Synapse is allowed to say it saved anything.
 
-## Memory V7 Governed Claims
+## Memory V8 Generalized Governed Claims
 
 Synapse now stores memory versions with structured metadata:
 
 - `kind`: identity, preference, project, appointment, relationship, commitment,
   procedure, instruction, correction, summary, gist, archive, or trace.
 - `scope`: global, project, or thread.
+- `domain`: identity, preference, relationship, project, task, appointment,
+  routine, instruction, correction, summary, alias, constraint, workspace, gist,
+  trace, or archive.
 - `subject`: the user, a project, a relationship, or another explicit subject.
+- `predicate`: the normalized relationship being claimed, such as `full_name`,
+  `favorite`, `priority`, `deadline`, or `default`.
+- `value`: the normalized claim value when a single value can be isolated.
+- `sourceQuote`: the user-text span that supports the claim.
+- `writeIntent`: explicit save, explicit correction, implicit candidate,
+  summary, or imported.
+- `durabilityScore` and `futureUsefulnessScore`: conservative admission inputs.
+- `sensitivity`: low, medium, or high.
 - `keywords`: small retrieval hints derived from the source text.
-- `claimKey`: stable key for single-value facts such as `user.full_name` or
-  `user.favorite.food`.
+- `claimKey`: stable key for single-value facts using the generalized shape
+  `<scope>.<domain>.<subject>.<predicate>`, such as
+  `user.identity.self.full_name`, `user.preference.food.favorite`, and
+  `project.project.stuart.priority`.
 - evidence: trace events linked through `memory_supports`.
 - receipts: every write outcome is persisted in `memory_write_receipts`.
 
@@ -54,8 +70,7 @@ reserved for future review flows, and storage-paused writes. Synapse is only
 allowed to claim a save/delete happened after the repository writes a durable
 receipt.
 
-The deterministic extractor is broader than the first narrow preference-only
-pass. It recognizes:
+The deterministic extractor remains the first authority. It recognizes:
 
 - explicit `remember`, `save`, and `don't forget` commands
 - identity facts such as full name, nickname, role, location, or contact fields
@@ -65,6 +80,53 @@ pass. It recognizes:
 - relationships
 - commitments and always/never procedures
 - generic explicit memory requests when no narrower classifier matches
+
+Explicit deterministic candidates are normalized into the same V8 claim shape as
+implicit candidates before admission. Sensitive facts such as addresses, phone
+numbers, emails, credentials, health details, and financial details are not
+silently activated; they require review/confirmation.
+
+## Implicit Candidate Proposal
+
+Synapse now has the first conservative implicit proposer. It is rule-based, not
+a local-model call, and only runs after a user turn when deterministic extraction
+found no explicit candidate. This avoids doubling first-token latency while
+starting the broader ChatGPT/Claude/Gemini-style memory path.
+
+Current implicit coverage is intentionally narrow:
+
+- project continuity statements such as
+  `For Stuart, diarization is the main priority`
+- simple user routine statements such as `I usually ...`
+
+Vague chat such as `that was sick` stays trace-only. Assistant-origin text is
+never extracted as memory.
+
+Implicit candidates pass through `MemoryImplicitScorer`:
+
+- score `>= 0.85`: active durable memory when low-sensitivity and source-backed
+- score `0.55..0.84`: stored as `QUARANTINED` for review
+- score `< 0.55`: `TRACE_ONLY`
+
+Implicit same-key contradictions do not overwrite active memories. They are
+stored as `CONFLICTED` review-needed records, leaving the prior active claim
+prompt-visible until the user resolves it.
+
+## Local-Model Proposer Boundary
+
+`JsonMemoryCandidateParser` defines the future local-model proposer boundary.
+The model may propose strict JSON only. The parser rejects:
+
+- malformed JSON
+- unknown fields
+- unsupported enum values
+- missing `source_quote`
+- quotes that are not exact spans from the user turn
+- assistant-origin text
+
+Parsed proposals are still untrusted. They must pass normalization, storage
+health, admission scoring, conflict policy, and repository receipts before
+Synapse may claim anything was saved.
 
 Forget/delete commands do not create new memories. `PatternMemoryCommandInterpreter`
 routes them to `tombstoneMemoriesMatching`, which marks matching active memories
@@ -101,25 +163,27 @@ does not know instead of guessing.
 The Memory panel is a review surface, not a prompt dump. It can:
 
 - list active memories by default
-- switch between Active, Inactive, and All filters
-- search the current review set
-- show kind, status, scope, subject, claim key, confidence, source evidence
-  count, and retrieval rank where available
+- switch between Active, Review Needed, Inactive, and All filters
+- search the current review set by text, kind, status, scope, domain, subject,
+  predicate, value, source quote, write intent, sensitivity, claim key, or keywords
+- show kind, status, scope, domain, subject, predicate, claim key, sensitivity,
+  confidence, source quote, source evidence count, and retrieval rank where available
 - tombstone active memories through the same repository receipt path
 
-Inactive memories include superseded, conflicted, quarantined, archived, and
-tombstoned claims. They remain available for diagnostics and review but are not
-retrieved into chat prompts.
+Review Needed memories include conflicted and quarantined claims. Inactive
+memories include superseded, archived, and tombstoned claims. They remain
+available for diagnostics and review but are not retrieved into chat prompts.
 
 ## What This Is Not Yet
 
 This is not a full Claude/ChatGPT-class memory system yet. Remaining work:
 
-- LLM-assisted candidate extraction with strict JSON schema validation.
 - Explicit conflict review UI for same-key facts that should not auto-supersede.
 - Rolling daily, chat, and project summaries.
 - Project memory screens and project-scoped review controls.
 - Citations from memory answers back to original chat turns.
+- Local-model implicit proposal behind an experimental setting after phone QA
+  proves latency and JSON quality are acceptable.
 
 ## Storage Guardrail
 

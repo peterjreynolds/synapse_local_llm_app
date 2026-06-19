@@ -3,6 +3,7 @@ package app.synapse.localllm.data.memory
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.TraceEventId
+import app.synapse.localllm.domain.memory.MemoryClaimDomain
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.SurfacePolicy
 import app.synapse.localllm.domain.memory.TraceEventRecord
@@ -36,7 +37,11 @@ class DeterministicMemoryProjectorTest {
 
         assertEquals(MemoryKind.PREFERENCE, candidate.kind)
         assertEquals("User's favorite food is pizza.", candidate.text)
-        assertEquals("user.favorite.food", candidate.claimKey)
+        assertEquals(MemoryClaimDomain.PREFERENCE, candidate.domain)
+        assertEquals("food", candidate.subject)
+        assertEquals("favorite", candidate.predicate)
+        assertEquals("pizza", candidate.value)
+        assertEquals("user.preference.food.favorite", candidate.claimKey)
         assertTrue(candidate.reasonCodes.contains("explicit-user-favorite"))
     }
 
@@ -58,8 +63,11 @@ class DeterministicMemoryProjectorTest {
 
         assertEquals(MemoryKind.IDENTITY, candidate.kind)
         assertEquals("User's full name is Peter Joseph Reynolds.", candidate.text)
-        assertEquals("user.full_name", candidate.claimKey)
-        assertEquals("User", candidate.subject)
+        assertEquals(MemoryClaimDomain.IDENTITY, candidate.domain)
+        assertEquals("user.identity.self.full_name", candidate.claimKey)
+        assertEquals("self", candidate.subject)
+        assertEquals("full name", candidate.predicate)
+        assertEquals("Peter Joseph Reynolds", candidate.value)
         assertTrue(candidate.reasonCodes.contains("explicit-user-identity"))
         assertTrue(candidate.keywords.contains("identity"))
     }

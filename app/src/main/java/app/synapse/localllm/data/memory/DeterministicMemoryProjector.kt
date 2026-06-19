@@ -2,9 +2,12 @@ package app.synapse.localllm.data.memory
 
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.memory.MemoryClaimCandidate
+import app.synapse.localllm.domain.memory.MemoryClaimDomain
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.MemoryProjector
 import app.synapse.localllm.domain.memory.MemoryScope
+import app.synapse.localllm.domain.memory.MemorySensitivity
+import app.synapse.localllm.domain.memory.MemoryWriteIntent
 import app.synapse.localllm.domain.memory.SurfacePolicy
 import app.synapse.localllm.domain.memory.TraceEventRecord
 
@@ -66,8 +69,12 @@ class DeterministicMemoryProjector : MemoryProjector {
             text = "User's favorite $category is $favorite.",
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-favorite",
+            domain = MemoryClaimDomain.PREFERENCE,
+            subject = category,
+            predicate = "favorite",
+            value = favorite,
             keywords = listOf("favorite", category, favorite),
-            claimKey = buildClaimKey("user", "favorite", category),
+            claimKey = buildClaimKey("user", "preference", category, "favorite"),
         )
     }
 
@@ -86,9 +93,13 @@ class DeterministicMemoryProjector : MemoryProjector {
             text = "User's $identityField is $identityValue.",
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-identity",
-            subject = "User",
+            domain = MemoryClaimDomain.IDENTITY,
+            subject = "self",
+            predicate = identityField,
+            value = identityValue,
+            sensitivity = detectIdentitySensitivity(identityField),
             keywords = listOf("identity", "name", identityField, identityValue),
-            claimKey = buildClaimKey("user", identityField),
+            claimKey = buildClaimKey("user", "identity", "self", identityField),
         )
     }
 
@@ -106,8 +117,12 @@ class DeterministicMemoryProjector : MemoryProjector {
             text = appointmentText.ensureSentence(),
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-appointment",
+            domain = MemoryClaimDomain.APPOINTMENT,
+            subject = extractKeywords(appointmentText).take(2).joinToString("_"),
+            predicate = "scheduled",
+            value = appointmentText,
             keywords = extractKeywords(appointmentText) + listOf("appointment", "schedule"),
-            claimKey = buildClaimKey("appointment", extractKeywords(appointmentText).take(4)),
+            claimKey = buildClaimKey(listOf("user", "appointment") + extractKeywords(appointmentText).take(4) + "scheduled"),
         )
     }
 
@@ -132,9 +147,12 @@ class DeterministicMemoryProjector : MemoryProjector {
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-project-context",
             scope = MemoryScope.PROJECT,
+            domain = MemoryClaimDomain.PROJECT,
             subject = projectSubject,
+            predicate = "context",
+            value = projectText,
             keywords = extractKeywords(projectText) + listOf(projectSubject, "project"),
-            claimKey = buildClaimKey("project", projectSubject, "context"),
+            claimKey = buildClaimKey("project", "project", projectSubject, "context"),
         )
     }
 
@@ -154,9 +172,12 @@ class DeterministicMemoryProjector : MemoryProjector {
             text = "User's $relationship is $relationshipValue.",
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-relationship",
+            domain = MemoryClaimDomain.RELATIONSHIP,
             subject = relationship,
+            predicate = "name",
+            value = relationshipValue,
             keywords = listOf("relationship", relationship, relationshipValue),
-            claimKey = buildClaimKey("user", "relationship", relationship),
+            claimKey = buildClaimKey("user", "relationship", relationship, "name"),
         )
     }
 
@@ -175,8 +196,12 @@ class DeterministicMemoryProjector : MemoryProjector {
             text = buildPreferenceText(preferenceVerb, preferenceText),
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-preference",
+            domain = MemoryClaimDomain.PREFERENCE,
+            subject = extractKeywords(preferenceText).take(3).joinToString("_"),
+            predicate = preferenceVerb,
+            value = preferenceText,
             keywords = extractKeywords(preferenceText) + preferenceVerb,
-            claimKey = buildClaimKey(listOf("user", "preference") + extractKeywords(preferenceText).take(3)),
+            claimKey = buildClaimKey(listOf("user", "preference") + extractKeywords(preferenceText).take(3) + preferenceVerb),
         )
     }
 
@@ -191,8 +216,12 @@ class DeterministicMemoryProjector : MemoryProjector {
             text = cleanMemorySegment(match.value).ensureSentence(),
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-commitment",
+            domain = MemoryClaimDomain.TASK,
+            subject = extractKeywords(match.value).take(3).joinToString("_"),
+            predicate = "commitment",
+            value = cleanMemorySegment(match.value),
             keywords = extractKeywords(match.value),
-            claimKey = buildClaimKey("commitment", extractKeywords(match.value).take(4)),
+            claimKey = buildClaimKey(listOf("user", "task") + extractKeywords(match.value).take(4) + "commitment"),
         )
     }
 
@@ -207,8 +236,12 @@ class DeterministicMemoryProjector : MemoryProjector {
             text = cleanMemorySegment(match.value).ensureSentence(),
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-boundary-or-procedure",
+            domain = MemoryClaimDomain.INSTRUCTION,
+            subject = extractKeywords(match.value).take(3).joinToString("_"),
+            predicate = "procedure",
+            value = cleanMemorySegment(match.value),
             keywords = extractKeywords(match.value),
-            claimKey = buildClaimKey(listOf("user", "procedure") + extractKeywords(match.value).take(3)),
+            claimKey = buildClaimKey(listOf("user", "instruction") + extractKeywords(match.value).take(3) + "procedure"),
         )
     }
 
@@ -224,6 +257,10 @@ class DeterministicMemoryProjector : MemoryProjector {
             text = memoryClaim.ensureSentence(),
             traceEvent = traceEvent,
             reasonCodes = reasonCodes + "explicit-user-general-memory",
+            domain = MemoryClaimDomain.GIST,
+            subject = "note",
+            predicate = "gist",
+            value = memoryClaim,
             keywords = extractKeywords(memoryClaim),
         )
     }
@@ -234,7 +271,11 @@ class DeterministicMemoryProjector : MemoryProjector {
         traceEvent: TraceEventRecord,
         reasonCodes: List<String>,
         scope: MemoryScope = MemoryScope.GLOBAL,
+        domain: MemoryClaimDomain = MemoryClaimDomain.fromKind(kind),
         subject: String? = null,
+        predicate: String? = null,
+        value: String? = null,
+        sensitivity: MemorySensitivity = MemorySensitivity.LOW,
         keywords: List<String> = emptyList(),
         claimKey: String? = null,
     ): MemoryClaimCandidate =
@@ -246,7 +287,15 @@ class DeterministicMemoryProjector : MemoryProjector {
             surfacePolicy = SurfacePolicy.PROMPT_VISIBLE,
             reasonCodes = reasonCodes.distinct(),
             scope = scope,
+            domain = domain,
             subject = subject?.trim()?.takeIf { normalizedSubject -> normalizedSubject.isNotBlank() },
+            predicate = predicate?.trim()?.takeIf { normalizedPredicate -> normalizedPredicate.isNotBlank() },
+            value = value?.trim()?.takeIf { normalizedValue -> normalizedValue.isNotBlank() },
+            sourceQuote = traceEvent.text.trim().take(MAXIMUM_SOURCE_QUOTE_LENGTH),
+            writeIntent = MemoryWriteIntent.EXPLICIT_SAVE,
+            durabilityScore = DEFAULT_EXPLICIT_SCORE,
+            futureUsefulnessScore = DEFAULT_EXPLICIT_SCORE,
+            sensitivity = sensitivity,
             keywords = keywords
                 .flatMap(::splitKeyword)
                 .map { keyword -> keyword.lowercase() }
@@ -255,6 +304,15 @@ class DeterministicMemoryProjector : MemoryProjector {
                 .take(MAXIMUM_KEYWORDS),
             claimKey = claimKey,
         )
+
+    private fun detectIdentitySensitivity(identityField: String): MemorySensitivity =
+        if (identityField in highSensitivityIdentityFields) {
+            MemorySensitivity.HIGH
+        } else if (identityField in mediumSensitivityIdentityFields) {
+            MemorySensitivity.MEDIUM
+        } else {
+            MemorySensitivity.LOW
+        }
 
     private fun extractExplicitMemoryClaim(normalizedText: String): String? {
         val match = explicitMemoryPattern.find(normalizedText) ?: return null
@@ -335,8 +393,10 @@ class DeterministicMemoryProjector : MemoryProjector {
         const val MINIMUM_MEMORY_TEXT_LENGTH = 8
         const val MINIMUM_KEYWORD_LENGTH = 3
         const val MAXIMUM_MEMORY_TEXT_LENGTH = 280
+        const val MAXIMUM_SOURCE_QUOTE_LENGTH = 500
         const val MAXIMUM_KEYWORDS = 16
         const val DEFAULT_EXPLICIT_CONFIDENCE = 0.95
+        const val DEFAULT_EXPLICIT_SCORE = 1.0
         const val MAXIMUM_CLAIM_KEY_PARTS = 6
 
         val sentenceTerminators = setOf('.', '!', '?')
@@ -424,6 +484,15 @@ class DeterministicMemoryProjector : MemoryProjector {
             "location",
             "job title",
             "role",
+        )
+        val highSensitivityIdentityFields = setOf(
+            "email",
+            "phone number",
+            "address",
+        )
+        val mediumSensitivityIdentityFields = setOf(
+            "birthday",
+            "location",
         )
         val keywordStopWords = setOf(
             "the",

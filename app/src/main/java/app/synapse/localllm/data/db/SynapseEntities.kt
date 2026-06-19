@@ -183,6 +183,10 @@ data class MemoryObjectEntity(
         Index("surfacePolicy"),
         Index("scope"),
         Index("subject"),
+        Index("domain"),
+        Index("predicate"),
+        Index("writeIntent"),
+        Index("sensitivity"),
     ],
 )
 data class MemoryVersionEntity(
@@ -192,7 +196,15 @@ data class MemoryVersionEntity(
     val confidence: Double,
     val surfacePolicy: String,
     val scope: String,
+    val domain: String,
     val subject: String?,
+    val predicate: String?,
+    val valueText: String?,
+    val sourceQuote: String?,
+    val writeIntent: String,
+    val durabilityScore: Double,
+    val futureUsefulnessScore: Double,
+    val sensitivity: String,
     val keywordsCsv: String,
     val createdAtEpochMillis: Long,
 )

@@ -782,7 +782,13 @@ class SynapseViewModel(
             kind.name,
             status.name,
             scope.name,
+            domain.name,
             subject,
+            predicate,
+            value,
+            sourceQuote,
+            writeIntent.name,
+            sensitivity.name,
             claimKey,
             keywords.joinToString(" "),
         ).any { searchableText ->
