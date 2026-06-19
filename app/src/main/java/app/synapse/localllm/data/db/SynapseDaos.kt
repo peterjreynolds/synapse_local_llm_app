@@ -314,6 +314,42 @@ interface MemoryDao {
 
     @Query(
         """
+        SELECT v.*, o.kind AS objectKind, o.status AS objectStatus, o.claimKey AS objectClaimKey
+        FROM memory_versions v
+        INNER JOIN memory_objects o ON o.id = v.memoryObjectId
+        WHERE o.claimKey = :claimKey
+          AND v.id = (
+              SELECT v2.id
+              FROM memory_versions v2
+              WHERE v2.memoryObjectId = o.id
+              ORDER BY v2.createdAtEpochMillis DESC, v2.id DESC
+              LIMIT 1
+          )
+        ORDER BY v.createdAtEpochMillis DESC
+        """,
+    )
+    suspend fun listLatestVersionsByClaimKey(claimKey: String): List<MemoryVersionWithKind>
+
+    @Query(
+        """
+        SELECT v.*, o.kind AS objectKind, o.status AS objectStatus, o.claimKey AS objectClaimKey
+        FROM memory_versions v
+        INNER JOIN memory_objects o ON o.id = v.memoryObjectId
+        WHERE o.id = :memoryObjectId
+          AND v.id = (
+              SELECT v2.id
+              FROM memory_versions v2
+              WHERE v2.memoryObjectId = o.id
+              ORDER BY v2.createdAtEpochMillis DESC, v2.id DESC
+              LIMIT 1
+          )
+        LIMIT 1
+        """,
+    )
+    suspend fun findLatestVersionByMemoryObjectId(memoryObjectId: String): MemoryVersionWithKind?
+
+    @Query(
+        """
         SELECT traceEventId FROM memory_supports
         WHERE memoryVersionId = :memoryVersionId
         ORDER BY traceEventId ASC

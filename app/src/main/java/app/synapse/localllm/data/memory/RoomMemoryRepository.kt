@@ -34,6 +34,7 @@ import app.synapse.localllm.domain.memory.SurfacePolicy
 import app.synapse.localllm.domain.memory.TraceEventRecord
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
+import java.util.Locale
 
 class RoomMemoryRepository(
     private val database: SynapseDatabase,
@@ -69,6 +70,11 @@ class RoomMemoryRepository(
                 receiptMemoryObjectId = writeResult.memoryObjectId
                 receiptMemoryVersionId = writeResult.memoryVersionId
             }
+            val receiptReason = buildWriteReceiptReason(
+                originalReason = decision.reason,
+                outcome = receiptOutcome,
+                candidate = decision.candidate,
+            )
             memoryDao.upsertMemoryWriteReceipt(
                 MemoryWriteReceiptEntity(
                     id = receiptId.raw,
@@ -77,11 +83,16 @@ class RoomMemoryRepository(
                     memoryObjectId = receiptMemoryObjectId?.raw,
                     memoryVersionId = receiptMemoryVersionId?.raw,
                     decidedAtEpochMillis = decidedAt.toEpochMilli(),
-                    reason = buildWriteReceiptReason(decision.reason, receiptOutcome),
+                    reason = receiptReason,
                 ),
             )
         }
 
+        val receiptReason = buildWriteReceiptReason(
+            originalReason = decision.reason,
+            outcome = receiptOutcome,
+            candidate = decision.candidate,
+        )
         return MemoryWriteReceipt(
             id = receiptId,
             outcome = receiptOutcome,
@@ -89,7 +100,7 @@ class RoomMemoryRepository(
             memoryObjectId = receiptMemoryObjectId,
             memoryVersionId = receiptMemoryVersionId,
             decidedAt = decidedAt,
-            reason = buildWriteReceiptReason(decision.reason, receiptOutcome),
+            reason = receiptReason,
         )
     }
 
@@ -126,6 +137,70 @@ class RoomMemoryRepository(
             memoryVersionId = null,
             decidedAt = decidedAt,
             reason = reason,
+        )
+    }
+
+    override suspend fun activateMemory(
+        memoryObjectId: MemoryObjectId,
+        reason: String,
+    ): MemoryWriteReceipt {
+        val decidedAt = clock.now()
+        val receiptId = idFactory.createReceiptId()
+        var receiptOutcome = MemoryWriteOutcome.MEMORY_ACTIVATED
+        var receiptVersionId: MemoryVersionId? = null
+        database.withTransaction {
+            val targetMemory = memoryDao.findLatestVersionByMemoryObjectId(memoryObjectId.raw)
+            val targetStatus = targetMemory?.let { memory -> MemoryStatus.valueOf(memory.objectStatus) }
+            if (targetMemory == null || targetStatus !in reviewNeededStatuses) {
+                receiptOutcome = MemoryWriteOutcome.REJECTED
+            } else {
+                receiptVersionId = MemoryVersionId(targetMemory.version.id)
+                val activeSameClaim = targetMemory.objectClaimKey
+                    ?.let { claimKey -> memoryDao.listActiveVersionsByClaimKey(MemoryStatus.ACTIVE.name, claimKey) }
+                    .orEmpty()
+                    .filterNot { memory -> memory.version.memoryObjectId == memoryObjectId.raw }
+                if (activeSameClaim.isNotEmpty()) {
+                    memoryDao.updateMemoryStatuses(
+                        memoryObjectIds = activeSameClaim.map { memory -> memory.version.memoryObjectId },
+                        status = MemoryStatus.SUPERSEDED.name,
+                        updatedAtEpochMillis = decidedAt.toEpochMilli(),
+                    )
+                }
+                memoryDao.updateMemoryStatus(
+                    memoryObjectId = memoryObjectId.raw,
+                    status = MemoryStatus.ACTIVE.name,
+                    updatedAtEpochMillis = decidedAt.toEpochMilli(),
+                )
+            }
+            memoryDao.upsertMemoryWriteReceipt(
+                MemoryWriteReceiptEntity(
+                    id = receiptId.raw,
+                    outcome = receiptOutcome.name,
+                    traceEventId = null,
+                    memoryObjectId = memoryObjectId.raw,
+                    memoryVersionId = receiptVersionId?.raw,
+                    decidedAtEpochMillis = decidedAt.toEpochMilli(),
+                    reason = if (receiptOutcome == MemoryWriteOutcome.REJECTED) {
+                        "Memory activation rejected; memory is missing or not awaiting review."
+                    } else {
+                        reason
+                    },
+                ),
+            )
+        }
+
+        return MemoryWriteReceipt(
+            id = receiptId,
+            outcome = receiptOutcome,
+            traceEventId = null,
+            memoryObjectId = memoryObjectId,
+            memoryVersionId = receiptVersionId,
+            decidedAt = decidedAt,
+            reason = if (receiptOutcome == MemoryWriteOutcome.REJECTED) {
+                "Memory activation rejected; memory is missing or not awaiting review."
+            } else {
+                reason
+            },
         )
     }
 
@@ -298,14 +373,11 @@ class RoomMemoryRepository(
             -> MemoryStatus.QUARANTINED
             else -> null
         }
-        val activeSameClaim = normalizedClaimKey
-            ?.let { claimKey ->
-                memoryDao.listActiveVersionsByClaimKey(
-                    activeStatus = MemoryStatus.ACTIVE.name,
-                    claimKey = claimKey,
-                )
-            }
+        val sameClaim = normalizedClaimKey
+            ?.let { claimKey -> memoryDao.listLatestVersionsByClaimKey(claimKey) }
             .orEmpty()
+        val activeSameClaim = sameClaim
+            .filter { memory -> MemoryStatus.valueOf(memory.objectStatus) == MemoryStatus.ACTIVE }
         val exactActiveMatch = activeSameClaim.firstOrNull { existingMemory ->
             existingMemory.objectKind == candidate.kind.name &&
                 normalizeClaimText(existingMemory.version.text) == normalizeClaimText(candidate.text)
@@ -328,6 +400,40 @@ class RoomMemoryRepository(
                 memoryObjectId = MemoryObjectId(exactActiveMatch.version.memoryObjectId),
                 memoryVersionId = refreshedVersionId,
             )
+        }
+
+        val shouldPersistForReview =
+            reviewStatus != null ||
+                (
+                    activeSameClaim.isNotEmpty() &&
+                        candidate.writeIntent == MemoryWriteIntent.IMPLICIT_CANDIDATE &&
+                        exactActiveMatch == null
+                    )
+        if (shouldPersistForReview) {
+            val exactReviewMatch = sameClaim.firstOrNull { existingMemory ->
+                MemoryStatus.valueOf(existingMemory.objectStatus) in reviewNeededStatuses &&
+                    existingMemory.objectKind == candidate.kind.name &&
+                    normalizeClaimText(existingMemory.version.text) == normalizeClaimText(candidate.text)
+            }
+            if (exactReviewMatch != null) {
+                val refreshedVersionId = idFactory.createMemoryVersionId()
+                memoryDao.updateMemoryStatus(
+                    memoryObjectId = exactReviewMatch.version.memoryObjectId,
+                    status = exactReviewMatch.objectStatus,
+                    updatedAtEpochMillis = decidedAt.toEpochMilli(),
+                )
+                upsertMemoryVersionWithSupports(
+                    memoryObjectId = MemoryObjectId(exactReviewMatch.version.memoryObjectId),
+                    memoryVersionId = refreshedVersionId,
+                    candidate = candidate,
+                    decidedAt = decidedAt,
+                )
+                return PersistedMemoryWriteResult(
+                    outcome = MemoryWriteOutcome.MEMORY_UPDATED,
+                    memoryObjectId = MemoryObjectId(exactReviewMatch.version.memoryObjectId),
+                    memoryVersionId = refreshedVersionId,
+                )
+            }
         }
 
         if (
@@ -688,14 +794,45 @@ class RoomMemoryRepository(
     private fun buildWriteReceiptReason(
         originalReason: String,
         outcome: MemoryWriteOutcome,
-    ): String =
-        when (outcome) {
+        candidate: MemoryClaimCandidate? = null,
+    ): String {
+        val outcomeReason = when (outcome) {
             MemoryWriteOutcome.MEMORY_UPDATED -> "$originalReason Existing claim refreshed."
             MemoryWriteOutcome.MEMORY_SUPERSEDED -> "$originalReason Older active claim superseded."
             MemoryWriteOutcome.QUARANTINED -> "$originalReason Candidate stored for memory review."
             MemoryWriteOutcome.REQUIRES_CONFIRMATION -> "$originalReason Candidate stored for confirmation."
             else -> originalReason
         }
+        val candidateSummary = candidate
+            ?.takeIf { outcome in diagnosticCandidateOutcomes }
+            ?.let(::buildCandidateReceiptSummary)
+            .orEmpty()
+        return outcomeReason + candidateSummary
+    }
+
+    private fun buildCandidateReceiptSummary(candidate: MemoryClaimCandidate): String {
+        val sourcePreview = if (candidate.sensitivity == MemorySensitivity.HIGH) {
+            "source=redacted-sensitive"
+        } else {
+            "source=\"${previewReceiptText(candidate.sourceQuote ?: candidate.text)}\""
+        }
+        val confidence = String.format(Locale.US, "%.2f", candidate.confidence)
+        return " Candidate: kind=${candidate.kind.name}, " +
+            "domain=${candidate.domain.name}, " +
+            "subject=${candidate.subject.orEmpty()}, " +
+            "predicate=${candidate.predicate.orEmpty()}, " +
+            "claimKey=${candidate.claimKey.orEmpty()}, " +
+            "intent=${candidate.writeIntent.name}, " +
+            "sensitivity=${candidate.sensitivity.name}, " +
+            "confidence=$confidence, " +
+            "$sourcePreview."
+    }
+
+    private fun previewReceiptText(rawText: String): String =
+        rawText
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(MAX_RECEIPT_PREVIEW_LENGTH)
 
     private fun parseKeywordsCsv(keywordsCsv: String): List<String> =
         keywordsCsv
@@ -733,6 +870,7 @@ class RoomMemoryRepository(
         const val MINIMUM_TOKEN_LENGTH = 3
         const val TOMBSTONE_SEARCH_LIMIT = 200
         const val MINIMUM_TOMBSTONE_TOKEN_OVERLAP = 2
+        const val MAX_RECEIPT_PREVIEW_LENGTH = 120
 
         val inactiveReviewStatuses = listOf(
             MemoryStatus.ARCHIVED,
@@ -747,6 +885,11 @@ class RoomMemoryRepository(
             MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN,
             MemoryWriteOutcome.QUARANTINED,
             MemoryWriteOutcome.REQUIRES_CONFIRMATION,
+        )
+        val diagnosticCandidateOutcomes = setOf(
+            MemoryWriteOutcome.REJECTED,
+            MemoryWriteOutcome.TRACE_ONLY,
+            MemoryWriteOutcome.PAUSED_FOR_STORAGE,
         )
         val nonWordPattern = Regex("[^a-z0-9']+")
         val stopWords = setOf(

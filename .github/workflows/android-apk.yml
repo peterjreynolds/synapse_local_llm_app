@@ -35,6 +35,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -65,19 +68,19 @@ jobs:
 
       - name: Run unit tests
         shell: bash
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: bash scripts/ci/run-gradle-with-retry.sh testDebugUnitTest --stacktrace
 
       - name: Run ktlint
         shell: bash
-        run: ./gradlew ktlintCheck --stacktrace
+        run: bash scripts/ci/run-gradle-with-retry.sh ktlintCheck --stacktrace
 
       - name: Run Android lint
         shell: bash
-        run: ./gradlew lintDebug --stacktrace
+        run: bash scripts/ci/run-gradle-with-retry.sh lintDebug --stacktrace
 
       - name: Assemble APK
         shell: bash
-        run: ./gradlew assembleDebug --stacktrace
+        run: bash scripts/ci/run-gradle-with-retry.sh assembleDebug --stacktrace
 
       - name: Verify APK output
         shell: bash

@@ -12,6 +12,7 @@ import app.synapse.localllm.domain.memory.MemoryClaimCandidate
 import app.synapse.localllm.domain.memory.MemoryClaimDomain
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
+import app.synapse.localllm.domain.memory.MemorySensitivity
 import app.synapse.localllm.domain.memory.MemoryScope
 import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.MemoryWriteDecision
@@ -287,6 +288,142 @@ class RoomMemoryRepositoryTest {
         assertEquals(1, reviewMemories.size)
         assertEquals(MemoryStatus.CONFLICTED, reviewMemories.single().status)
         assertEquals("For Stuart, visual design is the main priority.", reviewMemories.single().text)
+    }
+
+    @Test
+    fun repeatedQuarantinedCandidateRefreshesReviewMemoryInsteadOfDuplicating() = runTest {
+        writeDurableMemory(
+            text = "User's address is 123 Example Street.",
+            kind = MemoryKind.IDENTITY,
+            domain = MemoryClaimDomain.IDENTITY,
+            subject = "self",
+            predicate = "address",
+            value = "123 Example Street",
+            keywords = listOf("identity", "address"),
+            claimKey = "user.identity.self.address",
+            requestedOutcome = MemoryWriteOutcome.REQUIRES_CONFIRMATION,
+        )
+
+        val secondReceipt = writeDurableMemory(
+            text = "User's address is 123 Example Street.",
+            kind = MemoryKind.IDENTITY,
+            domain = MemoryClaimDomain.IDENTITY,
+            subject = "self",
+            predicate = "address",
+            value = "123 Example Street",
+            keywords = listOf("identity", "address"),
+            claimKey = "user.identity.self.address",
+            requestedOutcome = MemoryWriteOutcome.REQUIRES_CONFIRMATION,
+        )
+
+        assertEquals(MemoryWriteOutcome.MEMORY_UPDATED, secondReceipt.outcome)
+        val reviewMemories = repository.listMemoriesForReview(MemoryReviewFilter.REVIEW_NEEDED, limit = 10)
+        assertEquals(1, reviewMemories.size)
+        assertEquals(MemoryStatus.QUARANTINED, reviewMemories.single().status)
+    }
+
+    @Test
+    fun activatingReviewMemorySupersedesActiveSameClaim() = runTest {
+        writeDurableMemory(
+            text = "For Stuart, diarization is the main priority.",
+            kind = MemoryKind.PROJECT,
+            domain = MemoryClaimDomain.PROJECT,
+            scope = MemoryScope.PROJECT,
+            subject = "Stuart",
+            predicate = "priority",
+            value = "diarization is the main priority",
+            keywords = listOf("stuart", "diarization", "priority"),
+            claimKey = "project.project.stuart.priority",
+        )
+        writeDurableMemory(
+            text = "For Stuart, visual design is the main priority.",
+            kind = MemoryKind.PROJECT,
+            domain = MemoryClaimDomain.PROJECT,
+            scope = MemoryScope.PROJECT,
+            subject = "Stuart",
+            predicate = "priority",
+            value = "visual design is the main priority",
+            keywords = listOf("stuart", "visual", "design", "priority"),
+            claimKey = "project.project.stuart.priority",
+            requestedOutcome = MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN,
+            writeIntent = MemoryWriteIntent.IMPLICIT_CANDIDATE,
+        )
+        val reviewMemory = repository.listMemoriesForReview(MemoryReviewFilter.REVIEW_NEEDED, limit = 10).single()
+
+        val activationReceipt = repository.activateMemory(
+            memoryObjectId = reviewMemory.memoryObjectId,
+            reason = "Approved during test.",
+        )
+
+        assertEquals(MemoryWriteOutcome.MEMORY_ACTIVATED, activationReceipt.outcome)
+        val activeMemories = repository.listMemoriesForReview(MemoryReviewFilter.ACTIVE, limit = 10)
+        assertEquals(1, activeMemories.size)
+        assertEquals("For Stuart, visual design is the main priority.", activeMemories.single().text)
+
+        val inactiveMemories = repository.listMemoriesForReview(MemoryReviewFilter.INACTIVE, limit = 10)
+        assertEquals(1, inactiveMemories.size)
+        assertEquals(MemoryStatus.SUPERSEDED, inactiveMemories.single().status)
+        assertEquals("For Stuart, diarization is the main priority.", inactiveMemories.single().text)
+    }
+
+    @Test
+    fun activatingActiveMemoryIsRejected() = runTest {
+        writeDurableMemory(
+            text = "User's favorite food is pizza.",
+            kind = MemoryKind.PREFERENCE,
+            keywords = listOf("favorite", "food", "pizza"),
+            claimKey = "user.preference.food.favorite",
+        )
+        val activeMemory = repository.listMemoriesForReview(MemoryReviewFilter.ACTIVE, limit = 10).single()
+
+        val activationReceipt = repository.activateMemory(
+            memoryObjectId = activeMemory.memoryObjectId,
+            reason = "Approved during test.",
+        )
+
+        assertEquals(MemoryWriteOutcome.REJECTED, activationReceipt.outcome)
+        assertTrue(activationReceipt.reason.contains("not awaiting review"))
+    }
+
+    @Test
+    fun rejectedHighSensitivityCandidateReceiptRedactsSourceQuote() = runTest {
+        val traceEvent = TraceEventRecord(
+            id = TraceEventId("trace-sensitive"),
+            sourceMessageId = ChatMessageId("message-sensitive"),
+            role = ConversationRole.USER,
+            text = "My address is 123 Example Street.",
+            observedAt = clock.now(),
+        )
+        repository.appendTraceEvent(traceEvent)
+
+        val receipt = repository.persistMemoryDecision(
+            traceEvent = traceEvent,
+            decision = MemoryWriteDecision(
+                outcome = MemoryWriteOutcome.REJECTED,
+                candidate = MemoryClaimCandidate(
+                    kind = MemoryKind.IDENTITY,
+                    text = "User's address is 123 Example Street.",
+                    confidence = 0.20,
+                    sourceTraceEventIds = listOf(traceEvent.id),
+                    surfacePolicy = SurfacePolicy.PROMPT_VISIBLE,
+                    reasonCodes = listOf("test-rejected"),
+                    domain = MemoryClaimDomain.IDENTITY,
+                    subject = "self",
+                    predicate = "address",
+                    value = "123 Example Street",
+                    sourceQuote = "My address is 123 Example Street.",
+                    sensitivity = MemorySensitivity.HIGH,
+                    claimKey = "user.identity.self.address",
+                ),
+                reason = "Rejected by test.",
+                storageHealthSnapshot = null,
+            ),
+        )
+
+        assertEquals(MemoryWriteOutcome.REJECTED, receipt.outcome)
+        assertTrue(receipt.reason.contains("Candidate: kind=IDENTITY"))
+        assertTrue(receipt.reason.contains("source=redacted-sensitive"))
+        assertTrue(!receipt.reason.contains("123 Example Street"))
     }
 
     @Test

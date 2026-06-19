@@ -18,9 +18,11 @@ class DeterministicMemoryProjector : MemoryProjector {
         val normalizedText = traceEvent.text.trim().replace(Regex("\\s+"), " ")
         if (normalizedText.length < MINIMUM_MEMORY_TEXT_LENGTH) return emptyList()
 
-        if (forgetPattern.containsMatchIn(normalizedText)) return emptyList()
-
+        if (!positiveDontForgetPattern.containsMatchIn(normalizedText) && forgetPattern.containsMatchIn(normalizedText)) {
+            return emptyList()
+        }
         val explicitMemoryClaim = extractExplicitMemoryClaim(normalizedText)
+
         val textForClassification = explicitMemoryClaim ?: normalizedText
         val explicitReasonCodes = if (explicitMemoryClaim != null) {
             listOf("explicit-user-memory-command")
@@ -413,6 +415,11 @@ class DeterministicMemoryProjector : MemoryProjector {
                 pattern = "\\b(forget|remove\\s+from\\s+memory|delete\\s+(?:that\\s+)?memory|" +
                     "do\\s+not\\s+save|don't\\s+save|do\\s+not\\s+remember|don't\\s+remember|" +
                     "never\\s+save|never\\s+remember)\\b",
+                option = RegexOption.IGNORE_CASE,
+            )
+        val positiveDontForgetPattern =
+            Regex(
+                pattern = "\\bdon't\\s+forget\\b",
                 option = RegexOption.IGNORE_CASE,
             )
         val favoritePattern =

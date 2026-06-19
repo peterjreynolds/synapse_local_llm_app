@@ -58,6 +58,7 @@ import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
@@ -289,6 +290,7 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onMemoryQueryChanged = viewModel::updateMemorySearchQuery,
         onMemoryFilterChanged = viewModel::updateMemoryReviewFilter,
         onMemorySearch = viewModel::searchMemory,
+        onActivateMemory = { memory -> viewModel.activateMemory(memory.memoryObjectId) },
         onTombstoneMemory = { memory -> viewModel.tombstoneMemory(memory.memoryObjectId) },
         onSettingsDraftChanged = viewModel::updateSettingsDraft,
         onSaveSettings = viewModel::saveSettingsDraft,
@@ -336,6 +338,7 @@ private fun SynapseScreen(
     onMemoryQueryChanged: (String) -> Unit,
     onMemoryFilterChanged: (MemoryReviewFilter) -> Unit,
     onMemorySearch: () -> Unit,
+    onActivateMemory: (RetrievedMemoryRef) -> Unit,
     onTombstoneMemory: (RetrievedMemoryRef) -> Unit,
     onSettingsDraftChanged: (RuntimeSettingsDraft) -> Unit,
     onSaveSettings: () -> Unit,
@@ -423,6 +426,7 @@ private fun SynapseScreen(
                             onMemoryQueryChanged = onMemoryQueryChanged,
                             onMemoryFilterChanged = onMemoryFilterChanged,
                             onMemorySearch = onMemorySearch,
+                            onActivateMemory = onActivateMemory,
                             onTombstoneMemory = onTombstoneMemory,
                             onInspectStorage = onInspectStorage,
                         )
@@ -1599,6 +1603,7 @@ private fun MemoryPanel(
     onMemoryQueryChanged: (String) -> Unit,
     onMemoryFilterChanged: (MemoryReviewFilter) -> Unit,
     onMemorySearch: () -> Unit,
+    onActivateMemory: (RetrievedMemoryRef) -> Unit,
     onTombstoneMemory: (RetrievedMemoryRef) -> Unit,
     onInspectStorage: () -> Unit,
 ) {
@@ -1673,7 +1678,11 @@ private fun MemoryPanel(
             }
         }
         items(state.memorySearchResults, key = { memory -> memory.memoryVersionId.raw }) { memory ->
-            MemoryResultRow(memory = memory, onTombstoneMemory = onTombstoneMemory)
+            MemoryResultRow(
+                memory = memory,
+                onActivateMemory = onActivateMemory,
+                onTombstoneMemory = onTombstoneMemory,
+            )
         }
     }
 }
@@ -1712,6 +1721,7 @@ private fun StorageHealthCard(
 @Composable
 private fun MemoryResultRow(
     memory: RetrievedMemoryRef,
+    onActivateMemory: (RetrievedMemoryRef) -> Unit,
     onTombstoneMemory: (RetrievedMemoryRef) -> Unit,
 ) {
     Surface(
@@ -1744,7 +1754,12 @@ private fun MemoryResultRow(
                         )
                     }
             }
-            if (memory.status == MemoryStatus.ACTIVE) {
+            if (memory.status in reviewNeededMemoryStatuses) {
+                IconButton(onClick = { onActivateMemory(memory) }) {
+                    Icon(Icons.Rounded.Check, contentDescription = "Activate memory")
+                }
+            }
+            if (memory.status != MemoryStatus.TOMBSTONED) {
                 IconButton(onClick = { onTombstoneMemory(memory) }) {
                     Icon(Icons.Rounded.Delete, contentDescription = "Delete memory")
                 }
@@ -2556,3 +2571,8 @@ private const val MAX_TEXT_ATTACHMENT_READ_CHARS = 64_000
 private const val KIB = 1024L
 private const val MIB = KIB * 1024L
 private const val GIB = MIB * 1024L
+
+private val reviewNeededMemoryStatuses = setOf(
+    MemoryStatus.CONFLICTED,
+    MemoryStatus.QUARANTINED,
+)

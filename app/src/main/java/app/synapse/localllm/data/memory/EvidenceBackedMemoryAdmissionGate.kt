@@ -46,21 +46,21 @@ class EvidenceBackedMemoryAdmissionGate(
             )
         }
 
-        if (candidate.confidence < MINIMUM_DURABLE_CONFIDENCE) {
-            return MemoryWriteDecision(
-                outcome = MemoryWriteOutcome.REJECTED,
-                candidate = candidate,
-                reason = "Memory candidate confidence is below durable-write threshold.",
-                storageHealthSnapshot = storageHealthSnapshot,
-            )
-        }
-
         if (candidate.writeIntent == MemoryWriteIntent.IMPLICIT_CANDIDATE) {
             val implicitScore = implicitScorer.scoreImplicitMemoryCandidate(candidate)
             return MemoryWriteDecision(
                 outcome = implicitScore.outcome,
                 candidate = candidate,
                 reason = "${implicitScore.reason} Score ${String.format(Locale.US, "%.2f", implicitScore.score)}.",
+                storageHealthSnapshot = storageHealthSnapshot,
+            )
+        }
+
+        if (candidate.confidence < MINIMUM_DURABLE_CONFIDENCE) {
+            return MemoryWriteDecision(
+                outcome = MemoryWriteOutcome.REJECTED,
+                candidate = candidate,
+                reason = "Memory candidate confidence is below durable-write threshold.",
                 storageHealthSnapshot = storageHealthSnapshot,
             )
         }

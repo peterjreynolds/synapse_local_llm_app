@@ -106,6 +106,7 @@ enum class MemoryWriteOutcome {
     MEMORY_UPDATED,
     MEMORY_SUPERSEDED,
     MEMORY_TOMBSTONED,
+    MEMORY_ACTIVATED,
     REQUIRES_CONFIRMATION,
     QUARANTINED,
     REJECTED,
@@ -292,6 +293,8 @@ interface MemoryRepository {
     ): MemoryWriteReceipt
 
     suspend fun tombstoneMemory(memoryObjectId: MemoryObjectId, reason: String): MemoryWriteReceipt
+
+    suspend fun activateMemory(memoryObjectId: MemoryObjectId, reason: String): MemoryWriteReceipt
 
     suspend fun tombstoneMemoriesMatching(
         traceEvent: TraceEventRecord,

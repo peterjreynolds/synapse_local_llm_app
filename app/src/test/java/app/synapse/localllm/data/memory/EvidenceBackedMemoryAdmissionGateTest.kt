@@ -72,6 +72,21 @@ class EvidenceBackedMemoryAdmissionGateTest {
     }
 
     @Test
+    fun routesLowConfidenceImplicitCandidateThroughScorerBeforeDurableConfidenceRejection() {
+        val decision = admissionGate.decideMemoryWrite(
+            candidate = supportedCandidate().copy(
+                writeIntent = MemoryWriteIntent.IMPLICIT_CANDIDATE,
+                confidence = 0.50,
+                durabilityScore = 0.70,
+                futureUsefulnessScore = 0.70,
+            ),
+            storageHealthSnapshot = storageSnapshot(StorageHealthState.HEALTHY),
+        )
+
+        assertEquals(MemoryWriteOutcome.QUARANTINED, decision.outcome)
+    }
+
+    @Test
     fun requiresConfirmationForHighSensitivityCandidate() {
         val decision = admissionGate.decideMemoryWrite(
             candidate = supportedCandidate().copy(sensitivity = MemorySensitivity.HIGH),

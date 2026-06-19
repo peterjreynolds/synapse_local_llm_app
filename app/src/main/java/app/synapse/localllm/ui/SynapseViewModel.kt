@@ -557,20 +557,14 @@ class SynapseViewModel(
         val snapshot = mutableUiState.value
         val query = snapshot.memorySearchQuery
         viewModelScope.launch {
-            val shouldUseReviewList =
-                query.isBlank() || snapshot.memoryReviewFilter != MemoryReviewFilter.ACTIVE
-            val memoryRefs = if (shouldUseReviewList) {
-                val reviewRefs = graph.memoryRepository.listMemoriesForReview(
-                    filter = snapshot.memoryReviewFilter,
-                    limit = 100,
-                )
-                if (query.isBlank()) {
-                    reviewRefs.take(50)
-                } else {
-                    reviewRefs.filter { memory -> memory.matchesReviewQuery(query) }.take(50)
-                }
+            val reviewRefs = graph.memoryRepository.listMemoriesForReview(
+                filter = snapshot.memoryReviewFilter,
+                limit = 100,
+            )
+            val memoryRefs = if (query.isBlank()) {
+                reviewRefs.take(50)
             } else {
-                graph.memoryRepository.retrieveMemories(query = query, limit = 20).refs
+                reviewRefs.filter { memory -> memory.matchesReviewQuery(query) }.take(50)
             }
             mutableUiState.update { state ->
                 state.copy(memorySearchResults = memoryRefs)
@@ -592,6 +586,29 @@ class SynapseViewModel(
                 state.copy(
                     memorySearchResults = memoryRefs,
                     lastNotice = "Memory tombstoned: ${receipt.id.raw}",
+                )
+            }
+        }
+    }
+
+    fun activateMemory(memoryObjectId: MemoryObjectId) {
+        viewModelScope.launch {
+            val receipt = graph.memoryRepository.activateMemory(
+                memoryObjectId = memoryObjectId,
+                reason = "Activated from Synapse memory screen.",
+            )
+            val memoryRefs = graph.memoryRepository.listMemoriesForReview(
+                filter = mutableUiState.value.memoryReviewFilter,
+                limit = 50,
+            )
+            mutableUiState.update { state ->
+                state.copy(
+                    memorySearchResults = memoryRefs,
+                    lastNotice = if (receipt.memoryVersionId != null) {
+                        "Memory activated: ${receipt.id.raw}"
+                    } else {
+                        "Memory was not activated: ${receipt.reason}"
+                    },
                 )
             }
         }
