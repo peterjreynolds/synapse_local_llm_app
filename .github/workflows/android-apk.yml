@@ -23,6 +23,7 @@ jobs:
       APK_BRANCH: apk-latest
       RELEASE_TAG: synapse-ai
       EXPECTED_APPLICATION_ID: app.synapse.localllm.debug
+      EXPECTED_SIGNING_CERTIFICATE_SHA256: 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b
 
     steps:
       - name: Check out repository
@@ -99,6 +100,11 @@ jobs:
             | sed -n "s/^Signer #1 certificate SHA-256 digest: //p" \
             | tee apk-signer-sha256.txt
           test -s apk-signer-sha256.txt
+          actual_signing_certificate_sha256="$(cat apk-signer-sha256.txt)"
+          if [ "$actual_signing_certificate_sha256" != "$EXPECTED_SIGNING_CERTIFICATE_SHA256" ]; then
+            echo "Expected APK signing certificate $EXPECTED_SIGNING_CERTIFICATE_SHA256, got $actual_signing_certificate_sha256." >&2
+            exit 1
+          fi
 
       - name: Publish single-APK branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

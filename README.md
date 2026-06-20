@@ -111,6 +111,8 @@ Each rolling release note includes the package id and APK signing-certificate
 SHA-256 fingerprint. If Android refuses an update, compare that fingerprint with
 the installed APK's signer. A mismatch cannot be repaired by app code; the next
 APK must be signed with the original key or the old app must be uninstalled.
+Current rolling builds are expected to use signing-certificate SHA-256
+`6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b`.
 
 If the release asset link gives a private-repo `404` on Android, open the
 single-APK branch file instead:
