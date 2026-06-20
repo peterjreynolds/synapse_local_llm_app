@@ -99,6 +99,19 @@ class DeterministicMemoryProjectorTest {
     }
 
     @Test
+    fun extractsCleanWorkingProjectMemoryFromCalledProjectPhrase() {
+        val traceEvent = userTrace("Add to your memory that I'm working on a project called Stuart.")
+
+        val candidate = projector.extractMemoryCandidates(traceEvent).single()
+
+        assertEquals(MemoryKind.PROJECT, candidate.kind)
+        assertEquals("Stuart", candidate.subject)
+        assertEquals("User is working on project Stuart.", candidate.text)
+        assertEquals("project.project.stuart.context", candidate.claimKey)
+        assertTrue(candidate.reasonCodes.contains("explicit-user-memory-command"))
+    }
+
+    @Test
     fun extractsAppointmentMemory() {
         val traceEvent = userTrace("I have a dentist appointment tomorrow at 3 PM.")
 

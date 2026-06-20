@@ -142,7 +142,11 @@ class DeterministicMemoryProjector : MemoryProjector {
             else -> null
         } ?: return null
 
-        val projectText = cleanMemorySegment(normalizedText)
+        val projectText = if (workingProjectMatch != null) {
+            "User is working on project $projectSubject"
+        } else {
+            cleanMemorySegment(normalizedText)
+        }
         return buildCandidate(
             kind = MemoryKind.PROJECT,
             text = projectText.ensureSentence(),
@@ -331,6 +335,13 @@ class DeterministicMemoryProjector : MemoryProjector {
 
     private fun cleanProjectSubject(rawProjectSubject: String): String? {
         val subject = cleanMemorySegment(rawProjectSubject)
+            .replace(
+                Regex(
+                    "^\\s*(?:a|an|the)?\\s*(?:project|repo|app|website|workspace)?\\s*(?:called|named)\\s+",
+                    RegexOption.IGNORE_CASE,
+                ),
+                "",
+            )
             .replace(Regex("\\b(repo|project|app|website|workspace)\\b", RegexOption.IGNORE_CASE), "")
             .trim()
             .trimEnd('.', ',', ';', ':')
@@ -406,7 +417,8 @@ class DeterministicMemoryProjector : MemoryProjector {
 
         val explicitMemoryPattern =
             Regex(
-                pattern = "\\b(?:remember|save|keep\\s+in\\s+memory|don't\\s+forget)\\s+" +
+                pattern = "\\b(?:remember|save|keep\\s+in\\s+memory|don't\\s+forget|" +
+                    "add\\s+(?:to\\s+(?:your|the)\\s+)?memory)\\s+" +
                     "(?:that\\s+)?(.{3,220})",
                 option = RegexOption.IGNORE_CASE,
             )

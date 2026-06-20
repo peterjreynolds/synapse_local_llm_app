@@ -951,13 +951,18 @@ private data class MemoryRetrievalProfile(
                 targetKinds += MemoryKind.PREFERENCE
                 intent = PREFERENCE_INTENT
             }
-            if (projectRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
+            val hasProjectIntent = projectRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }
+            val hasAppointmentIntent = appointmentRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }
+            val hasProjectDescriptionIntent =
+                hasProjectIntent || projectDescriptionRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }
+
+            if (hasProjectDescriptionIntent) {
                 targetKinds += MemoryKind.PROJECT
                 targetKinds += MemoryKind.SUMMARY
                 targetScopes += MemoryScope.PROJECT
                 intent = PROJECT_INTENT
             }
-            if (appointmentRecallPatterns.any { pattern -> pattern.containsMatchIn(normalizedQuery) }) {
+            if (hasAppointmentIntent && !hasProjectDescriptionIntent) {
                 targetKinds += MemoryKind.APPOINTMENT
                 targetKinds += MemoryKind.COMMITMENT
                 intent = APPOINTMENT_INTENT
@@ -1006,6 +1011,9 @@ private data class MemoryRetrievalProfile(
             Regex("\\b(project|repo|app|website|workspace)\\b"),
             Regex("\\bwhere\\s+were\\s+we\\b"),
             Regex("\\bwhat\\s+are\\s+we\\s+(working\\s+on|building|planning)\\b"),
+        )
+        private val projectDescriptionRecallPatterns = listOf(
+            Regex("\\b(agent|artifact|diari[sz]ation|formalization|pipeline|platform|runtime|tool)\\b"),
         )
         private val appointmentRecallPatterns = listOf(
             Regex("\\b(appointments?|meetings?|calls?|deadlines?|due|schedule|calendar)\\b"),

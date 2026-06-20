@@ -13,12 +13,17 @@ class VerifiedPromptContextAssembler : PromptContextAssembler {
         userMessage: String,
         priorMessages: List<ChatMessageRecord>,
         retrievalBundle: RetrievalBundle,
+        memoryWriteStatusBlock: String,
         systemPrompt: String,
     ): List<ModelChatMessage> {
         val systemContent = buildString {
             append(systemPrompt.trim())
             append("\n\n")
             append(MEMORY_USE_POLICY)
+            if (memoryWriteStatusBlock.isNotBlank()) {
+                append("\n\n")
+                append(memoryWriteStatusBlock)
+            }
             if (retrievalBundle.promptBlock.isNotBlank()) {
                 append("\n\nVerified local memory:\n")
                 append(retrievalBundle.promptBlock)

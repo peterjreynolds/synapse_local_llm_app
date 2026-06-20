@@ -32,6 +32,7 @@ class VerifiedPromptContextAssemblerTest {
                 refs = listOf(retrievedMemory()),
                 promptBlock = "- User prefers native Android.",
             ),
+            memoryWriteStatusBlock = "",
             systemPrompt = "System prompt.",
         )
 
@@ -60,10 +61,30 @@ class VerifiedPromptContextAssemblerTest {
                 refs = emptyList(),
                 promptBlock = "",
             ),
+            memoryWriteStatusBlock = "",
             systemPrompt = "System prompt.",
         )
 
         assertEquals("Hey!", messages[2].content)
+    }
+
+    @Test
+    fun includesCurrentTurnMemoryWriteReceiptsInSystemPrompt() = runTest {
+        val messages = assembler.assemblePromptMessages(
+            userMessage = "Add that to memory.",
+            priorMessages = emptyList(),
+            retrievalBundle = RetrievalBundle(
+                retrievedAt = Instant.parse("2026-06-14T16:00:00Z"),
+                refs = emptyList(),
+                promptBlock = "",
+            ),
+            memoryWriteStatusBlock = "Current turn memory write receipts:\n" +
+                "- DURABLE_MEMORY_WRITTEN: Stuart is a meetings and formalization agent.",
+            systemPrompt = "System prompt.",
+        )
+
+        assertTrue(messages[0].content.contains("Current turn memory write receipts"))
+        assertTrue(messages[0].content.contains("DURABLE_MEMORY_WRITTEN"))
     }
 
     private fun chatMessage(role: ConversationRole, body: String): ChatMessageRecord =

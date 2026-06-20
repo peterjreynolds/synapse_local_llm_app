@@ -2,6 +2,7 @@ package app.synapse.localllm.application
 
 import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
 import app.synapse.localllm.domain.chat.AttachmentKind
+import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ConversationRepository
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.PendingAttachment
@@ -12,6 +13,7 @@ import app.synapse.localllm.domain.diagnostics.AssistantGenerationStopReason
 import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
+import app.synapse.localllm.domain.memory.ContextualMemoryCandidateResolver
 import app.synapse.localllm.domain.memory.MemoryAdmissionGate
 import app.synapse.localllm.domain.memory.MemoryCandidateNormalizer
 import app.synapse.localllm.domain.memory.MemoryCandidateProposer
@@ -42,6 +44,7 @@ class SynapseTurnCoordinator(
     private val memoryProjector: MemoryProjector,
     private val memoryCandidateNormalizer: MemoryCandidateNormalizer,
     private val memoryCandidateProposer: MemoryCandidateProposer,
+    private val contextualMemoryCandidateResolver: ContextualMemoryCandidateResolver,
     private val memoryAdmissionGate: MemoryAdmissionGate,
     private val storageHealthGovernor: StorageHealthGovernor,
     private val storageHealthSnapshotRepository: RoomStorageHealthSnapshotRepository,
@@ -61,16 +64,18 @@ class SynapseTurnCoordinator(
         )
         val turnReceipt = conversationRepository.submitUserMessage(command)
         val promptText = buildPromptText(command.body, command.attachments)
-        val retrievalBundle = prepareMemoryForTurn(
+        val memoryPreparation = prepareMemoryForTurn(
             userMessageId = turnReceipt.userMessageId,
             userText = command.body,
             promptText = promptText,
+            priorMessages = priorMessages,
             settings = settings,
         )
         val promptMessages = promptContextAssembler.assemblePromptMessages(
             userMessage = promptText,
             priorMessages = priorMessages,
-            retrievalBundle = retrievalBundle,
+            retrievalBundle = memoryPreparation.retrievalBundle,
+            memoryWriteStatusBlock = memoryPreparation.writeStatusPromptBlock,
             systemPrompt = settings.systemPrompt,
         )
         val completionRequest = ChatCompletionRequest(
@@ -90,7 +95,7 @@ class SynapseTurnCoordinator(
                 modelName = settings.modelName,
                 promptMessageCount = promptMessages.size,
                 promptCharacterCount = promptMessages.sumOf { message -> message.content.length },
-                retrievedMemoryCount = retrievalBundle.refs.size,
+                retrievedMemoryCount = memoryPreparation.retrievalBundle.refs.size,
                 maxTokens = settings.maxTokens,
                 temperature = settings.temperature,
                 startedAt = clock.now(),
@@ -225,13 +230,17 @@ class SynapseTurnCoordinator(
         userMessageId: ChatMessageId,
         userText: String,
         promptText: String,
+        priorMessages: List<ChatMessageRecord>,
         settings: SynapseSettings,
-    ): RetrievalBundle {
+    ): MemoryTurnPreparation {
         if (!settings.memoryWritesEnabled) {
-            return RetrievalBundle(
-                retrievedAt = clock.now(),
-                refs = emptyList(),
-                promptBlock = "",
+            return MemoryTurnPreparation(
+                retrievalBundle = RetrievalBundle(
+                    retrievedAt = clock.now(),
+                    refs = emptyList(),
+                    promptBlock = "",
+                ),
+                writeStatusPromptBlock = "",
             )
         }
 
@@ -251,16 +260,30 @@ class SynapseTurnCoordinator(
             observedAt = clock.now(),
         )
         memoryRepository.appendTraceEvent(traceEvent)
+        val hasExplicitMemoryIntent = hasExplicitMemoryWriteIntent(userText)
 
         when (val memoryCommand = memoryCommandInterpreter.interpretMemoryCommand(traceEvent)) {
             MemoryCommand.ContinueExtraction -> Unit
             is MemoryCommand.TombstoneMatchingMemories -> {
-                memoryRepository.tombstoneMemoriesMatching(
+                val tombstoneReceipts = memoryRepository.tombstoneMemoriesMatching(
                     traceEvent = traceEvent,
                     query = memoryCommand.query,
                     reason = memoryCommand.reason,
                 )
-                return memoryRepository.retrieveMemories(query = promptText, limit = MEMORY_RETRIEVAL_LIMIT)
+                val retrievalBundle = memoryRepository.retrieveMemories(query = promptText, limit = MEMORY_RETRIEVAL_LIMIT)
+                return MemoryTurnPreparation(
+                    retrievalBundle = retrievalBundle,
+                    writeStatusPromptBlock = buildMemoryWriteStatusPromptBlock(
+                        hasExplicitMemoryIntent = true,
+                        summaries = tombstoneReceipts.map { receipt ->
+                            MemoryWriteAttemptSummary(
+                                outcome = receipt.outcome,
+                                memoryText = null,
+                                reason = receipt.reason,
+                            )
+                        },
+                    ),
+                )
             }
         }
 
@@ -270,14 +293,23 @@ class SynapseTurnCoordinator(
         } else {
             emptyList()
         }
-        val memoryCandidates = (deterministicCandidates + proposedCandidates).map { memoryCandidate ->
+        val contextualCandidates = if (deterministicCandidates.isEmpty() && proposedCandidates.isEmpty()) {
+            contextualMemoryCandidateResolver.resolveContextualMemoryCandidates(
+                traceEvent = traceEvent,
+                priorMessages = priorMessages,
+            )
+        } else {
+            emptyList()
+        }
+        val memoryCandidates = (deterministicCandidates + proposedCandidates + contextualCandidates).map { memoryCandidate ->
             memoryCandidateNormalizer.normalizeMemoryCandidate(
                 candidate = memoryCandidate,
                 traceEvent = traceEvent,
             )
         }
+        val writeAttemptSummaries = mutableListOf<MemoryWriteAttemptSummary>()
         if (memoryCandidates.isEmpty()) {
-            memoryRepository.persistMemoryDecision(
+            val receipt = memoryRepository.persistMemoryDecision(
                 traceEvent = traceEvent,
                 decision = MemoryWriteDecision(
                     outcome = MemoryWriteOutcome.TRACE_ONLY,
@@ -286,19 +318,75 @@ class SynapseTurnCoordinator(
                     storageHealthSnapshot = storageHealthSnapshot,
                 ),
             )
+            writeAttemptSummaries += MemoryWriteAttemptSummary(
+                outcome = receipt.outcome,
+                memoryText = null,
+                reason = receipt.reason,
+            )
         } else {
             memoryCandidates.forEach { memoryCandidate ->
-                memoryRepository.persistMemoryDecision(
+                val receipt = memoryRepository.persistMemoryDecision(
                     traceEvent = traceEvent,
                     decision = memoryAdmissionGate.decideMemoryWrite(
                         candidate = memoryCandidate,
                         storageHealthSnapshot = storageHealthSnapshot,
                     ),
                 )
+                writeAttemptSummaries += MemoryWriteAttemptSummary(
+                    outcome = receipt.outcome,
+                    memoryText = memoryCandidate.text,
+                    reason = receipt.reason,
+                )
             }
         }
 
-        return memoryRepository.retrieveMemories(query = promptText, limit = MEMORY_RETRIEVAL_LIMIT)
+        val retrievalBundle = memoryRepository.retrieveMemories(query = promptText, limit = MEMORY_RETRIEVAL_LIMIT)
+        return MemoryTurnPreparation(
+            retrievalBundle = retrievalBundle,
+            writeStatusPromptBlock = buildMemoryWriteStatusPromptBlock(
+                hasExplicitMemoryIntent = hasExplicitMemoryIntent,
+                summaries = writeAttemptSummaries,
+            ),
+        )
+    }
+
+    private fun hasExplicitMemoryWriteIntent(userText: String): Boolean {
+        val normalizedText = userText.trim().replace(Regex("\\s+"), " ")
+        return explicitMemoryWritePatterns.any { pattern -> pattern.containsMatchIn(normalizedText) }
+    }
+
+    private fun buildMemoryWriteStatusPromptBlock(
+        hasExplicitMemoryIntent: Boolean,
+        summaries: List<MemoryWriteAttemptSummary>,
+    ): String {
+        if (!hasExplicitMemoryIntent) return ""
+        val confirmingSummaries = summaries.filter { summary ->
+            summary.outcome in promptConfirmableMemoryOutcomes
+        }
+        val reviewSummaries = summaries.filter { summary ->
+            summary.outcome in promptReviewMemoryOutcomes
+        }
+        return buildString {
+            append("Current turn memory write receipts:\n")
+            append("- Source: app-local memory ledger, not model inference.\n")
+            if (confirmingSummaries.isEmpty() && reviewSummaries.isEmpty()) {
+                append("- No active memory was saved, updated, corrected, or deleted from this user turn.\n")
+                append("- Do not claim memory was saved, corrected, updated, or deleted. ")
+                append("Ask for the exact fact to remember if the request was ambiguous.")
+                return@buildString
+            }
+            confirmingSummaries.forEach { summary ->
+                append("- ${summary.outcome.name}: ")
+                append(summary.memoryText?.take(MAX_MEMORY_STATUS_TEXT_CHARS) ?: summary.reason.take(MAX_MEMORY_STATUS_TEXT_CHARS))
+                append("\n")
+            }
+            reviewSummaries.forEach { summary ->
+                append("- ${summary.outcome.name}: memory is stored for review/confirmation, not active prompt memory. ")
+                append(summary.memoryText?.take(MAX_MEMORY_STATUS_TEXT_CHARS) ?: summary.reason.take(MAX_MEMORY_STATUS_TEXT_CHARS))
+                append("\n")
+            }
+            append("- Only confirm the receipt outcomes listed above. Do not invent additional saved facts.")
+        }
     }
 
     private fun buildPromptText(body: String, attachments: List<PendingAttachment>): String {
@@ -332,13 +420,41 @@ class SynapseTurnCoordinator(
         const val RECENT_THREAD_MESSAGE_LIMIT = 8
         const val MEMORY_RETRIEVAL_LIMIT = 6
         const val MAX_TEXT_ATTACHMENT_PROMPT_CHARS = 12_000
+        const val MAX_MEMORY_STATUS_TEXT_CHARS = 360
         const val STOPPED_BY_USER_REASON = "Stopped by user."
         const val EMPTY_VISIBLE_OUTPUT_REASON =
             "Model returned no visible answer text after hidden reasoning/output filtering."
+
+        val explicitMemoryWritePatterns = listOf(
+            Regex("\\b(?:remember|save|keep\\s+in\\s+memory|don't\\s+forget)\\b", RegexOption.IGNORE_CASE),
+            Regex("\\badd\\b.{0,80}\\b(?:memory|remember|saved)\\b", RegexOption.IGNORE_CASE),
+            Regex("\\b(?:forget|delete|remove)\\b.{0,80}\\bmemor(?:y|ies)\\b", RegexOption.IGNORE_CASE),
+        )
+        val promptConfirmableMemoryOutcomes = setOf(
+            MemoryWriteOutcome.DURABLE_MEMORY_WRITTEN,
+            MemoryWriteOutcome.MEMORY_UPDATED,
+            MemoryWriteOutcome.MEMORY_SUPERSEDED,
+            MemoryWriteOutcome.MEMORY_TOMBSTONED,
+        )
+        val promptReviewMemoryOutcomes = setOf(
+            MemoryWriteOutcome.QUARANTINED,
+            MemoryWriteOutcome.REQUIRES_CONFIRMATION,
+        )
     }
 }
 
 private class AssistantOutputCompletedEarly : RuntimeException()
+
+private data class MemoryTurnPreparation(
+    val retrievalBundle: RetrievalBundle,
+    val writeStatusPromptBlock: String,
+)
+
+private data class MemoryWriteAttemptSummary(
+    val outcome: MemoryWriteOutcome,
+    val memoryText: String?,
+    val reason: String,
+)
 
 sealed interface SynapseTurnOutcome {
     data class Completed(

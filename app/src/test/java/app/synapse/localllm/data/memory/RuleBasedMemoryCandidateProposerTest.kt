@@ -43,6 +43,31 @@ class RuleBasedMemoryCandidateProposerTest {
     }
 
     @Test
+    fun proposesImplicitProjectDescriptionMemoryForTechnicalAgent() {
+        val traceEvent = userTrace("Stuart is a meetings and formalization agent.")
+
+        val candidate = proposer.proposeMemoryCandidates(traceEvent).single()
+
+        assertEquals(MemoryKind.PROJECT, candidate.kind)
+        assertEquals(MemoryClaimDomain.PROJECT, candidate.domain)
+        assertEquals(MemoryScope.PROJECT, candidate.scope)
+        assertEquals("Stuart", candidate.subject)
+        assertEquals("description", candidate.predicate)
+        assertEquals("a meetings and formalization agent", candidate.value)
+        assertEquals("project.project.stuart.description", candidate.claimKey)
+        assertTrue(candidate.reasonCodes.contains("implicit-project-description"))
+    }
+
+    @Test
+    fun doesNotProposeBroadNonTechnicalDescriptionMemory() {
+        val traceEvent = userTrace("Peter is tired today.")
+
+        val candidates = proposer.proposeMemoryCandidates(traceEvent)
+
+        assertTrue(candidates.isEmpty())
+    }
+
+    @Test
     fun neverProposesFromAssistantText() {
         val traceEvent = userTrace("For Stuart, diarization is the main priority.")
             .copy(role = ConversationRole.ASSISTANT)

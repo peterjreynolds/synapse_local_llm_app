@@ -136,6 +136,32 @@ class RoomMemoryRepositoryTest {
     }
 
     @Test
+    fun projectAgentQueryIsNotMisclassifiedAsAppointmentRecall() = runTest {
+        writeDurableMemory(
+            text = "Stuart is a meetings and formalization agent.",
+            kind = MemoryKind.PROJECT,
+            scope = MemoryScope.PROJECT,
+            domain = MemoryClaimDomain.PROJECT,
+            subject = "Stuart",
+            predicate = "description",
+            value = "a meetings and formalization agent",
+            keywords = listOf("stuart", "meetings", "formalization", "agent"),
+            claimKey = "project.project.stuart.description",
+        )
+
+        val retrievalBundle = repository.retrieveMemories(
+            query = "What is Stuart, the meetings and formalization agent?",
+            limit = 5,
+        )
+
+        assertEquals(1, retrievalBundle.refs.size)
+        val memory = retrievalBundle.refs.single()
+        assertEquals(MemoryKind.PROJECT, memory.kind)
+        assertTrue(memory.reasonCodes.contains("intent:project"))
+        assertTrue(memory.reasonCodes.contains("scope:project"))
+    }
+
+    @Test
     fun appointmentRecallQueryRetrievesAppointmentMemory() = runTest {
         writeDurableMemory(
             text = "User has a dentist appointment tomorrow at 3 PM.",

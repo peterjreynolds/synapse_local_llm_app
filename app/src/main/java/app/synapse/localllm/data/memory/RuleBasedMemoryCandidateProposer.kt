@@ -20,6 +20,7 @@ class RuleBasedMemoryCandidateProposer : MemoryCandidateProposer {
 
         return listOfNotNull(
             proposeProjectPriorityCandidate(normalizedText, traceEvent),
+            proposeProjectDescriptionCandidate(normalizedText, traceEvent),
             proposeRoutineCandidate(normalizedText, traceEvent),
         ).distinctBy { candidate ->
             listOf(candidate.domain.name, candidate.subject.orEmpty(), candidate.predicate.orEmpty(), candidate.value.orEmpty())
@@ -57,6 +58,36 @@ class RuleBasedMemoryCandidateProposer : MemoryCandidateProposer {
             claimKey = buildClaimKey("project", "project", projectSubject, predicate),
             confidence = 0.88,
             durabilityScore = 0.9,
+            futureUsefulnessScore = 0.92,
+        )
+    }
+
+    private fun proposeProjectDescriptionCandidate(
+        normalizedText: String,
+        traceEvent: TraceEventRecord,
+    ): MemoryClaimCandidate? {
+        val match = projectDescriptionPattern.find(normalizedText) ?: return null
+        val projectSubject = cleanMemorySegment(match.groupValues[1])
+        val projectDescription = cleanMemorySegment(match.groupValues[2])
+        if (projectSubject.isBlank() || projectDescription.isBlank()) return null
+        if (!technicalProjectDescriptionPattern.containsMatchIn(projectDescription)) return null
+
+        return buildImplicitCandidate(
+            kind = MemoryKind.PROJECT,
+            domain = MemoryClaimDomain.PROJECT,
+            scope = MemoryScope.PROJECT,
+            subject = projectSubject,
+            predicate = "description",
+            value = projectDescription,
+            text = "$projectSubject is $projectDescription.",
+            traceEvent = traceEvent,
+            reasonCodes = listOf("implicit-project-description"),
+            keywords = extractKeywords(projectSubject) +
+                extractKeywords(projectDescription) +
+                listOf("project", "description"),
+            claimKey = buildClaimKey("project", "project", projectSubject, "description"),
+            confidence = 0.90,
+            durabilityScore = 0.90,
             futureUsefulnessScore = 0.92,
         )
     }
@@ -186,6 +217,14 @@ class RuleBasedMemoryCandidateProposer : MemoryCandidateProposer {
         val projectLeadPattern = Regex(
             pattern = "^\\s*for\\s+([a-zA-Z0-9][a-zA-Z0-9 _.-]{1,60}),\\s+(.{3,180})$",
             option = RegexOption.IGNORE_CASE,
+        )
+        val projectDescriptionPattern = Regex(
+            pattern = "^\\s*([A-Z][a-zA-Z0-9_.-]{1,60})\\s+(?:is|is\\s+an?|acts\\s+as)\\s+(.{3,220})$",
+        )
+        val technicalProjectDescriptionPattern = Regex(
+            "\\b(agent|app|artifact|bot|diari[sz]ation|formalization|library|model|pipeline|platform|" +
+                "project|repo|research|runtime|system|tool|transcri(?:be|bes|ption|ptions)|workspace)\\b",
+            RegexOption.IGNORE_CASE,
         )
         val priorityPattern = Regex("\\b(priority|main\\s+priority|focus)\\b", RegexOption.IGNORE_CASE)
         val goalPattern = Regex("\\b(goal|objective)\\b", RegexOption.IGNORE_CASE)

@@ -267,6 +267,13 @@ interface MemoryCandidateProposer {
     fun proposeMemoryCandidates(traceEvent: TraceEventRecord): List<MemoryClaimCandidate>
 }
 
+interface ContextualMemoryCandidateResolver {
+    fun resolveContextualMemoryCandidates(
+        traceEvent: TraceEventRecord,
+        priorMessages: List<ChatMessageRecord>,
+    ): List<MemoryClaimCandidate>
+}
+
 data class MemoryImplicitScore(
     val score: Double,
     val outcome: MemoryWriteOutcome,
@@ -314,6 +321,7 @@ interface PromptContextAssembler {
         userMessage: String,
         priorMessages: List<ChatMessageRecord>,
         retrievalBundle: RetrievalBundle,
+        memoryWriteStatusBlock: String,
         systemPrompt: String,
     ): List<ModelChatMessage>
 }

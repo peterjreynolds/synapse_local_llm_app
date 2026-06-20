@@ -20,6 +20,7 @@ import app.synapse.localllm.data.memory.DefaultMemoryCandidateNormalizer
 import app.synapse.localllm.data.memory.DeterministicMemoryProjector
 import app.synapse.localllm.data.memory.EvidenceBackedMemoryAdmissionGate
 import app.synapse.localllm.data.memory.PatternMemoryCommandInterpreter
+import app.synapse.localllm.data.memory.RecentUserTurnMemoryCandidateResolver
 import app.synapse.localllm.data.memory.RuleBasedMemoryCandidateProposer
 import app.synapse.localllm.data.memory.RoomMemoryRepository
 import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
@@ -124,6 +125,11 @@ class SynapseApplicationGraph private constructor(context: Context) {
     val memoryProjector: MemoryProjector = DeterministicMemoryProjector()
     val memoryCandidateNormalizer: MemoryCandidateNormalizer = DefaultMemoryCandidateNormalizer()
     val memoryCandidateProposer: MemoryCandidateProposer = RuleBasedMemoryCandidateProposer()
+    val contextualMemoryCandidateResolver =
+        RecentUserTurnMemoryCandidateResolver(
+            memoryProjector = memoryProjector,
+            memoryCandidateProposer = memoryCandidateProposer,
+        )
     val memoryCommandInterpreter: MemoryCommandInterpreter = PatternMemoryCommandInterpreter()
     val memoryAdmissionGate: MemoryAdmissionGate = EvidenceBackedMemoryAdmissionGate()
     val storageHealthGovernor: StorageHealthGovernor =
@@ -158,6 +164,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
             memoryProjector = memoryProjector,
             memoryCandidateNormalizer = memoryCandidateNormalizer,
             memoryCandidateProposer = memoryCandidateProposer,
+            contextualMemoryCandidateResolver = contextualMemoryCandidateResolver,
             memoryAdmissionGate = memoryAdmissionGate,
             storageHealthGovernor = storageHealthGovernor,
             storageHealthSnapshotRepository = storageHealthSnapshotRepository,
