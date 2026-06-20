@@ -19,6 +19,10 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Rolling GitHub APK delivery through the `synapse-ai` release and `apk-latest`
   branch, plus in-app update checks that download the newest `Synapse-AI.apk`
   and hand it to Android's installer.
+- Rolling APK updates preserve the early side-loaded Android package id
+  `app.synapse.localllm.debug` until a deliberate app-data migration path exists.
+  Future APK releases must keep package id, signing key, and monotonic
+  `versionCode` stable or Android will reject in-place updates.
 - App-local Room/SQLite chat and evidence-backed memory.
 - Memory V8 generalized governed-claim foundation: structured memory kinds,
   scopes, domains, subjects, predicates, values, source quotes, write intents,

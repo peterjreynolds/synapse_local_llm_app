@@ -97,9 +97,20 @@ Installed data is preserved when all Android package rules match:
 - the APK is signed with the same signing key;
 - the new `versionCode` is higher than the installed one.
 
+The rolling APK currently preserves the early side-loaded package id
+`app.synapse.localllm.debug` so existing installs can update in place. Do not
+change that package id without a deliberate migration plan, because Android
+treats a package-id change as a different app and app-private chats, memory,
+settings, and downloaded models will not carry over automatically.
+
 If those rules fail, Android may show a package conflict or require uninstalling
 first. Uninstalling deletes app-private chats, memory, settings, and downloaded
 models, so stable signing is required for sane updates.
+
+Each rolling release note includes the package id and APK signing-certificate
+SHA-256 fingerprint. If Android refuses an update, compare that fingerprint with
+the installed APK's signer. A mismatch cannot be repaired by app code; the next
+APK must be signed with the original key or the old app must be uninstalled.
 
 If the release asset link gives a private-repo `404` on Android, open the
 single-APK branch file instead:
@@ -113,7 +124,7 @@ force-replaced so the visible download branch contains one APK commit and one
 APK file.
 
 For clean Android update installs, configure one GitHub secret so every
-GitHub-built debug APK is signed with the same key:
+GitHub-built APK is signed with the same key:
 
 ```sh
 keytool -genkeypair -v \

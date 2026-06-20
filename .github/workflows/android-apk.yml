@@ -22,6 +22,7 @@ jobs:
       APK_PATH: app/build/outputs/apk/synapse/Synapse-AI.apk
       APK_BRANCH: apk-latest
       RELEASE_TAG: synapse-ai
+      EXPECTED_APPLICATION_ID: app.synapse.localllm.debug
 
     steps:
       - name: Check out repository
@@ -88,6 +89,16 @@ jobs:
           test -f "$APK_PATH"
           ls -lh "$APK_PATH"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
+          actual_application_id="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+          if [ "$actual_application_id" != "$EXPECTED_APPLICATION_ID" ]; then
+            echo "Expected APK application id $EXPECTED_APPLICATION_ID, got $actual_application_id." >&2
+            exit 1
+          fi
+          printf '%s\n' "$actual_application_id" | tee apk-application-id.txt
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK_PATH" \
+            | sed -n "s/^Signer #1 certificate SHA-256 digest: //p" \
+            | tee apk-signer-sha256.txt
+          test -s apk-signer-sha256.txt
 
       - name: Publish single-APK branch
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -137,8 +148,11 @@ jobs:
           fi
           version_code=$((2000 + GITHUB_RUN_NUMBER))
           apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
+          application_id="$(cat apk-application-id.txt)"
+          signer_sha256="$(cat apk-signer-sha256.txt)"
           release_notes="Latest automated Synapse AI APK from commit $GITHUB_SHA. "
-          release_notes+="Version code: $version_code. SHA-256: $apk_sha256. "
+          release_notes+="Version code: $version_code. Package: $application_id. "
+          release_notes+="SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256. "
           release_notes+="This rolling release is recreated after every successful main build "
           release_notes+="so the Releases page points at the newest APK."
 
