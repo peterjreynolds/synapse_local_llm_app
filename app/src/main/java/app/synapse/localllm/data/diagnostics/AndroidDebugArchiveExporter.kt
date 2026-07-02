@@ -177,7 +177,7 @@ class AndroidDebugArchiveExporter(
             appendLine("maximumWindowBoundsPx=${maximumWindowBounds.toDebugBounds()}")
             appendLine("activityDecorFitsSystemWindows=false")
             appendLine("activityWindowSoftInputMode=adjustResize")
-            appendLine("composeKeyboardPolicy=Scaffold bottomBar composer applies imePadding")
+            appendLine("composeKeyboardPolicy=chat composer and settings list apply imePadding")
         }
     }
 

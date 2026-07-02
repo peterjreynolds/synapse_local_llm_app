@@ -1979,7 +1979,10 @@ private fun SettingsPanel(
     onExportDebugArchive: () -> Unit,
 ) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .imePadding(),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -2128,11 +2131,7 @@ private fun SettingsPanel(
             }
         }
         item {
-            Spacer(
-                modifier = Modifier
-                    .height(16.dp)
-                    .navigationBarsPadding(),
-            )
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
