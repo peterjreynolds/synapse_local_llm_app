@@ -815,6 +815,21 @@ class SynapseViewModel(
         }
     }
 
+    fun updateSmsAutoReplyEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            graph.settingsStore.updateSmsAutoReplyEnabled(enabled)
+            mutableUiState.update { state ->
+                state.copy(
+                    lastNotice = if (enabled) {
+                        "SMS auto-reply enabled."
+                    } else {
+                        "SMS auto-reply disabled."
+                    },
+                )
+            }
+        }
+    }
+
     fun inspectStorageHealth() {
         viewModelScope.launch {
             val settings = mutableUiState.value.settings

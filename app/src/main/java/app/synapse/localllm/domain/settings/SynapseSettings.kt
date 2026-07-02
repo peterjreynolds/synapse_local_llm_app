@@ -17,6 +17,7 @@ data class SynapseSettings(
     val maxTokens: Int = 256,
     val memoryWritesEnabled: Boolean = true,
     val speechPlaybackEnabled: Boolean = true,
+    val smsAutoReplyEnabled: Boolean = false,
     val memoryDatabaseWarningBytes: Long = 512L * 1024L * 1024L,
     val attachmentCacheWarningBytes: Long = 1024L * 1024L * 1024L,
     val minimumFreeStorageBytes: Long = 2L * 1024L * 1024L * 1024L,

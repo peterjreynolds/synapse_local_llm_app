@@ -4,10 +4,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
 
     <queries>
         <package android:name="com.termux" />
@@ -39,6 +46,19 @@
             android:name=".ModelDownloadForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".SmsAutoReplyForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+        <receiver
+            android:name=".SmsAutoReplyReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+                <action android:name="android.provider.Telephony.SMS_DELIVER" />
+            </intent-filter>
+        </receiver>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

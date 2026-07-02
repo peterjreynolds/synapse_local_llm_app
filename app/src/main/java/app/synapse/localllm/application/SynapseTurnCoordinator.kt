@@ -217,9 +217,13 @@ class SynapseTurnCoordinator(
         recordGenerationFinishedOnce()
 
         return if (failureReason == null) {
-            SynapseTurnOutcome.Completed(turnReceipt.assistantMessageId)
+            SynapseTurnOutcome.Completed(
+                userMessageId = turnReceipt.userMessageId,
+                assistantMessageId = turnReceipt.assistantMessageId,
+            )
         } else {
             SynapseTurnOutcome.Failed(
+                userMessageId = turnReceipt.userMessageId,
                 assistantMessageId = turnReceipt.assistantMessageId,
                 reason = failureReason,
             )
@@ -458,10 +462,12 @@ private data class MemoryWriteAttemptSummary(
 
 sealed interface SynapseTurnOutcome {
     data class Completed(
+        val userMessageId: ChatMessageId,
         val assistantMessageId: ChatMessageId,
     ) : SynapseTurnOutcome
 
     data class Failed(
+        val userMessageId: ChatMessageId,
         val assistantMessageId: ChatMessageId,
         val reason: String,
     ) : SynapseTurnOutcome

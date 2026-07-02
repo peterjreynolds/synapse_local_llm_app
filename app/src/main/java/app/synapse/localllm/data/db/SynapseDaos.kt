@@ -400,3 +400,81 @@ interface StorageHealthDao {
     )
     fun observeLatestStorageHealthSnapshot(): Flow<StorageHealthSnapshotEntity?>
 }
+
+@Dao
+interface SmsAutoReplyDao {
+    @Query("SELECT * FROM sms_auto_reply_receipts WHERE inboundMessageKey = :inboundMessageKey LIMIT 1")
+    suspend fun findReceiptByInboundMessageKey(inboundMessageKey: String): SmsAutoReplyReceiptEntity?
+
+    @Query("SELECT * FROM sms_auto_reply_receipts WHERE id = :receiptId LIMIT 1")
+    suspend fun findReceiptById(receiptId: String): SmsAutoReplyReceiptEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertReceipt(receipt: SmsAutoReplyReceiptEntity): Long
+
+    @Query(
+        """
+        UPDATE sms_auto_reply_receipts
+        SET threadId = :threadId,
+            userMessageId = :userMessageId,
+            assistantMessageId = :assistantMessageId,
+            state = :state,
+            decidedAtEpochMillis = :decidedAtEpochMillis,
+            failureReason = NULL
+        WHERE id = :receiptId
+        """,
+    )
+    suspend fun linkReceiptTurn(
+        receiptId: String,
+        threadId: String,
+        userMessageId: String,
+        assistantMessageId: String,
+        state: String,
+        decidedAtEpochMillis: Long,
+    )
+
+    @Query(
+        """
+        UPDATE sms_auto_reply_receipts
+        SET state = :state,
+            replyBodySha256 = :replyBodySha256,
+            replyCharacterCount = :replyCharacterCount,
+            smsPartCount = :smsPartCount,
+            queuedAtEpochMillis = :queuedAtEpochMillis,
+            decidedAtEpochMillis = :decidedAtEpochMillis,
+            failureReason = NULL
+        WHERE id = :receiptId
+        """,
+    )
+    suspend fun markReceiptQueued(
+        receiptId: String,
+        state: String,
+        replyBodySha256: String,
+        replyCharacterCount: Int,
+        smsPartCount: Int,
+        queuedAtEpochMillis: Long,
+        decidedAtEpochMillis: Long,
+    )
+
+    @Query(
+        """
+        UPDATE sms_auto_reply_receipts
+        SET state = :state,
+            decidedAtEpochMillis = :decidedAtEpochMillis,
+            failureReason = :failureReason
+        WHERE id = :receiptId
+        """,
+    )
+    suspend fun markReceiptFailed(
+        receiptId: String,
+        state: String,
+        decidedAtEpochMillis: Long,
+        failureReason: String,
+    )
+
+    @Query("SELECT * FROM sms_sender_threads WHERE senderAddress = :senderAddress LIMIT 1")
+    suspend fun findSenderThread(senderAddress: String): SmsSenderThreadEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSenderThread(senderThread: SmsSenderThreadEntity)
+}

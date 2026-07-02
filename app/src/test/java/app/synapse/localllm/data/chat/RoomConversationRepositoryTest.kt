@@ -150,6 +150,29 @@ class RoomConversationRepositoryTest {
     }
 
     @Test
+    fun createThreadAcceptsDomainTitle() = runTest {
+        val thread = repository.createThread("SMS +15551234567")
+
+        assertEquals("SMS +15551234567", thread.title)
+    }
+
+    @Test
+    fun findMessageReturnsPersistedMessageById() = runTest {
+        val thread = repository.ensureDefaultThread()
+        val receipt = repository.submitUserMessage(
+            SubmitUserMessageCommand(
+                threadId = thread.id,
+                body = "Find this",
+                attachments = emptyList(),
+            ),
+        )
+
+        val message = repository.findMessage(receipt.userMessageId)
+
+        assertEquals("Find this", message?.body)
+    }
+
+    @Test
     fun archiveAndDeleteRemoveThreadsFromRecentList() = runTest {
         val archivedThread = repository.createThread()
         val deletedThread = repository.createThread()

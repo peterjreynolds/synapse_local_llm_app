@@ -297,3 +297,72 @@ data class StorageHealthSnapshotEntity(
     val attachmentCacheBytes: Long,
     val reason: String,
 )
+
+@Entity(
+    tableName = "sms_sender_threads",
+    foreignKeys = [
+        ForeignKey(
+            entity = ChatThreadEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["threadId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("threadId")],
+)
+data class SmsSenderThreadEntity(
+    @PrimaryKey val senderAddress: String,
+    val threadId: String,
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "sms_auto_reply_receipts",
+    foreignKeys = [
+        ForeignKey(
+            entity = ChatThreadEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["threadId"],
+            onDelete = ForeignKey.SET_NULL,
+        ),
+        ForeignKey(
+            entity = ChatMessageEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["userMessageId"],
+            onDelete = ForeignKey.SET_NULL,
+        ),
+        ForeignKey(
+            entity = ChatMessageEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["assistantMessageId"],
+            onDelete = ForeignKey.SET_NULL,
+        ),
+    ],
+    indices = [
+        Index(value = ["inboundMessageKey"], unique = true),
+        Index("senderAddress"),
+        Index("threadId"),
+        Index("userMessageId"),
+        Index("assistantMessageId"),
+        Index("decidedAtEpochMillis"),
+    ],
+)
+data class SmsAutoReplyReceiptEntity(
+    @PrimaryKey val id: String,
+    val inboundMessageKey: String,
+    val senderAddress: String,
+    val inboundBodySha256: String,
+    val inboundCharacterCount: Int,
+    val inboundReceivedAtEpochMillis: Long,
+    val threadId: String?,
+    val userMessageId: String?,
+    val assistantMessageId: String?,
+    val state: String,
+    val replyBodySha256: String?,
+    val replyCharacterCount: Int,
+    val smsPartCount: Int,
+    val queuedAtEpochMillis: Long?,
+    val decidedAtEpochMillis: Long,
+    val failureReason: String?,
+)

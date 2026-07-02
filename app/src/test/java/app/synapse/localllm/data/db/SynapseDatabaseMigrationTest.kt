@@ -109,6 +109,75 @@ class SynapseDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration7To8AddsSmsAutoReplyTables() {
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(TEST_DATABASE_NAME)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(7) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            createVersion7ChatTables(db)
+                        }
+
+                        override fun onUpgrade(
+                            db: SupportSQLiteDatabase,
+                            oldVersion: Int,
+                            newVersion: Int,
+                        ) = Unit
+                    },
+                )
+                .build(),
+        )
+
+        helper.writableDatabase.use { database ->
+            SYNAPSE_DATABASE_MIGRATION_7_8.migrate(database)
+
+            val receiptColumns = database.query("PRAGMA table_info(sms_auto_reply_receipts)").use { cursor ->
+                buildSet {
+                    val nameColumnIndex = cursor.getColumnIndexOrThrow("name")
+                    while (cursor.moveToNext()) {
+                        add(cursor.getString(nameColumnIndex))
+                    }
+                }
+            }
+            assertTrue(receiptColumns.containsAll(expectedSmsAutoReplyReceiptColumns))
+
+            database.execSQL(
+                """
+                INSERT INTO chat_threads (
+                    id,
+                    title,
+                    pinnedAtEpochMillis,
+                    archivedAtEpochMillis,
+                    titleEditedByUser,
+                    createdAtEpochMillis,
+                    updatedAtEpochMillis
+                )
+                VALUES ('thread-sms', 'SMS +15551234567', NULL, NULL, 0, 1781712000000, 1781712000000)
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                INSERT INTO sms_sender_threads (
+                    senderAddress,
+                    threadId,
+                    createdAtEpochMillis,
+                    updatedAtEpochMillis
+                )
+                VALUES ('+15551234567', 'thread-sms', 1781712000000, 1781712000000)
+                """.trimIndent(),
+            )
+
+            database.query(
+                "SELECT threadId FROM sms_sender_threads WHERE senderAddress = '+15551234567'",
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("thread-sms", cursor.getString(0))
+            }
+        }
+    }
+
     private fun createVersion6MemoryVersionsTable(db: SupportSQLiteDatabase) {
         db.execSQL(
             """
@@ -128,6 +197,38 @@ class SynapseDatabaseMigrationTest {
         )
     }
 
+    private fun createVersion7ChatTables(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE chat_threads (
+                id TEXT NOT NULL PRIMARY KEY,
+                title TEXT NOT NULL,
+                pinnedAtEpochMillis INTEGER DEFAULT NULL,
+                archivedAtEpochMillis INTEGER DEFAULT NULL,
+                titleEditedByUser INTEGER NOT NULL DEFAULT 0,
+                createdAtEpochMillis INTEGER NOT NULL,
+                updatedAtEpochMillis INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            CREATE TABLE chat_messages (
+                id TEXT NOT NULL PRIMARY KEY,
+                threadId TEXT NOT NULL,
+                role TEXT NOT NULL,
+                body TEXT NOT NULL,
+                deliveryState TEXT NOT NULL,
+                createdAtEpochMillis INTEGER NOT NULL,
+                completedAtEpochMillis INTEGER,
+                failureReason TEXT,
+                FOREIGN KEY(threadId) REFERENCES chat_threads(id)
+                ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent(),
+        )
+    }
+
     private companion object {
         const val TEST_DATABASE_NAME = "synapse-migration-test.db"
 
@@ -140,6 +241,22 @@ class SynapseDatabaseMigrationTest {
             "durabilityScore",
             "futureUsefulnessScore",
             "sensitivity",
+        )
+
+        val expectedSmsAutoReplyReceiptColumns = setOf(
+            "inboundMessageKey",
+            "senderAddress",
+            "inboundBodySha256",
+            "inboundCharacterCount",
+            "threadId",
+            "userMessageId",
+            "assistantMessageId",
+            "state",
+            "replyBodySha256",
+            "replyCharacterCount",
+            "smsPartCount",
+            "queuedAtEpochMillis",
+            "failureReason",
         )
     }
 }

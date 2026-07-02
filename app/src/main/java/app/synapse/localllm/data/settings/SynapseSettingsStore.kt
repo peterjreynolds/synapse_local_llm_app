@@ -49,6 +49,7 @@ class SynapseSettingsStore(context: Context) {
                 maxTokens = preferences[MAX_TOKENS] ?: 256,
                 memoryWritesEnabled = preferences[MEMORY_WRITES_ENABLED] ?: true,
                 speechPlaybackEnabled = preferences[SPEECH_PLAYBACK_ENABLED] ?: true,
+                smsAutoReplyEnabled = preferences[SMS_AUTO_REPLY_ENABLED] ?: false,
                 memoryDatabaseWarningBytes = preferences[MEMORY_DATABASE_WARNING_BYTES]
                     ?: 512L * 1024L * 1024L,
                 attachmentCacheWarningBytes = preferences[ATTACHMENT_CACHE_WARNING_BYTES]
@@ -118,6 +119,12 @@ class SynapseSettingsStore(context: Context) {
         }
     }
 
+    suspend fun updateSmsAutoReplyEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[SMS_AUTO_REPLY_ENABLED] = enabled
+        }
+    }
+
     private fun parseRuntimeBackend(rawBackend: String?): InferenceRuntimeBackend =
         rawBackend
             ?.let { backend -> runCatching { InferenceRuntimeBackend.valueOf(backend) }.getOrNull() }
@@ -175,6 +182,7 @@ class SynapseSettingsStore(context: Context) {
         val MAX_TOKENS = intPreferencesKey("max_tokens")
         val MEMORY_WRITES_ENABLED = booleanPreferencesKey("memory_writes_enabled")
         val SPEECH_PLAYBACK_ENABLED = booleanPreferencesKey("speech_playback_enabled")
+        val SMS_AUTO_REPLY_ENABLED = booleanPreferencesKey("sms_auto_reply_enabled")
         val MEMORY_DATABASE_WARNING_BYTES = longPreferencesKey("memory_database_warning_bytes")
         val ATTACHMENT_CACHE_WARNING_BYTES = longPreferencesKey("attachment_cache_warning_bytes")
         val MINIMUM_FREE_STORAGE_BYTES = longPreferencesKey("minimum_free_storage_bytes")

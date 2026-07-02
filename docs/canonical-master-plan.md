@@ -54,6 +54,9 @@ speech input, per-message playback, and no visible prompt scaffolding.
   [`voice-mode-architecture.md`](voice-mode-architecture.md).
 - Full app-state debug ZIP export, excluding GGUF model files.
 - Persisted generation timing traces for diagnosing slow or blank local model responses.
+- Explicit SMS auto-reply toggle that receives inbound SMS, submits it through
+  the local LLM turn coordinator, and queues the finalized assistant reply back
+  to the originating sender with durable receipts.
 
 ## Remaining Major Tracks
 
@@ -270,7 +273,8 @@ Goal: share one solid core between Synapse AI and later characters/products.
 
 ## Non-Negotiable Boundaries
 
-- No autonomous outbound messaging in v1.
+- Autonomous outbound SMS exists only behind the explicit SMS auto-reply toggle
+  and Android SMS permissions.
 - Memory, research, workspace files, and governance artifacts are separate concerns.
 - Research documents are not memory.
 - GGUF model files are not committed and are not included in normal APKs.

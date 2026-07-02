@@ -66,6 +66,11 @@ class SynapseSettingsTest {
     }
 
     @Test
+    fun smsAutoReplyDefaultsOff() {
+        assertFalse(SynapseSettings().smsAutoReplyEnabled)
+    }
+
+    @Test
     fun extractsEditableInstructionsFromLegacyComposedPrompt() {
         val legacyPrompt = buildString {
             append("You are Synapse, a private phone-local assistant inside an Android chat app. ")

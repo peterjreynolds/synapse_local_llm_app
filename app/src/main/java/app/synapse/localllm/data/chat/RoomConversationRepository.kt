@@ -36,6 +36,9 @@ class RoomConversationRepository(
     override suspend fun createThread(): ChatThreadRecord =
         persistNewThread(title = "New chat")
 
+    override suspend fun createThread(title: String): ChatThreadRecord =
+        persistNewThread(title = normalizeManualThreadTitle(title))
+
     override fun observeThreads(): Flow<List<ChatThreadRecord>> =
         chatDao.observeThreads().map { threads ->
             threads.map { thread -> thread.toDomain() }
@@ -53,6 +56,9 @@ class RoomConversationRepository(
         chatDao.listRecentMessages(threadId.raw, limit)
             .asReversed()
             .map { message -> message.toDomain() }
+
+    override suspend fun findMessage(messageId: ChatMessageId): ChatMessageRecord? =
+        chatDao.findMessage(messageId.raw)?.toDomain()
 
     override suspend fun setThreadPinned(
         threadId: ChatThreadId,

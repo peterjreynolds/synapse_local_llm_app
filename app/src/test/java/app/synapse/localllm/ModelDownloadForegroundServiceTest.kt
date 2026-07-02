@@ -5,6 +5,10 @@ import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
+import app.synapse.localllm.domain.sms.InboundSmsAutoReplyCommand
+import app.synapse.localllm.domain.sms.SmsInboundMessageKey
+import app.synapse.localllm.domain.sms.SmsSenderAddress
+import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -41,5 +45,22 @@ class ModelDownloadForegroundServiceTest {
     @Test
     fun parserRejectsWrongAction() {
         assertNull(ModelDownloadForegroundService.parseStartIntent(Intent("wrong.action")))
+    }
+
+    @Test
+    fun smsAutoReplyStartIntentRoundTripsInboundSms() {
+        val context: Context = ApplicationProvider.getApplicationContext()
+        val inboundSms = InboundSmsAutoReplyCommand(
+            inboundMessageKey = SmsInboundMessageKey("b".repeat(64)),
+            senderAddress = SmsSenderAddress("+15551234567"),
+            messageBody = "Are you free later?",
+            receivedAt = Instant.parse("2026-07-02T12:00:00Z"),
+        )
+
+        val parsedInboundSms = SmsAutoReplyForegroundService.parseStartIntent(
+            SmsAutoReplyForegroundService.createStartIntent(context, inboundSms),
+        )
+
+        assertEquals(inboundSms, parsedInboundSms)
     }
 }

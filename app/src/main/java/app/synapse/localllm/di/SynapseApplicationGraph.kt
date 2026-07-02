@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.application.SynapseTurnCoordinator
+import app.synapse.localllm.application.SmsAutoReplyCoordinator
 import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
 import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
@@ -13,6 +14,7 @@ import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_5_6
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_6_7
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_7_8
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.library.AndroidMarkdownPdfExporter
 import app.synapse.localllm.data.library.RoomLibraryWorkspaceRepository
@@ -33,6 +35,8 @@ import app.synapse.localllm.data.runtime.PhoneLocalInferenceRuntime
 import app.synapse.localllm.data.runtime.TermuxCommandGateway
 import app.synapse.localllm.data.runtime.embedded.EmbeddedLlamaRuntime
 import app.synapse.localllm.data.settings.SynapseSettingsStore
+import app.synapse.localllm.data.sms.AndroidSmsOutboundGateway
+import app.synapse.localllm.data.sms.RoomSmsAutoReplyRepository
 import app.synapse.localllm.data.storage.AndroidStorageHealthGovernor
 import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
 import app.synapse.localllm.data.update.AndroidAppUpdateDownloader
@@ -51,6 +55,8 @@ import app.synapse.localllm.domain.memory.PromptContextAssembler
 import app.synapse.localllm.domain.runtime.LocalInferenceRuntime
 import app.synapse.localllm.domain.runtime.ModelCatalogRepository
 import app.synapse.localllm.domain.runtime.ModelDownloader
+import app.synapse.localllm.domain.sms.SmsAutoReplyRepository
+import app.synapse.localllm.domain.sms.SmsOutboundGateway
 import app.synapse.localllm.domain.storage.StorageHealthGovernor
 import app.synapse.localllm.domain.time.SynapseClock
 import app.synapse.localllm.domain.time.SystemSynapseClock
@@ -75,6 +81,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_4_5,
         SYNAPSE_DATABASE_MIGRATION_5_6,
         SYNAPSE_DATABASE_MIGRATION_6_7,
+        SYNAPSE_DATABASE_MIGRATION_7_8,
     ).build()
 
     val settingsStore = SynapseSettingsStore(applicationContext)
@@ -120,6 +127,19 @@ class SynapseApplicationGraph private constructor(context: Context) {
         RoomGenerationDiagnosticsRepository(
             diagnosticsDao = database.diagnosticsDao(),
             idFactory = idFactory,
+        )
+
+    val smsAutoReplyRepository: SmsAutoReplyRepository =
+        RoomSmsAutoReplyRepository(
+            smsAutoReplyDao = database.smsAutoReplyDao(),
+            idFactory = idFactory,
+            clock = clock,
+        )
+
+    val smsOutboundGateway: SmsOutboundGateway =
+        AndroidSmsOutboundGateway(
+            context = applicationContext,
+            clock = clock,
         )
 
     val memoryProjector: MemoryProjector = DeterministicMemoryProjector()
@@ -173,6 +193,14 @@ class SynapseApplicationGraph private constructor(context: Context) {
             generationDiagnosticsRepository = generationDiagnosticsRepository,
             idFactory = idFactory,
             clock = clock,
+        )
+
+    val smsAutoReplyCoordinator =
+        SmsAutoReplyCoordinator(
+            conversationRepository = conversationRepository,
+            smsAutoReplyRepository = smsAutoReplyRepository,
+            smsOutboundGateway = smsOutboundGateway,
+            turnCoordinator = turnCoordinator,
         )
 
     private fun createHttpClient(): OkHttpClient =

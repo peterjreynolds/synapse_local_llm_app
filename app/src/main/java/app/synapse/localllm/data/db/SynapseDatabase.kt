@@ -21,8 +21,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RetrievalReceiptEntity::class,
         RetrievedMemoryReceiptEntity::class,
         StorageHealthSnapshotEntity::class,
+        SmsSenderThreadEntity::class,
+        SmsAutoReplyReceiptEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -35,6 +37,8 @@ abstract class SynapseDatabase : RoomDatabase() {
     abstract fun diagnosticsDao(): DiagnosticsDao
 
     abstract fun libraryDao(): LibraryDao
+
+    abstract fun smsAutoReplyDao(): SmsAutoReplyDao
 }
 
 val SYNAPSE_DATABASE_MIGRATION_1_2 =
@@ -252,6 +256,94 @@ val SYNAPSE_DATABASE_MIGRATION_6_7 =
                 """
                 CREATE INDEX IF NOT EXISTS index_memory_versions_sensitivity
                 ON memory_versions(sensitivity)
+                """.trimIndent(),
+            )
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_7_8 =
+    object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS sms_sender_threads (
+                    senderAddress TEXT NOT NULL PRIMARY KEY,
+                    threadId TEXT NOT NULL,
+                    createdAtEpochMillis INTEGER NOT NULL,
+                    updatedAtEpochMillis INTEGER NOT NULL,
+                    FOREIGN KEY(threadId) REFERENCES chat_threads(id)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_sms_sender_threads_threadId
+                ON sms_sender_threads(threadId)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS sms_auto_reply_receipts (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    inboundMessageKey TEXT NOT NULL,
+                    senderAddress TEXT NOT NULL,
+                    inboundBodySha256 TEXT NOT NULL,
+                    inboundCharacterCount INTEGER NOT NULL,
+                    inboundReceivedAtEpochMillis INTEGER NOT NULL,
+                    threadId TEXT,
+                    userMessageId TEXT,
+                    assistantMessageId TEXT,
+                    state TEXT NOT NULL,
+                    replyBodySha256 TEXT,
+                    replyCharacterCount INTEGER NOT NULL,
+                    smsPartCount INTEGER NOT NULL,
+                    queuedAtEpochMillis INTEGER,
+                    decidedAtEpochMillis INTEGER NOT NULL,
+                    failureReason TEXT,
+                    FOREIGN KEY(threadId) REFERENCES chat_threads(id)
+                    ON UPDATE NO ACTION ON DELETE SET NULL,
+                    FOREIGN KEY(userMessageId) REFERENCES chat_messages(id)
+                    ON UPDATE NO ACTION ON DELETE SET NULL,
+                    FOREIGN KEY(assistantMessageId) REFERENCES chat_messages(id)
+                    ON UPDATE NO ACTION ON DELETE SET NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS index_sms_auto_reply_receipts_inboundMessageKey
+                ON sms_auto_reply_receipts(inboundMessageKey)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_sms_auto_reply_receipts_senderAddress
+                ON sms_auto_reply_receipts(senderAddress)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_sms_auto_reply_receipts_threadId
+                ON sms_auto_reply_receipts(threadId)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_sms_auto_reply_receipts_userMessageId
+                ON sms_auto_reply_receipts(userMessageId)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_sms_auto_reply_receipts_assistantMessageId
+                ON sms_auto_reply_receipts(assistantMessageId)
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS index_sms_auto_reply_receipts_decidedAtEpochMillis
+                ON sms_auto_reply_receipts(decidedAtEpochMillis)
                 """.trimIndent(),
             )
         }

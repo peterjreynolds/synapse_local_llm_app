@@ -97,11 +97,15 @@ interface ConversationRepository {
 
     suspend fun createThread(): ChatThreadRecord
 
+    suspend fun createThread(title: String): ChatThreadRecord
+
     fun observeThreads(): Flow<List<ChatThreadRecord>>
 
     fun observeMessages(threadId: ChatThreadId): Flow<List<ChatMessageRecord>>
 
     suspend fun listRecentMessages(threadId: ChatThreadId, limit: Int): List<ChatMessageRecord>
+
+    suspend fun findMessage(messageId: ChatMessageId): ChatMessageRecord?
 
     suspend fun setThreadPinned(threadId: ChatThreadId, pinned: Boolean): ChatThreadMutationReceipt
 

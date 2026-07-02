@@ -207,6 +207,19 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         }
         entry?.let(viewModel::downloadCatalogModel)
     }
+    val smsAutoReplyPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        val granted = requiredSmsAutoReplyPermissions.all { permission ->
+            permissions[permission] == true ||
+                ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+        if (granted) {
+            viewModel.updateSmsAutoReplyEnabled(true)
+        } else {
+            viewModel.publishNotice("SMS auto-reply needs Receive SMS and Send SMS permissions.")
+        }
+    }
     val attachmentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -345,6 +358,15 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onSaveSettings = viewModel::saveSettingsDraft,
         onMemoryWritesChanged = viewModel::updateMemoryWritesEnabled,
         onSpeechPlaybackChanged = viewModel::updateSpeechPlaybackEnabled,
+        onSmsAutoReplyChanged = { enabled ->
+            if (!enabled) {
+                viewModel.updateSmsAutoReplyEnabled(false)
+            } else if (hasSmsAutoReplyPermissions(context)) {
+                viewModel.updateSmsAutoReplyEnabled(true)
+            } else {
+                smsAutoReplyPermissionLauncher.launch(requiredSmsAutoReplyPermissions)
+            }
+        },
         onInspectStorage = viewModel::inspectStorageHealth,
         onExportDebugArchive = {
             viewModel.exportDebugArchive { archiveUri ->
@@ -398,6 +420,7 @@ private fun SynapseScreen(
     onSaveSettings: () -> Unit,
     onMemoryWritesChanged: (Boolean) -> Unit,
     onSpeechPlaybackChanged: (Boolean) -> Unit,
+    onSmsAutoReplyChanged: (Boolean) -> Unit,
     onInspectStorage: () -> Unit,
     onExportDebugArchive: () -> Unit,
     onDismissNotice: () -> Unit,
@@ -501,6 +524,7 @@ private fun SynapseScreen(
                             onDownloadCatalogModel = onDownloadCatalogModel,
                             onMemoryWritesChanged = onMemoryWritesChanged,
                             onSpeechPlaybackChanged = onSpeechPlaybackChanged,
+                            onSmsAutoReplyChanged = onSmsAutoReplyChanged,
                             onExportDebugArchive = onExportDebugArchive,
                         )
                 }
@@ -1951,6 +1975,7 @@ private fun SettingsPanel(
     onDownloadCatalogModel: (ModelCatalogEntry) -> Unit,
     onMemoryWritesChanged: (Boolean) -> Unit,
     onSpeechPlaybackChanged: (Boolean) -> Unit,
+    onSmsAutoReplyChanged: (Boolean) -> Unit,
     onExportDebugArchive: () -> Unit,
 ) {
     LazyColumn(
@@ -2072,6 +2097,14 @@ private fun SettingsPanel(
                 label = "Speaker playback",
                 checked = state.settings.speechPlaybackEnabled,
                 onCheckedChange = onSpeechPlaybackChanged,
+            )
+        }
+        item {
+            SettingsSwitchRow(
+                label = "SMS auto-reply",
+                supportingText = "When enabled, incoming SMS messages are sent to the local model and the reply is queued back to the sender automatically.",
+                checked = state.settings.smsAutoReplyEnabled,
+                onCheckedChange = onSmsAutoReplyChanged,
             )
         }
         item {
@@ -2342,6 +2375,7 @@ private fun ModelPromptProfileSelector(
 @Composable
 private fun SettingsSwitchRow(
     label: String,
+    supportingText: String? = null,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
@@ -2352,11 +2386,30 @@ private fun SettingsSwitchRow(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text = label, modifier = Modifier.weight(1f))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = label)
+                if (supportingText != null) {
+                    Text(
+                        text = supportingText,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
             Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
 }
+
+private val requiredSmsAutoReplyPermissions = arrayOf(
+    Manifest.permission.RECEIVE_SMS,
+    Manifest.permission.SEND_SMS,
+)
+
+private fun hasSmsAutoReplyPermissions(context: Context): Boolean =
+    requiredSmsAutoReplyPermissions.all { permission ->
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    }
 
 @Composable
 private fun rememberMessageSpeechPlaybackController(): MessageSpeechPlaybackController {
