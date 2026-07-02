@@ -55,6 +55,13 @@ the message content; the receipt owns mutation evidence and correlation.
 10. On completed generation, `AndroidSmsOutboundGateway` queues the SMS reply.
 11. Room receipts record queued or failed outcome.
 
+If Android redelivers the same inbound SMS key after an interrupted attempt,
+the coordinator retries receipts left in generation-retryable states:
+`GENERATING`, `GENERATION_FAILED`, `EMPTY_REPLY_REJECTED`, and
+`SMS_QUEUE_FAILED`. Terminal receipts such as `SMS_QUEUED`,
+`AUTO_REPLY_DISABLED`, and `INVALID_INBOUND_MESSAGE` are returned without a
+second send.
+
 ## Startup Cleanup
 
 When Synapse reopens, normal chat cleanup marks stale streaming assistant

@@ -23,6 +23,21 @@ enum class SmsAutoReplyState {
     INVALID_INBOUND_MESSAGE,
 }
 
+fun SmsAutoReplyState.canRetrySmsAutoReplyGeneration(): Boolean =
+    when (this) {
+        SmsAutoReplyState.GENERATING,
+        SmsAutoReplyState.GENERATION_FAILED,
+        SmsAutoReplyState.EMPTY_REPLY_REJECTED,
+        SmsAutoReplyState.SMS_QUEUE_FAILED,
+        -> true
+
+        SmsAutoReplyState.AUTO_REPLY_DISABLED,
+        SmsAutoReplyState.DUPLICATE_IGNORED,
+        SmsAutoReplyState.SMS_QUEUED,
+        SmsAutoReplyState.INVALID_INBOUND_MESSAGE,
+        -> false
+    }
+
 data class InboundSmsAutoReplyCommand(
     val inboundMessageKey: SmsInboundMessageKey,
     val senderAddress: SmsSenderAddress,

@@ -17,6 +17,7 @@ import app.synapse.localllm.domain.sms.SmsAutoReplyRepository
 import app.synapse.localllm.domain.sms.SmsAutoReplyState
 import app.synapse.localllm.domain.sms.SmsOutboundGateway
 import app.synapse.localllm.domain.sms.SmsSenderAddress
+import app.synapse.localllm.domain.sms.canRetrySmsAutoReplyGeneration
 import app.synapse.localllm.domain.sms.normalizeInboundSmsBody
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -61,13 +62,17 @@ class SmsAutoReplyCoordinator(
             )
         }
 
-        val receipt = smsAutoReplyRepository.recordAutoReplyAccepted(acceptedCommand)
-            ?: return smsAutoReplyRepository.findReceiptByInboundMessageKey(command.inboundMessageKey)
-                ?: smsAutoReplyRepository.recordAutoReplySkipped(
+        val insertedReceipt = smsAutoReplyRepository.recordAutoReplyAccepted(acceptedCommand)
+        val receipt = insertedReceipt ?: run {
+            val existingReceipt = smsAutoReplyRepository.findReceiptByInboundMessageKey(command.inboundMessageKey)
+                ?: return smsAutoReplyRepository.recordAutoReplySkipped(
                     command = acceptedCommand,
                     state = SmsAutoReplyState.DUPLICATE_IGNORED,
                     reason = "Inbound SMS was already recorded.",
                 )
+            if (!existingReceipt.state.canRetrySmsAutoReplyGeneration()) return existingReceipt
+            existingReceipt
+        }
 
         val threadId = ensureThreadForSender(command.senderAddress)
         val autoReplySettings = settings.copy(

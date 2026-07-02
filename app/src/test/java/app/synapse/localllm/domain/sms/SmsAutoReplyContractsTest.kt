@@ -4,6 +4,7 @@ import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,5 +33,23 @@ class SmsAutoReplyContractsTest {
 
         assertNotEquals(firstKey, secondKey)
         assertTrue(firstKey.raw.matches(Regex("[0-9a-f]{64}")))
+    }
+
+    @Test
+    fun classifiesAutoReplyGenerationRetryableStates() {
+        val retryableStates = setOf(
+            SmsAutoReplyState.GENERATING,
+            SmsAutoReplyState.GENERATION_FAILED,
+            SmsAutoReplyState.EMPTY_REPLY_REJECTED,
+            SmsAutoReplyState.SMS_QUEUE_FAILED,
+        )
+        val terminalStates = SmsAutoReplyState.entries.toSet() - retryableStates
+
+        retryableStates.forEach { state ->
+            assertTrue("$state should retry generation", state.canRetrySmsAutoReplyGeneration())
+        }
+        terminalStates.forEach { state ->
+            assertFalse("$state should not retry generation", state.canRetrySmsAutoReplyGeneration())
+        }
     }
 }
