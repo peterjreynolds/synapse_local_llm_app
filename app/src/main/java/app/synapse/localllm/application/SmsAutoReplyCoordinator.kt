@@ -5,6 +5,7 @@ import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.settings.SynapseSettings
+import app.synapse.localllm.domain.settings.composeSmsAutoReplySystemPrompt
 import app.synapse.localllm.domain.sms.InboundSmsAutoReplyCommand
 import app.synapse.localllm.domain.sms.LinkSmsAutoReplyTurnCommand
 import app.synapse.localllm.domain.sms.MarkSmsAutoReplyQueuedCommand
@@ -67,9 +68,11 @@ class SmsAutoReplyCoordinator(
 
         val threadId = ensureThreadForSender(command.senderAddress)
         val autoReplySettings = settings.copy(
-            systemPrompt = buildSmsAutoReplySystemPrompt(settings.systemPrompt),
+            systemPrompt = composeSmsAutoReplySystemPrompt(
+                systemPrompt = settings.systemPrompt,
+                smsAutoReplyInstructions = settings.smsAutoReplyInstructions,
+            ),
             memoryWritesEnabled = false,
-            maxTokens = settings.maxTokens.coerceAtMost(SMS_AUTO_REPLY_MAX_TOKENS),
         )
         val outcome = turnCoordinator.sendUserTurn(
             command = SubmitUserMessageCommand(
@@ -174,8 +177,6 @@ class SmsAutoReplyCoordinator(
         )
 
     private companion object {
-        const val SMS_AUTO_REPLY_MAX_TOKENS = 96
-
         fun buildSmsThreadTitle(senderAddress: SmsSenderAddress): String =
             "SMS ${senderAddress.raw}".take(72).trimEnd()
 
@@ -184,14 +185,5 @@ class SmsAutoReplyCoordinator(
             inboundBody: String,
         ): String =
             "Incoming SMS from ${senderAddress.raw}:\n$inboundBody"
-
-        fun buildSmsAutoReplySystemPrompt(existingSystemPrompt: String): String =
-            existingSystemPrompt.trim() +
-                "\n\nSMS auto-reply mode is enabled by the phone owner. " +
-                "Write the exact outbound SMS reply to the sender, as the phone owner, in first person. " +
-                "Output only the message body to send. Do not include labels, quotes, explanations, or markdown. " +
-                "Keep it concise and natural. If the incoming message needs a commitment, sensitive decision, " +
-                "money, legal, medical, passwords, private data, or anything you are uncertain about, send a brief " +
-                "busy reply saying the owner will respond later."
     }
 }

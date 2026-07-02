@@ -18,6 +18,7 @@ import app.synapse.localllm.domain.settings.composeSystemPrompt
 import app.synapse.localllm.domain.settings.extractEditableCustomInstructions
 import app.synapse.localllm.domain.settings.normalizeCustomInstructions
 import app.synapse.localllm.domain.settings.normalizePersona
+import app.synapse.localllm.domain.settings.normalizeSmsAutoReplyInstructions
 import app.synapse.localllm.domain.settings.normalizeSystemPrompt
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -50,6 +51,9 @@ class SynapseSettingsStore(context: Context) {
                 memoryWritesEnabled = preferences[MEMORY_WRITES_ENABLED] ?: true,
                 speechPlaybackEnabled = preferences[SPEECH_PLAYBACK_ENABLED] ?: true,
                 smsAutoReplyEnabled = preferences[SMS_AUTO_REPLY_ENABLED] ?: false,
+                smsAutoReplyInstructions = normalizeSmsAutoReplyInstructions(
+                    preferences[SMS_AUTO_REPLY_INSTRUCTIONS],
+                ),
                 memoryDatabaseWarningBytes = preferences[MEMORY_DATABASE_WARNING_BYTES]
                     ?: 512L * 1024L * 1024L,
                 attachmentCacheWarningBytes = preferences[ATTACHMENT_CACHE_WARNING_BYTES]
@@ -68,9 +72,11 @@ class SynapseSettingsStore(context: Context) {
         modelPromptProfile: ModelPromptProfile,
         temperature: Double,
         maxTokens: Int,
+        smsAutoReplyInstructions: String,
     ) {
         val normalizedPersona = normalizePersona(persona)
         val normalizedCustomInstructions = normalizeCustomInstructions(customInstructions)
+        val normalizedSmsAutoReplyInstructions = normalizeSmsAutoReplyInstructions(smsAutoReplyInstructions)
         dataStore.edit { preferences ->
             preferences[RUNTIME_BACKEND] = runtimeBackend.name
             preferences[BASE_URL] = baseUrl.trim().removeSuffix("/")
@@ -84,6 +90,7 @@ class SynapseSettingsStore(context: Context) {
             )
             preferences[TEMPERATURE] = temperature.coerceIn(0.0, 2.0)
             preferences[MAX_TOKENS] = maxTokens.coerceIn(1, 4096)
+            preferences[SMS_AUTO_REPLY_INSTRUCTIONS] = normalizedSmsAutoReplyInstructions
         }
     }
 
@@ -183,6 +190,7 @@ class SynapseSettingsStore(context: Context) {
         val MEMORY_WRITES_ENABLED = booleanPreferencesKey("memory_writes_enabled")
         val SPEECH_PLAYBACK_ENABLED = booleanPreferencesKey("speech_playback_enabled")
         val SMS_AUTO_REPLY_ENABLED = booleanPreferencesKey("sms_auto_reply_enabled")
+        val SMS_AUTO_REPLY_INSTRUCTIONS = stringPreferencesKey("sms_auto_reply_instructions")
         val MEMORY_DATABASE_WARNING_BYTES = longPreferencesKey("memory_database_warning_bytes")
         val ATTACHMENT_CACHE_WARNING_BYTES = longPreferencesKey("attachment_cache_warning_bytes")
         val MINIMUM_FREE_STORAGE_BYTES = longPreferencesKey("minimum_free_storage_bytes")

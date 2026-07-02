@@ -56,7 +56,8 @@ speech input, per-message playback, and no visible prompt scaffolding.
 - Persisted generation timing traces for diagnosing slow or blank local model responses.
 - Explicit SMS auto-reply toggle that receives inbound SMS, submits it through
   the local LLM turn coordinator, and queues the finalized assistant reply back
-  to the originating sender with durable receipts.
+  to the originating sender with durable receipts and user-controlled SMS
+  reply instructions.
 
 ## Remaining Major Tracks
 

@@ -68,6 +68,29 @@ class SynapseSettingsTest {
     @Test
     fun smsAutoReplyDefaultsOff() {
         assertFalse(SynapseSettings().smsAutoReplyEnabled)
+        assertEquals("", SynapseSettings().smsAutoReplyInstructions)
+    }
+
+    @Test
+    fun normalizesSmsAutoReplyInstructions() {
+        assertEquals(
+            "Reply like me.",
+            normalizeSmsAutoReplyInstructions("  Reply like me.  "),
+        )
+    }
+
+    @Test
+    fun composesSmsAutoReplyPromptWithoutHardcodedBusyPersona() {
+        val prompt = composeSmsAutoReplySystemPrompt(
+            systemPrompt = "Base persona.",
+            smsAutoReplyInstructions = "Reply chaotic and funny.",
+        )
+
+        assertTrue(prompt.contains("Base persona."))
+        assertTrue(prompt.contains("Reply chaotic and funny."))
+        assertTrue(prompt.contains("Output only the exact SMS message body"))
+        assertFalse(prompt.contains("busy reply"))
+        assertFalse(prompt.contains("sensitive decision"))
     }
 
     @Test

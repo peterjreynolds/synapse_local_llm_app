@@ -758,6 +758,7 @@ class SynapseViewModel(
                 modelPromptProfile = draft.modelPromptProfile,
                 temperature = draft.temperature.toDoubleOrNull() ?: 0.7,
                 maxTokens = draft.maxTokens.toIntOrNull() ?: 768,
+                smsAutoReplyInstructions = draft.smsAutoReplyInstructions,
             )
             mutableUiState.update { state -> state.copy(lastNotice = "Runtime settings saved.") }
             inspectStorageHealth()
@@ -988,6 +989,7 @@ class SynapseViewModel(
             modelPromptProfile = modelPromptProfile,
             persona = persona,
             customInstructions = customInstructions,
+            smsAutoReplyInstructions = smsAutoReplyInstructions,
             temperature = temperature.toString(),
             maxTokens = maxTokens.toString(),
         )

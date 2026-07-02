@@ -18,6 +18,7 @@ data class SynapseSettings(
     val memoryWritesEnabled: Boolean = true,
     val speechPlaybackEnabled: Boolean = true,
     val smsAutoReplyEnabled: Boolean = false,
+    val smsAutoReplyInstructions: String = DEFAULT_SMS_AUTO_REPLY_INSTRUCTIONS,
     val memoryDatabaseWarningBytes: Long = 512L * 1024L * 1024L,
     val attachmentCacheWarningBytes: Long = 1024L * 1024L * 1024L,
     val minimumFreeStorageBytes: Long = 2L * 1024L * 1024L * 1024L,
@@ -42,6 +43,8 @@ const val DEFAULT_PERSONA =
 const val DEFAULT_CUSTOM_INSTRUCTIONS =
     "Keep answers direct, conversational, and useful. For simple greetings, answer in one short line. " +
         "Ask a short clarifying question only when needed. Give technical detail when asked."
+
+const val DEFAULT_SMS_AUTO_REPLY_INSTRUCTIONS = ""
 
 private const val LEGACY_DEFAULT_OWNER_NAME = "Pet" + "er"
 
@@ -98,6 +101,12 @@ fun normalizeCustomInstructions(customInstructions: String?): String =
         else -> trimmedInstructions
     }
 
+fun normalizeSmsAutoReplyInstructions(smsAutoReplyInstructions: String?): String =
+    smsAutoReplyInstructions
+        ?.trim()
+        .orEmpty()
+        .take(SMS_AUTO_REPLY_INSTRUCTIONS_LIMIT)
+
 fun extractEditableCustomInstructions(systemPrompt: String): String? {
     val marker = listOf(LEGACY_USER_INSTRUCTIONS_MARKER, USER_PREFERENCES_MARKER)
         .firstOrNull { candidate -> systemPrompt.contains(candidate) }
@@ -120,3 +129,25 @@ fun composeSystemPrompt(
         append(" ")
         append(normalizeCustomInstructions(customInstructions))
     }
+
+fun composeSmsAutoReplySystemPrompt(
+    systemPrompt: String,
+    smsAutoReplyInstructions: String,
+): String =
+    buildString {
+        append(systemPrompt.trim())
+        append("\n\n")
+        append("SMS auto-reply transport contract: ")
+        append("Reply to the inbound SMS as the phone owner. ")
+        append("Output only the exact SMS message body to send. ")
+        append("Do not include labels, quotes, markdown, or explanations.")
+
+        val normalizedSmsInstructions = normalizeSmsAutoReplyInstructions(smsAutoReplyInstructions)
+        if (normalizedSmsInstructions.isNotBlank()) {
+            append("\n\n")
+            append("SMS auto-reply instructions from the phone owner: ")
+            append(normalizedSmsInstructions)
+        }
+    }
+
+private const val SMS_AUTO_REPLY_INSTRUCTIONS_LIMIT = 4_000

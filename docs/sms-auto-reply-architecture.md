@@ -17,6 +17,10 @@ through Android `SmsManager`.
   diagnostics, output filtering, and chat persistence remain centralized.
 - SMS turns disable memory writes because inbound SMS is third-party input, not
   a deliberate owner memory command.
+- SMS turns use the currently active Synapse runtime/model settings.
+- SMS style is controlled by the normal Persona/Custom Instructions plus the
+  optional `SMS Auto-Reply Instructions` setting. Synapse does not impose a
+  separate assistant persona for SMS.
 - Replies are automatic when the toggle and Android permissions are enabled.
 
 ## Receipts
@@ -43,8 +47,8 @@ the message content; the receipt owns mutation evidence and correlation.
 5. `SmsAutoReplyCoordinator` deduplicates the inbound message key.
 6. The coordinator reuses or creates a per-sender chat thread.
 7. The inbound SMS becomes a normal persisted user turn.
-8. The coordinator overlays SMS-specific prompt policy and disables memory
-   writes for that turn.
+8. The coordinator adds only a transport contract, applies the owner's optional
+   SMS instructions, and disables memory writes for that turn.
 9. On completed generation, `AndroidSmsOutboundGateway` queues the SMS reply.
 10. Room receipts record queued or failed outcome.
 

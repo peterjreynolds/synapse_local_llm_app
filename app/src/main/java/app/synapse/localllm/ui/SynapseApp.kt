@@ -2108,6 +2108,18 @@ private fun SettingsPanel(
             )
         }
         item {
+            OutlinedTextField(
+                value = state.settingsDraft.smsAutoReplyInstructions,
+                onValueChange = { value ->
+                    onSettingsDraftChanged(state.settingsDraft.copy(smsAutoReplyInstructions = value))
+                },
+                label = { Text("SMS Auto-Reply Instructions") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+                maxLines = 8,
+            )
+        }
+        item {
             DebugArchiveCard(onExportDebugArchive = onExportDebugArchive)
         }
         item {

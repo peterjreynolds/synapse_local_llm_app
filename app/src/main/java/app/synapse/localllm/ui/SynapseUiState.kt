@@ -28,6 +28,7 @@ data class RuntimeSettingsDraft(
     val modelPromptProfile: ModelPromptProfile = ModelPromptProfile.AUTO,
     val persona: String = "",
     val customInstructions: String = "",
+    val smsAutoReplyInstructions: String = "",
     val temperature: String = "0.7",
     val maxTokens: String = "256",
 )
@@ -99,6 +100,7 @@ data class SynapseUiState(
     val settingsDraft: RuntimeSettingsDraft = RuntimeSettingsDraft(
         persona = SynapseSettings().persona,
         customInstructions = SynapseSettings().customInstructions,
+        smsAutoReplyInstructions = SynapseSettings().smsAutoReplyInstructions,
     ),
     val runtimeStatus: RuntimeStatus = RuntimeStatus.Unknown,
     val currentThread: ChatThreadRecord? = null,
