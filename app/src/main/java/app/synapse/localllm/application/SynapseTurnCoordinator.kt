@@ -5,6 +5,7 @@ import app.synapse.localllm.domain.chat.AttachmentKind
 import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ConversationRepository
 import app.synapse.localllm.domain.chat.ConversationRole
+import app.synapse.localllm.domain.chat.ConversationTurnReceipt
 import app.synapse.localllm.domain.chat.PendingAttachment
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.diagnostics.AssistantGenerationFinishedCommand
@@ -57,12 +58,14 @@ class SynapseTurnCoordinator(
     suspend fun sendUserTurn(
         command: SubmitUserMessageCommand,
         settings: SynapseSettings,
+        onTurnStarted: suspend (ConversationTurnReceipt) -> Unit = {},
     ): SynapseTurnOutcome {
         val priorMessages = conversationRepository.listRecentMessages(
             threadId = command.threadId,
             limit = RECENT_THREAD_MESSAGE_LIMIT,
         )
         val turnReceipt = conversationRepository.submitUserMessage(command)
+        onTurnStarted(turnReceipt)
         val promptText = buildPromptText(command.body, command.attachments)
         val memoryPreparation = prepareMemoryForTurn(
             userMessageId = turnReceipt.userMessageId,

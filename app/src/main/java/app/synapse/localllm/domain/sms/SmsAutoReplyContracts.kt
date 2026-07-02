@@ -92,6 +92,11 @@ interface SmsAutoReplyRepository {
         reason: String,
     ): SmsAutoReplyReceiptRecord
 
+    suspend fun markStaleGeneratingAutoRepliesFailed(
+        staleBefore: Instant,
+        reason: String,
+    ): Int
+
     suspend fun findThreadLinkForSender(senderAddress: SmsSenderAddress): SmsSenderThreadLink?
 
     suspend fun persistThreadLinkForSender(

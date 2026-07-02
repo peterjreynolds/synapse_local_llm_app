@@ -115,7 +115,10 @@ interface ConversationRepository {
 
     suspend fun deleteThread(threadId: ChatThreadId): ChatThreadMutationReceipt
 
-    suspend fun failStaleStreamingAssistantMessages(reason: String): Int
+    suspend fun failStaleStreamingAssistantMessages(
+        reason: String,
+        activeSmsAutoReplyAfter: Instant,
+    ): Int
 
     suspend fun submitUserMessage(command: SubmitUserMessageCommand): ConversationTurnReceipt
 

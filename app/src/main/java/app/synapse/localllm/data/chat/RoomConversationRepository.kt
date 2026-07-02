@@ -18,6 +18,7 @@ import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
+import app.synapse.localllm.domain.sms.SmsAutoReplyState
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
@@ -119,13 +120,18 @@ class RoomConversationRepository(
         )
     }
 
-    override suspend fun failStaleStreamingAssistantMessages(reason: String): Int =
+    override suspend fun failStaleStreamingAssistantMessages(
+        reason: String,
+        activeSmsAutoReplyAfter: Instant,
+    ): Int =
         chatDao.failStreamingAssistantMessages(
             assistantRole = ConversationRole.ASSISTANT.name,
             streamingState = MessageDeliveryState.STREAMING.name,
             failedState = MessageDeliveryState.FAILED.name,
             completedAtEpochMillis = clock.now().toEpochMilli(),
             failureReason = reason,
+            smsGeneratingState = SmsAutoReplyState.GENERATING.name,
+            activeSmsAutoReplyAfterEpochMillis = activeSmsAutoReplyAfter.toEpochMilli(),
         )
 
     override suspend fun submitUserMessage(command: SubmitUserMessageCommand): ConversationTurnReceipt {

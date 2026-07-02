@@ -4,10 +4,15 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.synapse.localllm.data.db.SynapseDatabase
+import app.synapse.localllm.data.sms.RoomSmsAutoReplyRepository
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.MessageDeliveryState
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.SynapseIdFactory
+import app.synapse.localllm.domain.sms.LinkSmsAutoReplyTurnCommand
+import app.synapse.localllm.domain.sms.RecordSmsAutoReplyAcceptedCommand
+import app.synapse.localllm.domain.sms.SmsInboundMessageKey
+import app.synapse.localllm.domain.sms.SmsSenderAddress
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
 import kotlinx.coroutines.flow.first
@@ -25,6 +30,7 @@ import org.robolectric.annotation.Config
 class RoomConversationRepositoryTest {
     private lateinit var database: SynapseDatabase
     private lateinit var repository: RoomConversationRepository
+    private lateinit var smsAutoReplyRepository: RoomSmsAutoReplyRepository
     private lateinit var clock: IncrementingSynapseClock
 
     @Before
@@ -37,6 +43,11 @@ class RoomConversationRepositoryTest {
         repository = RoomConversationRepository(
             database = database,
             chatDao = database.chatDao(),
+            idFactory = SynapseIdFactory(),
+            clock = clock,
+        )
+        smsAutoReplyRepository = RoomSmsAutoReplyRepository(
+            smsAutoReplyDao = database.smsAutoReplyDao(),
             idFactory = SynapseIdFactory(),
             clock = clock,
         )
@@ -97,6 +108,7 @@ class RoomConversationRepositoryTest {
 
         val failedCount = repository.failStaleStreamingAssistantMessages(
             reason = "Generation was interrupted before Synapse reopened.",
+            activeSmsAutoReplyAfter = Instant.parse("2026-06-15T13:00:00Z"),
         )
         val recentMessages = repository.listRecentMessages(thread.id, limit = 10)
 
@@ -106,6 +118,66 @@ class RoomConversationRepositoryTest {
             "Generation was interrupted before Synapse reopened.",
             recentMessages[1].failureReason,
         )
+    }
+
+    @Test
+    fun failStaleStreamingAssistantMessagesSkipsRecentSmsAutoReplyTurn() = runTest {
+        val thread = repository.createThread("SMS +15551234567")
+        val turnReceipt = repository.submitUserMessage(
+            SubmitUserMessageCommand(
+                threadId = thread.id,
+                body = "Incoming SMS from +15551234567:\nOn my way",
+                attachments = emptyList(),
+            ),
+        )
+        val receipt = smsAutoReplyRepository.recordAutoReplyAccepted(acceptedCommand("recent"))!!
+        smsAutoReplyRepository.linkAutoReplyTurn(
+            LinkSmsAutoReplyTurnCommand(
+                receiptId = receipt.id,
+                threadId = thread.id,
+                userMessageId = turnReceipt.userMessageId,
+                assistantMessageId = turnReceipt.assistantMessageId,
+            ),
+        )
+
+        val failedCount = repository.failStaleStreamingAssistantMessages(
+            reason = "Generation was interrupted before Synapse reopened.",
+            activeSmsAutoReplyAfter = Instant.parse("2026-06-15T13:59:00Z"),
+        )
+        val recentMessages = repository.listRecentMessages(thread.id, limit = 10)
+
+        assertEquals(0, failedCount)
+        assertEquals(MessageDeliveryState.STREAMING, recentMessages[1].deliveryState)
+    }
+
+    @Test
+    fun failStaleStreamingAssistantMessagesFailsOldSmsAutoReplyTurn() = runTest {
+        val thread = repository.createThread("SMS +15551234567")
+        val turnReceipt = repository.submitUserMessage(
+            SubmitUserMessageCommand(
+                threadId = thread.id,
+                body = "Incoming SMS from +15551234567:\nStill there?",
+                attachments = emptyList(),
+            ),
+        )
+        val receipt = smsAutoReplyRepository.recordAutoReplyAccepted(acceptedCommand("old"))!!
+        smsAutoReplyRepository.linkAutoReplyTurn(
+            LinkSmsAutoReplyTurnCommand(
+                receiptId = receipt.id,
+                threadId = thread.id,
+                userMessageId = turnReceipt.userMessageId,
+                assistantMessageId = turnReceipt.assistantMessageId,
+            ),
+        )
+
+        val failedCount = repository.failStaleStreamingAssistantMessages(
+            reason = "Generation was interrupted before Synapse reopened.",
+            activeSmsAutoReplyAfter = Instant.parse("2026-06-15T14:01:00Z"),
+        )
+        val recentMessages = repository.listRecentMessages(thread.id, limit = 10)
+
+        assertEquals(1, failedCount)
+        assertEquals(MessageDeliveryState.FAILED, recentMessages[1].deliveryState)
     }
 
     @Test
@@ -194,4 +266,12 @@ class RoomConversationRepositoryTest {
             return instant
         }
     }
+
+    private fun acceptedCommand(keySuffix: String): RecordSmsAutoReplyAcceptedCommand =
+        RecordSmsAutoReplyAcceptedCommand(
+            inboundMessageKey = SmsInboundMessageKey("sms-$keySuffix"),
+            senderAddress = SmsSenderAddress("+15551234567"),
+            receivedAt = Instant.parse("2026-06-15T14:00:00Z"),
+            inboundBody = "Incoming SMS body",
+        )
 }

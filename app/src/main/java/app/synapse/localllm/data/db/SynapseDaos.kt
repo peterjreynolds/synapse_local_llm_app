@@ -137,6 +137,13 @@ interface ChatDao {
             failureReason = :failureReason
         WHERE role = :assistantRole
           AND deliveryState = :streamingState
+          AND NOT EXISTS (
+              SELECT 1
+              FROM sms_auto_reply_receipts
+              WHERE sms_auto_reply_receipts.assistantMessageId = chat_messages.id
+                AND sms_auto_reply_receipts.state = :smsGeneratingState
+                AND sms_auto_reply_receipts.decidedAtEpochMillis >= :activeSmsAutoReplyAfterEpochMillis
+          )
         """,
     )
     suspend fun failStreamingAssistantMessages(
@@ -145,6 +152,8 @@ interface ChatDao {
         failedState: String,
         completedAtEpochMillis: Long,
         failureReason: String,
+        smsGeneratingState: String,
+        activeSmsAutoReplyAfterEpochMillis: Long,
     ): Int
 
     @Query(
@@ -471,6 +480,24 @@ interface SmsAutoReplyDao {
         decidedAtEpochMillis: Long,
         failureReason: String,
     )
+
+    @Query(
+        """
+        UPDATE sms_auto_reply_receipts
+        SET state = :failedState,
+            decidedAtEpochMillis = :decidedAtEpochMillis,
+            failureReason = :failureReason
+        WHERE state = :generatingState
+          AND decidedAtEpochMillis < :staleBeforeEpochMillis
+        """,
+    )
+    suspend fun failStaleGeneratingReceipts(
+        generatingState: String,
+        failedState: String,
+        staleBeforeEpochMillis: Long,
+        decidedAtEpochMillis: Long,
+        failureReason: String,
+    ): Int
 
     @Query("SELECT * FROM sms_sender_threads WHERE senderAddress = :senderAddress LIMIT 1")
     suspend fun findSenderThread(senderAddress: String): SmsSenderThreadEntity?

@@ -70,6 +70,42 @@ class RoomSmsAutoReplyRepositoryTest {
     }
 
     @Test
+    fun markStaleGeneratingAutoRepliesFailedClosesOldGeneratingReceipt() = runTest {
+        val command = acceptedCommand()
+        val acceptedReceipt = repository.recordAutoReplyAccepted(command)!!
+
+        val affectedCount = repository.markStaleGeneratingAutoRepliesFailed(
+            staleBefore = Instant.parse("2026-07-02T12:01:00Z"),
+            reason = "SMS auto-reply generation was interrupted before Synapse reopened.",
+        )
+        val persistedReceipt = repository.findReceiptByInboundMessageKey(command.inboundMessageKey)
+
+        assertEquals(1, affectedCount)
+        assertEquals(acceptedReceipt.id, persistedReceipt?.id)
+        assertEquals(SmsAutoReplyState.GENERATION_FAILED, persistedReceipt?.state)
+        assertEquals(
+            "SMS auto-reply generation was interrupted before Synapse reopened.",
+            persistedReceipt?.failureReason,
+        )
+    }
+
+    @Test
+    fun markStaleGeneratingAutoRepliesFailedKeepsRecentGeneratingReceiptActive() = runTest {
+        val command = acceptedCommand()
+        repository.recordAutoReplyAccepted(command)!!
+
+        val affectedCount = repository.markStaleGeneratingAutoRepliesFailed(
+            staleBefore = Instant.parse("2026-07-02T11:59:00Z"),
+            reason = "SMS auto-reply generation was interrupted before Synapse reopened.",
+        )
+        val persistedReceipt = repository.findReceiptByInboundMessageKey(command.inboundMessageKey)
+
+        assertEquals(0, affectedCount)
+        assertEquals(SmsAutoReplyState.GENERATING, persistedReceipt?.state)
+        assertNull(persistedReceipt?.failureReason)
+    }
+
+    @Test
     fun senderThreadLinkPersistsThreadForSender() = runTest {
         val thread = conversationRepository.createThread("SMS +15551234567")
         val senderAddress = SmsSenderAddress("+15551234567")

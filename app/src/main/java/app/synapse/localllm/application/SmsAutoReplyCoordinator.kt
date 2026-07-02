@@ -18,8 +18,11 @@ import app.synapse.localllm.domain.sms.SmsAutoReplyState
 import app.synapse.localllm.domain.sms.SmsOutboundGateway
 import app.synapse.localllm.domain.sms.SmsSenderAddress
 import app.synapse.localllm.domain.sms.normalizeInboundSmsBody
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class SmsAutoReplyCoordinator(
     private val conversationRepository: ConversationRepository,
@@ -74,28 +77,41 @@ class SmsAutoReplyCoordinator(
             ),
             memoryWritesEnabled = false,
         )
-        val outcome = turnCoordinator.sendUserTurn(
-            command = SubmitUserMessageCommand(
-                threadId = threadId,
-                body = buildSmsTurnBody(command.senderAddress, inboundBody),
-                attachments = emptyList(),
-            ),
-            settings = autoReplySettings,
-        )
-        smsAutoReplyRepository.linkAutoReplyTurn(
-            LinkSmsAutoReplyTurnCommand(
+        val outcome = try {
+            turnCoordinator.sendUserTurn(
+                command = SubmitUserMessageCommand(
+                    threadId = threadId,
+                    body = buildSmsTurnBody(command.senderAddress, inboundBody),
+                    attachments = emptyList(),
+                ),
+                settings = autoReplySettings,
+                onTurnStarted = { turnReceipt ->
+                    smsAutoReplyRepository.linkAutoReplyTurn(
+                        LinkSmsAutoReplyTurnCommand(
+                            receiptId = receipt.id,
+                            threadId = threadId,
+                            userMessageId = turnReceipt.userMessageId,
+                            assistantMessageId = turnReceipt.assistantMessageId,
+                        ),
+                    )
+                },
+            )
+        } catch (exception: CancellationException) {
+            withContext(NonCancellable) {
+                smsAutoReplyRepository.markAutoReplyFailed(
+                    receiptId = receipt.id,
+                    state = SmsAutoReplyState.GENERATION_FAILED,
+                    reason = SMS_AUTO_REPLY_INTERRUPTED_REASON,
+                )
+            }
+            throw exception
+        } catch (exception: Exception) {
+            return smsAutoReplyRepository.markAutoReplyFailed(
                 receiptId = receipt.id,
-                threadId = threadId,
-                userMessageId = when (outcome) {
-                    is SynapseTurnOutcome.Completed -> outcome.userMessageId
-                    is SynapseTurnOutcome.Failed -> outcome.userMessageId
-                },
-                assistantMessageId = when (outcome) {
-                    is SynapseTurnOutcome.Completed -> outcome.assistantMessageId
-                    is SynapseTurnOutcome.Failed -> outcome.assistantMessageId
-                },
-            ),
-        )
+                state = SmsAutoReplyState.GENERATION_FAILED,
+                reason = exception.message ?: "SMS auto-reply generation failed before a reply was queued.",
+            )
+        }
 
         return when (outcome) {
             is SynapseTurnOutcome.Completed ->
@@ -177,6 +193,9 @@ class SmsAutoReplyCoordinator(
         )
 
     private companion object {
+        const val SMS_AUTO_REPLY_INTERRUPTED_REASON =
+            "SMS auto-reply generation was interrupted before the reply was queued."
+
         fun buildSmsThreadTitle(senderAddress: SmsSenderAddress): String =
             "SMS ${senderAddress.raw}".take(72).trimEnd()
 

@@ -15,6 +15,8 @@ through Android `SmsManager`.
 - SMS auto-reply does not poke the composer UI.
 - SMS turns reuse `SynapseTurnCoordinator` so prompt formatting, generation
   diagnostics, output filtering, and chat persistence remain centralized.
+  The SMS receipt is linked to the chat turn as soon as the user/assistant
+  message ids exist, before model generation starts.
 - SMS turns disable memory writes because inbound SMS is third-party input, not
   a deliberate owner memory command.
 - SMS turns use the currently active Synapse runtime/model settings.
@@ -47,10 +49,19 @@ the message content; the receipt owns mutation evidence and correlation.
 5. `SmsAutoReplyCoordinator` deduplicates the inbound message key.
 6. The coordinator reuses or creates a per-sender chat thread.
 7. The inbound SMS becomes a normal persisted user turn.
-8. The coordinator adds only a transport contract, applies the owner's optional
+8. The coordinator links the SMS receipt to the chat turn before generation.
+9. The coordinator adds only a transport contract, applies the owner's optional
    SMS instructions, and disables memory writes for that turn.
-9. On completed generation, `AndroidSmsOutboundGateway` queues the SMS reply.
-10. Room receipts record queued or failed outcome.
+10. On completed generation, `AndroidSmsOutboundGateway` queues the SMS reply.
+11. Room receipts record queued or failed outcome.
+
+## Startup Cleanup
+
+When Synapse reopens, normal chat cleanup marks stale streaming assistant
+messages as failed. Recent SMS auto-reply turns are excluded from that cleanup
+so opening the app does not kill an active foreground SMS reply. Generating SMS
+receipts older than the startup grace window are marked failed so receipts do
+not stay active forever after a real process interruption.
 
 ## Current Limits
 

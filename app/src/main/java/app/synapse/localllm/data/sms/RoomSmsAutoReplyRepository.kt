@@ -133,6 +133,18 @@ class RoomSmsAutoReplyRepository(
         return requireReceipt(receiptId)
     }
 
+    override suspend fun markStaleGeneratingAutoRepliesFailed(
+        staleBefore: Instant,
+        reason: String,
+    ): Int =
+        smsAutoReplyDao.failStaleGeneratingReceipts(
+            generatingState = SmsAutoReplyState.GENERATING.name,
+            failedState = SmsAutoReplyState.GENERATION_FAILED.name,
+            staleBeforeEpochMillis = staleBefore.toEpochMilli(),
+            decidedAtEpochMillis = clock.now().toEpochMilli(),
+            failureReason = reason,
+        )
+
     override suspend fun findThreadLinkForSender(senderAddress: SmsSenderAddress): SmsSenderThreadLink? =
         smsAutoReplyDao.findSenderThread(senderAddress.raw)?.toDomain()
 

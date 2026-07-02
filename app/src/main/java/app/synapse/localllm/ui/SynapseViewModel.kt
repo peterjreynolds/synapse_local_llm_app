@@ -32,6 +32,7 @@ import app.synapse.localllm.domain.storage.StorageThresholds
 import app.synapse.localllm.domain.update.AppUpdateCheckResult
 import app.synapse.localllm.domain.update.AppUpdateDownloadEvent
 import app.synapse.localllm.domain.update.DownloadAppUpdateCommand
+import java.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -949,8 +950,14 @@ class SynapseViewModel(
 
     private fun bindDefaultThread() {
         viewModelScope.launch {
+            val activeSmsAutoReplyAfter = graph.clock.now().minus(SMS_AUTO_REPLY_GENERATION_GRACE)
+            graph.smsAutoReplyRepository.markStaleGeneratingAutoRepliesFailed(
+                staleBefore = activeSmsAutoReplyAfter,
+                reason = "SMS auto-reply generation was interrupted before Synapse reopened.",
+            )
             graph.conversationRepository.failStaleStreamingAssistantMessages(
                 reason = "Generation was interrupted before Synapse reopened.",
+                activeSmsAutoReplyAfter = activeSmsAutoReplyAfter,
             )
             val thread = graph.conversationRepository.ensureDefaultThread()
             bindThread(thread)
@@ -1159,6 +1166,7 @@ class SynapseViewModel(
 
     private companion object {
         const val VOICE_MODE_RECENT_MESSAGE_LIMIT = 12
+        val SMS_AUTO_REPLY_GENERATION_GRACE: Duration = Duration.ofMinutes(20)
     }
 }
 
