@@ -9,3 +9,11 @@ captures/
 *.keystore
 app/build/
 app/.cxx/
+firebase-debug.log
+firestore-debug.log
+storage-debug.log
+ui-debug.log
+firebase/**/node_modules/
+firebase/functions/lib/
+firebase/.runtimeconfig.json
+.firebase/

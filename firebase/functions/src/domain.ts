@@ -1,0 +1,83 @@
+import {createHash} from "node:crypto";
+
+export const MESSAGE_BODY_LIMIT = 4_000;
+export const PROFILE_DISPLAY_NAME_LIMIT = 64;
+export const PROFILE_BIO_LIMIT = 160;
+
+export type AllowedUsername = "Peter" | "Trish";
+
+export interface DirectRoomIdentity {
+  directKey: string;
+  memberIds: readonly [string, string];
+  roomId: string;
+}
+
+export interface HumanMessagePayload {
+  body: string;
+  senderUid: string;
+}
+
+export function normalizeUsername(username: string): string {
+  const normalized = username.normalize("NFKC").trim().toLocaleLowerCase("en-US");
+  if (!/^[a-z][a-z0-9_]{2,31}$/.test(normalized)) {
+    throw new Error("Username must contain 3-32 ASCII letters, digits, or underscores.");
+  }
+  return normalized;
+}
+
+export function buildSyntheticAccountEmail(username: string): string {
+  return `${normalizeUsername(username)}@accounts.synapse.invalid`;
+}
+
+export function buildDirectRoomIdentity(firstUid: string, secondUid: string): DirectRoomIdentity {
+  if (!firstUid || !secondUid || firstUid === secondUid) {
+    throw new Error("A direct room requires two distinct non-empty account identifiers.");
+  }
+  const memberIds = [firstUid, secondUid].sort() as [string, string];
+  const directKey = memberIds.join(":");
+  const digest = createHash("sha256").update(directKey, "utf8").digest("hex");
+  return {
+    directKey,
+    memberIds,
+    roomId: `direct_${digest}`,
+  };
+}
+
+export function parseTargetUid(input: unknown): string {
+  if (typeof input !== "object" || input === null || !("targetUid" in input)) {
+    throw new Error("targetUid is required.");
+  }
+  const targetUid = (input as {targetUid?: unknown}).targetUid;
+  if (typeof targetUid !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(targetUid)) {
+    throw new Error("targetUid is invalid.");
+  }
+  return targetUid;
+}
+
+export function parseHumanMessagePayload(input: unknown): HumanMessagePayload {
+  if (typeof input !== "object" || input === null) {
+    throw new Error("Message payload must be an object.");
+  }
+  const candidate = input as {authorKind?: unknown; body?: unknown; senderUid?: unknown};
+  if (candidate.authorKind !== "HUMAN") {
+    throw new Error("Only human messages trigger remote notifications.");
+  }
+  if (typeof candidate.senderUid !== "string" || candidate.senderUid.length === 0) {
+    throw new Error("Message sender is invalid.");
+  }
+  if (
+    typeof candidate.body !== "string" ||
+    candidate.body.trim().length === 0 ||
+    candidate.body.length > MESSAGE_BODY_LIMIT
+  ) {
+    throw new Error("Message body is invalid.");
+  }
+  return {body: candidate.body, senderUid: candidate.senderUid};
+}
+
+export function buildNotificationReceiptId(eventId: string): string {
+  if (!eventId) {
+    throw new Error("Event identifier is required.");
+  }
+  return createHash("sha256").update(eventId, "utf8").digest("hex");
+}

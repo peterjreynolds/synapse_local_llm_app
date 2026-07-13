@@ -1,0 +1,149 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath(uid) {
+      return /databases/$(database)/documents/profiles/$(uid);
+    }
+
+    function isAllowedUser() {
+      return signedIn()
+        && exists(profilePath(request.auth.uid))
+        && get(profilePath(request.auth.uid)).data.allowed == true;
+    }
+
+    function isActiveRoomMember(roomId) {
+      let memberPath = /databases/$(database)/documents/rooms/$(roomId)/members/$(request.auth.uid);
+      return isAllowedUser()
+        && exists(memberPath)
+        && get(memberPath).data.active == true;
+    }
+
+    function validProfilePresentation(profile) {
+      return profile.displayName is string
+        && profile.displayName.size() >= 1
+        && profile.displayName.size() <= 64
+        && profile.bio is string
+        && profile.bio.size() <= 160
+        && (profile.avatarUrl == null || (profile.avatarUrl is string && profile.avatarUrl.size() <= 2048));
+    }
+
+    function validHumanMessage(messageId) {
+      let message = request.resource.data;
+      return message.keys().hasOnly([
+          'authorKind',
+          'body',
+          'clientCreatedAt',
+          'clientMessageId',
+          'createdAt',
+          'deletedAt',
+          'editedAt',
+          'replyToMessageId',
+          'senderUid'
+        ])
+        && message.authorKind == 'HUMAN'
+        && message.senderUid == request.auth.uid
+        && message.clientMessageId == messageId
+        && message.body is string
+        && message.body.size() >= 1
+        && message.body.size() <= 4000
+        && message.clientCreatedAt is timestamp
+        && message.createdAt == request.time
+        && message.editedAt == null
+        && message.deletedAt == null
+        && (message.replyToMessageId == null || message.replyToMessageId is string);
+    }
+
+    match /profiles/{uid} {
+      allow get: if isAllowedUser() && resource.data.allowed == true;
+      allow list: if isAllowedUser() && resource.data.allowed == true;
+      allow create, delete: if false;
+      allow update: if isAllowedUser()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'avatarUrl',
+          'bio',
+          'displayName',
+          'lastSeenAt',
+          'online',
+          'updatedAt'
+        ])
+        && validProfilePresentation(request.resource.data)
+        && request.resource.data.lastSeenAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.online is bool;
+    }
+
+    match /usernames/{normalizedUsername} {
+      allow read, write: if false;
+    }
+
+    match /rooms/{roomId} {
+      allow get, list: if isAllowedUser()
+        && request.auth.uid in resource.data.memberIds;
+      allow create, update, delete: if false;
+
+      match /members/{uid} {
+        allow read: if isActiveRoomMember(roomId);
+        allow write: if false;
+      }
+
+      match /messages/{messageId} {
+        allow read: if isActiveRoomMember(roomId);
+        allow create: if isActiveRoomMember(roomId) && validHumanMessage(messageId);
+        allow update, delete: if false;
+      }
+    }
+
+    match /devices/{deviceId} {
+      allow get, list: if isAllowedUser()
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if isAllowedUser()
+        && request.resource.data.keys().hasOnly([
+          'active',
+          'createdAt',
+          'ownerUid',
+          'platform',
+          'token',
+          'updatedAt'
+        ])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.platform == 'ANDROID'
+        && request.resource.data.active == true
+        && request.resource.data.token is string
+        && request.resource.data.token.size() >= 16
+        && request.resource.data.token.size() <= 4096
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isAllowedUser()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'active',
+          'platform',
+          'token',
+          'updatedAt'
+        ])
+        && request.resource.data.platform == 'ANDROID'
+        && request.resource.data.active is bool
+        && request.resource.data.token is string
+        && request.resource.data.token.size() >= 16
+        && request.resource.data.token.size() <= 4096
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isAllowedUser() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /notificationDeliveries/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

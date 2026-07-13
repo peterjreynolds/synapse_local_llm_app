@@ -1,0 +1,30 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAllowedUser() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/profiles/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/profiles/$(request.auth.uid)).data.allowed == true;
+    }
+
+    function isVisibleProfile(uid) {
+      return firestore.exists(/databases/(default)/documents/profiles/$(uid))
+        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.allowed == true;
+    }
+
+    match /avatars/{uid}/{fileName} {
+      allow read: if isAllowedUser() && isVisibleProfile(uid);
+      allow create, update: if isAllowedUser()
+        && request.auth.uid == uid
+        && fileName.matches('avatar\\.(jpg|jpeg|png|webp)')
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isAllowedUser() && request.auth.uid == uid;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
