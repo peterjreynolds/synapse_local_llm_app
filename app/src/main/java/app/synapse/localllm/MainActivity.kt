@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        remoteViewModel.openNotificationRoom(intent.getStringExtra(EXTRA_REMOTE_ROOM_ID))
+        consumeTrustedNotificationRoom()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             SynapseTheme {
@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        remoteViewModel.openNotificationRoom(intent.getStringExtra(EXTRA_REMOTE_ROOM_ID))
+        consumeTrustedNotificationRoom()
     }
 
     override fun onStart() {
@@ -57,5 +57,13 @@ class MainActivity : ComponentActivity() {
             "SynapseApplication is required for MainActivity."
         }
         return currentApplication
+    }
+
+    private fun consumeTrustedNotificationRoom() {
+        val roomId = requireSynapseApplication()
+            .graph
+            .remoteNotificationNavigationCoordinator
+            .consumeRoom()
+        remoteViewModel.openNotificationRoom(roomId)
     }
 }

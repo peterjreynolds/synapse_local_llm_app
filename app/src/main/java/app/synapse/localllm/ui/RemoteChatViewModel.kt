@@ -13,6 +13,7 @@ import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
+import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteChatException
@@ -131,16 +132,10 @@ class RemoteChatViewModel(
         roomId?.let(::markSelectedRoomRead)
     }
 
-    fun openNotificationRoom(rawRoomId: String?) {
-        val roomId = rawRoomId
-            ?.takeIf(REMOTE_DIRECT_ROOM_PATTERN::matches)
-            ?.let(::RemoteRoomId)
-            ?: return
+    fun openNotificationRoom(roomId: RemoteRoomId?) {
+        roomId ?: return
         pendingNotificationRoomId = roomId
-        if (mutableUiState.value.account != null) {
-            pendingNotificationRoomId = null
-            selectRoom(roomId)
-        }
+        openPendingNotificationRoomIfAvailable(mutableUiState.value.rooms)
     }
 
     fun sendMessage(body: String) = launchAction {
@@ -219,10 +214,6 @@ class RemoteChatViewModel(
                 notice = null,
             )
         }
-        pendingNotificationRoomId?.let { roomId ->
-            pendingNotificationRoomId = null
-            selectRoom(roomId)
-        }
         try {
             supervisorScope {
                 launch { cacheRepository.observeProfiles().collect { profiles ->
@@ -230,6 +221,7 @@ class RemoteChatViewModel(
                 } }
                 launch { cacheRepository.observeDirectRooms().collect { rooms ->
                     mutableUiState.update { state -> state.copy(rooms = rooms) }
+                    openPendingNotificationRoomIfAvailable(rooms)
                     rooms.firstOrNull { room ->
                         room.roomId == selectedRoomId.value && room.unreadCount > 0
                     }?.roomId?.let(::markSelectedRoomRead)
@@ -316,6 +308,12 @@ class RemoteChatViewModel(
     private fun requireSignedInAccount(): RemoteAuthenticatedAccount =
         mutableUiState.value.account ?: throw RemoteChatException("Sign in before using remote chat.")
 
+    private fun openPendingNotificationRoomIfAvailable(rooms: List<RemoteCachedDirectRoom>) {
+        val roomId = resolveAuthorizedNotificationRoom(pendingNotificationRoomId, rooms) ?: return
+        pendingNotificationRoomId = null
+        selectRoom(roomId)
+    }
+
     private fun markSelectedRoomRead(roomId: RemoteRoomId) {
         val accountUid = mutableUiState.value.account?.accountUid ?: return
         if (!roomsBeingMarkedRead.add(roomId)) return
@@ -345,9 +343,13 @@ class RemoteChatViewModel(
     private companion object {
         const val HUMAN_AUTHOR_KIND = "HUMAN"
         const val MESSAGE_BODY_LIMIT = 4_000
-        val REMOTE_DIRECT_ROOM_PATTERN = Regex("^direct_[a-f0-9]{64}$")
     }
 }
+
+internal fun resolveAuthorizedNotificationRoom(
+    pendingRoomId: RemoteRoomId?,
+    rooms: List<RemoteCachedDirectRoom>,
+): RemoteRoomId? = pendingRoomId?.takeIf { roomId -> rooms.any { room -> room.roomId == roomId } }
 
 class RemoteChatViewModelFactory(
     private val graph: SynapseApplicationGraph,

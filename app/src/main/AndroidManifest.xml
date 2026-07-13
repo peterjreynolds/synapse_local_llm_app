@@ -45,6 +45,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".RemoteNotificationOpenActivity"
+            android:exported="false"
+            android:noHistory="true" />
         <service
             android:name=".ModelDownloadForegroundService"
             android:exported="false"

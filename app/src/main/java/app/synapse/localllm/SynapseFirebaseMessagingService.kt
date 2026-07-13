@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
@@ -63,9 +64,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun openRoomPendingIntent(roomId: RemoteRoomId): PendingIntent {
-        val intent = Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(EXTRA_REMOTE_ROOM_ID, roomId.raw)
+        val intent = buildRemoteNotificationOpenIntent(this, roomId)
         return PendingIntent.getActivity(
             this,
             roomId.raw.hashCode(),
@@ -100,6 +99,13 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
         const val REMOTE_CHAT_NOTIFICATION_ID = 4_301
     }
 }
+
+internal fun buildRemoteNotificationOpenIntent(
+    context: Context,
+    roomId: RemoteRoomId,
+): Intent =
+    Intent(context, RemoteNotificationOpenActivity::class.java)
+        .putExtra(EXTRA_REMOTE_ROOM_ID, roomId.raw)
 
 internal data class RemoteNotificationPayload(
     val roomId: RemoteRoomId,
