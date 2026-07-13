@@ -26,8 +26,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         StorageHealthSnapshotEntity::class,
         SmsSenderThreadEntity::class,
         SmsAutoReplyReceiptEntity::class,
+        RemoteProfileCacheEntity::class,
+        RemoteDirectRoomCacheEntity::class,
+        RemoteRoomMembershipCacheEntity::class,
+        RemoteMessageCacheEntity::class,
+        RemoteMessageOutboxEntity::class,
+        RemoteSyncCursorEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -42,6 +48,8 @@ abstract class SynapseDatabase : RoomDatabase() {
     abstract fun libraryDao(): LibraryDao
 
     abstract fun smsAutoReplyDao(): SmsAutoReplyDao
+
+    abstract fun remoteChatCacheDao(): RemoteChatCacheDao
 }
 
 val SYNAPSE_DATABASE_MIGRATION_1_2 =
@@ -455,6 +463,187 @@ val SYNAPSE_DATABASE_MIGRATION_8_9 =
             insertLegacyMessageAuthors(db)
             insertLegacySmsParticipants(db)
             assertEveryLegacyMessageHasAuthor(db)
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_9_10 =
+    object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS remote_profile_cache (
+                    accountUid TEXT NOT NULL,
+                    profileUid TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    usernameNormalized TEXT NOT NULL,
+                    displayName TEXT NOT NULL,
+                    bio TEXT NOT NULL,
+                    avatarUrl TEXT,
+                    isAllowed INTEGER NOT NULL,
+                    isOnline INTEGER NOT NULL,
+                    lastSeenAtEpochMillis INTEGER,
+                    remoteUpdatedAtEpochMillis INTEGER NOT NULL,
+                    cachedAtEpochMillis INTEGER NOT NULL,
+                    PRIMARY KEY(accountUid, profileUid)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_profile_cache_accountUid " +
+                    "ON remote_profile_cache(accountUid)",
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS index_remote_profile_cache_accountUid_usernameNormalized " +
+                    "ON remote_profile_cache(accountUid, usernameNormalized)",
+            )
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS remote_direct_room_cache (
+                    accountUid TEXT NOT NULL,
+                    remoteRoomId TEXT NOT NULL,
+                    directKey TEXT NOT NULL,
+                    peerUid TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    unreadCount INTEGER NOT NULL,
+                    latestMessagePreview TEXT,
+                    latestMessageSenderUid TEXT,
+                    remoteUpdatedAtEpochMillis INTEGER NOT NULL,
+                    cachedAtEpochMillis INTEGER NOT NULL,
+                    PRIMARY KEY(accountUid, remoteRoomId)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_direct_room_cache_accountUid " +
+                    "ON remote_direct_room_cache(accountUid)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_direct_room_cache_accountUid_peerUid " +
+                    "ON remote_direct_room_cache(accountUid, peerUid)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_direct_room_cache_accountUid_remoteUpdatedAtEpochMillis " +
+                    "ON remote_direct_room_cache(accountUid, remoteUpdatedAtEpochMillis)",
+            )
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS remote_room_membership_cache (
+                    accountUid TEXT NOT NULL,
+                    remoteRoomId TEXT NOT NULL,
+                    memberUid TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    isActive INTEGER NOT NULL,
+                    joinedAtEpochMillis INTEGER NOT NULL,
+                    lastReadAtEpochMillis INTEGER,
+                    cachedAtEpochMillis INTEGER NOT NULL,
+                    PRIMARY KEY(accountUid, remoteRoomId, memberUid),
+                    FOREIGN KEY(accountUid, remoteRoomId)
+                    REFERENCES remote_direct_room_cache(accountUid, remoteRoomId)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_room_membership_cache_accountUid_remoteRoomId " +
+                    "ON remote_room_membership_cache(accountUid, remoteRoomId)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_room_membership_cache_accountUid_memberUid " +
+                    "ON remote_room_membership_cache(accountUid, memberUid)",
+            )
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS remote_message_cache (
+                    accountUid TEXT NOT NULL,
+                    remoteRoomId TEXT NOT NULL,
+                    remoteMessageId TEXT NOT NULL,
+                    idempotencyKey TEXT NOT NULL,
+                    senderUid TEXT NOT NULL,
+                    authorKind TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    deliveryState TEXT NOT NULL,
+                    clientCreatedAtEpochMillis INTEGER NOT NULL,
+                    serverCreatedAtEpochMillis INTEGER,
+                    failureReason TEXT,
+                    cachedAtEpochMillis INTEGER NOT NULL,
+                    PRIMARY KEY(accountUid, remoteRoomId, remoteMessageId),
+                    FOREIGN KEY(accountUid, remoteRoomId)
+                    REFERENCES remote_direct_room_cache(accountUid, remoteRoomId)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_message_cache_accountUid_remoteRoomId " +
+                    "ON remote_message_cache(accountUid, remoteRoomId)",
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                    "index_remote_message_cache_accountUid_remoteRoomId_idempotencyKey " +
+                    "ON remote_message_cache(accountUid, remoteRoomId, idempotencyKey)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS " +
+                    "index_remote_message_cache_accountUid_remoteRoomId_serverCreatedAtEpochMillis " +
+                    "ON remote_message_cache(accountUid, remoteRoomId, serverCreatedAtEpochMillis)",
+            )
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS remote_message_outbox (
+                    accountUid TEXT NOT NULL,
+                    operationId TEXT NOT NULL,
+                    remoteRoomId TEXT NOT NULL,
+                    remoteMessageId TEXT NOT NULL,
+                    idempotencyKey TEXT NOT NULL,
+                    senderUid TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    attemptCount INTEGER NOT NULL,
+                    createdAtEpochMillis INTEGER NOT NULL,
+                    lastAttemptAtEpochMillis INTEGER,
+                    failureReason TEXT,
+                    PRIMARY KEY(accountUid, operationId),
+                    FOREIGN KEY(accountUid, remoteRoomId)
+                    REFERENCES remote_direct_room_cache(accountUid, remoteRoomId)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_message_outbox_accountUid_remoteRoomId " +
+                    "ON remote_message_outbox(accountUid, remoteRoomId)",
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                    "index_remote_message_outbox_accountUid_remoteRoomId_idempotencyKey " +
+                    "ON remote_message_outbox(accountUid, remoteRoomId, idempotencyKey)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_message_outbox_accountUid_state " +
+                    "ON remote_message_outbox(accountUid, state)",
+            )
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS remote_sync_cursors (
+                    accountUid TEXT NOT NULL,
+                    collectionName TEXT NOT NULL,
+                    scopeId TEXT NOT NULL,
+                    serverTimestampEpochMillis INTEGER NOT NULL,
+                    documentId TEXT NOT NULL,
+                    updatedAtEpochMillis INTEGER NOT NULL,
+                    PRIMARY KEY(accountUid, collectionName, scopeId)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_sync_cursors_accountUid " +
+                    "ON remote_sync_cursors(accountUid)",
+            )
         }
     }
 

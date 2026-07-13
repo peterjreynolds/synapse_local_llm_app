@@ -16,6 +16,7 @@ import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_5_6
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_6_7
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_7_8
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_8_9
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_9_10
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.library.AndroidMarkdownPdfExporter
 import app.synapse.localllm.data.library.RoomLibraryWorkspaceRepository
@@ -27,6 +28,8 @@ import app.synapse.localllm.data.memory.RecentUserTurnMemoryCandidateResolver
 import app.synapse.localllm.data.memory.RuleBasedMemoryCandidateProposer
 import app.synapse.localllm.data.memory.RoomMemoryRepository
 import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
+import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
+import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
 import app.synapse.localllm.data.runtime.AndroidEmbeddedModelStore
 import app.synapse.localllm.data.runtime.AndroidForegroundModelDownloadController
 import app.synapse.localllm.data.runtime.AndroidModelDownloader
@@ -65,10 +68,14 @@ import app.synapse.localllm.domain.time.SystemSynapseClock
 import app.synapse.localllm.domain.update.AppUpdateDownloader
 import app.synapse.localllm.domain.update.AppUpdateRepository
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 
 class SynapseApplicationGraph private constructor(context: Context) {
     private val applicationContext = context.applicationContext
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val clock: SynapseClock = SystemSynapseClock()
     val idFactory = SynapseIdFactory()
@@ -85,7 +92,18 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_6_7,
         SYNAPSE_DATABASE_MIGRATION_7_8,
         SYNAPSE_DATABASE_MIGRATION_8_9,
+        SYNAPSE_DATABASE_MIGRATION_9_10,
     ).build()
+
+    val remoteAccountSessionController = RemoteAccountSessionCoordinator()
+    val remoteChatCacheRepository =
+        RoomRemoteChatCacheRepository(
+            database = database,
+            remoteChatCacheDao = database.remoteChatCacheDao(),
+            sessionController = remoteAccountSessionController,
+            clock = clock,
+            applicationScope = applicationScope,
+        )
 
     val settingsStore = SynapseSettingsStore(applicationContext)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
