@@ -1,8 +1,5 @@
 package app.synapse.localllm.ui
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -44,8 +41,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import app.synapse.localllm.BuildConfig
+import app.synapse.localllm.POST_NOTIFICATIONS_PERMISSION
+import app.synapse.localllm.domain.notifications.NotificationPermissionState
+import app.synapse.localllm.resolveNotificationPermissionState
 
 @Composable
 internal fun RemoteProfilePane(
@@ -61,12 +60,18 @@ internal fun RemoteProfilePane(
     var bio by rememberSaveable(accountUid?.raw) { mutableStateOf("") }
     var currentPassword by remember(accountUid?.raw) { mutableStateOf("") }
     var newPassword by remember(accountUid?.raw) { mutableStateOf("") }
-    var notificationsGranted by remember {
-        mutableStateOf(hasNotificationPermission(context))
+    var notificationPermissionState by remember {
+        mutableStateOf(resolveNotificationPermissionState(context))
     }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted -> notificationsGranted = granted }
+    ) { granted ->
+        notificationPermissionState = if (granted) {
+            NotificationPermissionState.GRANTED
+        } else {
+            NotificationPermissionState.DENIED
+        }
+    }
     val avatarLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -151,16 +156,16 @@ internal fun RemoteProfilePane(
         HorizontalDivider()
         Text("Notifications", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
-            text = if (notificationsGranted) {
+            text = if (notificationPermissionState.allowsNotifications) {
                 "Android notifications are enabled for private chat. Message text is not placed in push payloads."
             } else {
-                "Enable Android notifications to see new-message alerts while Synapse is backgrounded."
+                "Android notification permission is denied. Enable it to see new-message alerts while Synapse is backgrounded."
             },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (!notificationsGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (notificationPermissionState.canRequestRuntimePermission) {
             OutlinedButton(onClick = {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                notificationPermissionLauncher.launch(POST_NOTIFICATIONS_PERMISSION)
             }) {
                 Icon(Icons.Default.Notifications, contentDescription = null)
                 Text(" Enable notifications")
@@ -246,11 +251,4 @@ internal fun remoteUpdateStatusLabel(appUpdate: AppUpdateUiState): String =
         AppUpdateStatus.READY_TO_INSTALL -> "Update status: ready to install"
         AppUpdateStatus.UP_TO_DATE -> "Update status: current on ${BuildConfig.SYNAPSE_APK_CHANNEL}"
         AppUpdateStatus.FAILED -> "Update status: ${appUpdate.message ?: "check failed"}"
-    }
-
-private fun hasNotificationPermission(context: android.content.Context): Boolean =
-    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-        ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
+}

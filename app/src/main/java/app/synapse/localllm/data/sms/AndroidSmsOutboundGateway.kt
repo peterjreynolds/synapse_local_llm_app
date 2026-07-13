@@ -15,7 +15,6 @@ class AndroidSmsOutboundGateway(
     private val clock: SynapseClock,
 ) : SmsOutboundGateway {
     private val applicationContext = context.applicationContext
-    private val smsManager: SmsManager = applicationContext.getSystemService(SmsManager::class.java)
 
     override suspend fun queueSmsReply(command: QueueSmsReplyCommand): QueueSmsReplyOutcome {
         if (
@@ -28,6 +27,8 @@ class AndroidSmsOutboundGateway(
         if (replyBody.isBlank()) {
             return QueueSmsReplyOutcome.Failed("SMS reply body was blank.")
         }
+        val smsManager = applicationContext.getSystemService(SmsManager::class.java)
+            ?: return QueueSmsReplyOutcome.Failed("Android SMS service is unavailable on this device.")
 
         return runCatching {
             val messageParts = smsManager.divideMessage(replyBody)

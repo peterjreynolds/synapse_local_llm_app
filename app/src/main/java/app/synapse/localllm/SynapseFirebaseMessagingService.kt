@@ -1,15 +1,12 @@
 package app.synapse.localllm
 
-import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
@@ -40,10 +37,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
         ) {
             return
         }
-        if (
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!resolveNotificationPermissionState(this).allowsNotifications) {
             return
         }
         ensureNotificationChannel()
@@ -56,11 +50,16 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .build()
-        NotificationManagerCompat.from(this).notify(
-            payload.roomId.raw,
-            REMOTE_CHAT_NOTIFICATION_ID,
-            notification,
-        )
+        try {
+            NotificationManagerCompat.from(this).notify(
+                payload.roomId.raw,
+                REMOTE_CHAT_NOTIFICATION_ID,
+                notification,
+            )
+        } catch (_: SecurityException) {
+            // Permission state can change between the explicit check and this external Android call.
+            return
+        }
     }
 
     private fun openRoomPendingIntent(roomId: RemoteRoomId): PendingIntent {

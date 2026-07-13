@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.view.WindowManager
+import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.domain.diagnostics.DebugUiSnapshot
@@ -160,8 +161,7 @@ class AndroidDebugArchiveExporter(
         val configuration = resources.configuration
         val displayMetrics = resources.displayMetrics
         val windowManager = applicationContext.getSystemService(WindowManager::class.java)
-        val currentWindowBounds = runCatching { windowManager.currentWindowMetrics.bounds }.getOrNull()
-        val maximumWindowBounds = runCatching { windowManager.maximumWindowMetrics.bounds }.getOrNull()
+        val windowBounds = readWindowBounds(windowManager)
 
         return buildString {
             appendLine("orientation=${configuration.orientation.toOrientationLabel()}")
@@ -173,13 +173,29 @@ class AndroidDebugArchiveExporter(
             appendLine("densityDpi=${displayMetrics.densityDpi}")
             appendLine("displayWidthPx=${displayMetrics.widthPixels}")
             appendLine("displayHeightPx=${displayMetrics.heightPixels}")
-            appendLine("currentWindowBoundsPx=${currentWindowBounds.toDebugBounds()}")
-            appendLine("maximumWindowBoundsPx=${maximumWindowBounds.toDebugBounds()}")
+            appendLine("currentWindowBoundsPx=${windowBounds.current.toDebugBounds()}")
+            appendLine("maximumWindowBoundsPx=${windowBounds.maximum.toDebugBounds()}")
             appendLine("activityDecorFitsSystemWindows=false")
             appendLine("activityWindowSoftInputMode=adjustResize")
             appendLine("composeKeyboardPolicy=chat composer and settings list apply imePadding")
         }
     }
+
+    private fun readWindowBounds(windowManager: WindowManager): DebugWindowBounds =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            readApi30WindowBounds(windowManager)
+        } else {
+            val displayMetrics = applicationContext.resources.displayMetrics
+            val displayBounds = Rect(0, 0, displayMetrics.widthPixels, displayMetrics.heightPixels)
+            DebugWindowBounds(current = displayBounds, maximum = displayBounds)
+        }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun readApi30WindowBounds(windowManager: WindowManager): DebugWindowBounds =
+        DebugWindowBounds(
+            current = runCatching { windowManager.currentWindowMetrics.bounds }.getOrNull(),
+            maximum = runCatching { windowManager.maximumWindowMetrics.bounds }.getOrNull(),
+        )
 
     private fun buildUiStateMetadata(uiSnapshot: DebugUiSnapshot): String =
         buildString {
@@ -352,6 +368,11 @@ class AndroidDebugArchiveExporter(
     private data class DebugArchiveFile(
         val entryName: String,
         val file: File,
+    )
+
+    private data class DebugWindowBounds(
+        val current: Rect?,
+        val maximum: Rect?,
     )
 
     private companion object {

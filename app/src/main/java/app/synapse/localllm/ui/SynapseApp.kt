@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
@@ -108,6 +107,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.synapse.localllm.R
+import app.synapse.localllm.POST_NOTIFICATIONS_PERMISSION
+import app.synapse.localllm.domain.notifications.NotificationPermissionState
 import app.synapse.localllm.domain.chat.AttachmentKind
 import app.synapse.localllm.domain.chat.BuiltInParticipantIds
 import app.synapse.localllm.domain.chat.ChatMessageRecord
@@ -136,6 +137,7 @@ import app.synapse.localllm.ui.chat.ChatRoomDrawerOverlay
 import app.synapse.localllm.ui.chat.ChatRoomHeader
 import app.synapse.localllm.ui.chat.ChatRoomMemberSheet
 import app.synapse.localllm.ui.chat.ParticipantAvatar
+import app.synapse.localllm.resolveNotificationPermissionState
 import java.io.IOException
 import java.util.Locale
 import kotlin.random.Random
@@ -322,15 +324,9 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onDismissAppUpdate = viewModel::dismissAppUpdate,
         onImportEmbeddedModel = { modelImportLauncher.launch(modelMimeTypes) },
         onDownloadCatalogModel = { entry ->
-            if (
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS,
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
+            if (resolveNotificationPermissionState(context) == NotificationPermissionState.DENIED) {
                 pendingCatalogDownload = entry
-                modelDownloadNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                modelDownloadNotificationPermissionLauncher.launch(POST_NOTIFICATIONS_PERMISSION)
             } else {
                 viewModel.downloadCatalogModel(entry)
             }

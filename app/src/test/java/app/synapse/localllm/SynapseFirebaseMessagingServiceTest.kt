@@ -1,10 +1,23 @@
 package app.synapse.localllm
 
+import app.synapse.localllm.domain.notifications.NotificationPermissionState
+import app.synapse.localllm.domain.notifications.notificationPermissionState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SynapseFirebaseMessagingServiceTest {
+    @Test
+    fun api29RemoteNotificationIsEligibleWithoutRuntimePermission() {
+        val permissionState = notificationPermissionState(
+            androidApiLevel = 29,
+            runtimePermissionGranted = false,
+        )
+
+        assertEquals(NotificationPermissionState.NOT_REQUIRED, permissionState)
+        assertEquals(true, permissionState.allowsNotifications)
+    }
+
     @Test
     fun notificationPayloadAcceptsTrustedMessageShapeWithoutPlaintextBody() {
         val roomId = "direct_${"a".repeat(64)}"

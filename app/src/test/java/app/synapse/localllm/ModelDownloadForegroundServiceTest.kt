@@ -2,6 +2,7 @@ package app.synapse.localllm
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import androidx.test.core.app.ApplicationProvider
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
@@ -17,8 +18,23 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [29])
 class ModelDownloadForegroundServiceTest {
+    @Test
+    fun api29ForegroundServiceTypesMatchDeclaredCompatibilityPaths() {
+        assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, modelDownloadForegroundServiceType())
+        assertEquals(0, smsAutoReplyForegroundServiceType())
+    }
+
+    @Test
+    @Config(sdk = [34])
+    fun api34SmsAutoReplyUsesRemoteMessagingForegroundServiceType() {
+        assertEquals(
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+            smsAutoReplyForegroundServiceType(),
+        )
+    }
+
     @Test
     fun startIntentRoundTripsCatalogEntry() {
         val context: Context = ApplicationProvider.getApplicationContext()
