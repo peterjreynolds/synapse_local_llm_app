@@ -125,8 +125,18 @@ export const markRoomRead = onCall(
     if (typeof roomId !== "string" || !/^direct_[a-f0-9]{64}$/.test(roomId)) {
       throw new HttpsError("invalid-argument", "roomId is invalid.");
     }
+    const profileReference = firestore.doc(`profiles/${callerUid}`);
     const membershipReference = firestore.doc(`rooms/${roomId}/members/${callerUid}`);
-    const membershipSnapshot = await membershipReference.get();
+    const authorizationSnapshots = await firestore.getAll(
+      profileReference,
+      membershipReference,
+    );
+    const profileSnapshot = authorizationSnapshots[0];
+    const membershipSnapshot = authorizationSnapshots[1];
+    if (!profileSnapshot || !membershipSnapshot) {
+      throw new HttpsError("internal", "Account authorization could not be resolved.");
+    }
+    requireAllowedProfile(profileSnapshot.data() as ProfileDocument | undefined, callerUid);
     if (!membershipSnapshot.exists || membershipSnapshot.get("active") !== true) {
       throw new HttpsError("permission-denied", "The account is not an active room member.");
     }
