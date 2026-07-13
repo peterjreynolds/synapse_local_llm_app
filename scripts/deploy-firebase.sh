@@ -8,11 +8,11 @@ cd "$repo_root"
 npm --prefix firebase ci
 npm --prefix firebase/functions ci
 npm --prefix firebase/functions test
-npx --yes firebase-tools@15.23.0 emulators:exec \
+npm --prefix firebase exec -- firebase emulators:exec \
   --project demo-synapse-chat \
   --only firestore,storage \
   'npm --prefix firebase test'
-npx --yes firebase-tools@15.23.0 deploy \
+npm --prefix firebase exec -- firebase deploy \
   --project "$project_id" \
   --force \
   --only auth,firestore:rules,firestore:indexes,storage,functions
