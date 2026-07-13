@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test lib/**/*.test.js",
-    "provision": "npm run build && node lib/provision.js"
+    "provision": "npm run build && node lib/provision.js",
+    "acceptance:live": "node scripts/liveAcceptance.mjs"
   },
   "dependencies": {
     "firebase-admin": "14.1.0",
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.0",
+    "firebase": "12.16.0",
     "typescript": "~5.9.3"
   },
   "overrides": {
