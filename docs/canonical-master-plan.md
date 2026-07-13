@@ -1,19 +1,28 @@
-# Synapse AI Canonical Master Plan v4
+# Synapse Chat Canonical Master Plan v5
 
 Status: active product roadmap
 
-Synapse AI is a native Android, offline-first local LLM app: stable chatbot UI,
-embedded `llama.cpp` runtime, evidence-backed memory, indexed research library,
-offline voice, sandbox workspace tools, and optional Synapse Governance V3 mode.
-The first-screen experience should feel like ChatGPT/Gemini/Claude: separate
-recent chats, visible message history, keyboard-safe composer, attachments,
-speech input, per-message playback, and no visible prompt scaffolding.
+Synapse Chat is a native Android, offline-first room chat app with a phone-local
+AI member, embedded `llama.cpp` runtime, evidence-backed memory, indexed
+research library, offline voice, and sandbox workspace tools. The first-screen
+experience should feel like a polished modern messenger: separate rooms,
+visible attributed message history, keyboard-safe composer, attachments, speech
+input, per-message playback, and no visible prompt scaffolding.
+
+The app is standalone. Its runtime, Room database, memory, SMS automation, and
+UI are app-owned and do not depend on OpenClaw, Wingman, a historical Synapse
+governance runtime, or an external sidecar.
 
 ## Implemented
 
-- Android-native chat shell with recent chats.
-- Recent-chat management: pin to top, rename, archive, and delete from the
-  long-press chat list menu.
+- Android-native Synapse Chat shell with AI chat, direct, and group rooms.
+- Durable participant profiles, room memberships, and explicit message authors.
+- Room management: create, select, pin, rename, archive, delete, inspect
+  members, add placeholder humans, and add/remove Synapse where room policy
+  allows.
+- Room-aware AI routing: automatic in AI chats; mention-only or explicitly
+  automatic in direct/group rooms; never in human-only rooms.
+- Attributed multi-participant message bubbles and `@Synapse` composer support.
 - Embedded ARM64 `llama.cpp` runtime with Termux server fallback.
 - Named APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
 - Rolling GitHub APK delivery through the `synapse-ai` release and `apk-latest`
@@ -58,6 +67,80 @@ speech input, per-message playback, and no visible prompt scaffolding.
   the local LLM turn coordinator, and queues the finalized assistant reply back
   to the originating sender with durable receipts and user-controlled SMS
   reply instructions.
+- Additive Room database v8→v9 migration that preserves existing room/message
+  IDs and all attachment, generation-trace, memory, pin/archive/title, and SMS
+  relationships while backfilling participants, memberships, and authorship.
+- Provider-neutral local sync metadata fields exist as contracts only; no fake
+  remote synchronization or cloud-provider behavior is claimed.
+
+## Synapse Chat Phase 1 — Complete
+
+Phase 1 converted the installed Synapse app into Synapse Chat without creating a
+second APK or resetting app-private state.
+
+### Local room truth
+
+- Existing `chat_threads.id` values remain the durable room IDs.
+- Rooms have explicit `AI_CHAT`, `DIRECT`, or `GROUP` kind.
+- Stable participants have `HUMAN`, `LOCAL_AI`, `REMOTE_AI`, or `SYSTEM` kind,
+  display metadata, and provider-neutral sync metadata.
+- Membership rows own room role, posting permission, join/leave timestamps, and
+  AI response policy.
+- `chat_message_authors` is a one-to-one authorship ledger for every message.
+  `ConversationRole` remains compatibility/rendering metadata.
+- Human-message persistence and AI-response creation are separate operations.
+  A routed no-response turn persists only the human message.
+
+### Upgrade behavior
+
+- Room v9 is additive: the migration does not drop or rebuild the existing
+  `chat_threads` or `chat_messages` parent tables.
+- Existing rooms become AI chats with the local-human owner and Synapse local-AI
+  memberships.
+- Existing user, assistant, and system roles backfill to deterministic built-in
+  participant IDs. Unexpected legacy roles fail migration closed.
+- Existing SMS senders receive stable local human profiles and room
+  memberships while sender/thread/receipt correlations remain intact.
+- Migration regression coverage snapshots all representative v8 values before
+  and after migration, verifies one author per message, and runs
+  `foreign_key_check`.
+
+### Routing and diagnostics
+
+- `RoomAiResponseRoutingPolicy` returns an explicit typed decision: AI-chat
+  automatic, room automatic, Synapse mentioned, Synapse absent, or mention
+  required.
+- Generation rows and generation diagnostics start only after routing approves
+  an AI response. Human-only turns do not manufacture empty streaming rows.
+- Existing generation timing traces, stale-stream cleanup, SMS receipts, and
+  full-state debug ZIP behavior remain in place. Raw Room state includes the new
+  room/member/authorship tables.
+
+### Identity and delivery
+
+- Visible product copy is Synapse Chat.
+- Android namespace and rolling debug application ID remain
+  `app.synapse.localllm` and `app.synapse.localllm.debug` respectively.
+- Signing lineage, `synapse-ai` release tag, `apk-latest` branch, and
+  `Synapse-AI.apk` asset contract are unchanged.
+
+See [`synapse-chat-room-architecture.md`](synapse-chat-room-architecture.md) for
+the durable model and boundary details.
+
+## Synapse Chat Phase 2 — Entry Blockers
+
+These are the only blockers carried from Phase 1 into Synapse Chat Phase 2:
+
+1. Authentication that establishes real remote human identity without changing
+   the local participant model or Android package identity.
+2. A provider-neutral remote sync contract covering IDs, revisions, ordering,
+   conflicts, retries, and durable sync receipts before any provider adapter is
+   selected.
+3. A push-notification provider adapter behind an app-owned notification
+   boundary, added only after authentication and sync semantics are defined.
+
+No cloud-provider SDK, backend secret, or fake synchronization belongs in the
+domain model before those contracts exist.
 
 ## Remaining Major Tracks
 
@@ -172,6 +255,9 @@ bag of regex hits.
 Goal: let the user intentionally enter governed planning mode without turning the
 whole app into a giant prompt or hidden runtime.
 
+This is an independent future app-owned artifact mode, not a Synapse Chat Phase
+2 dependency and not activation of a historical governance runtime.
+
 - Import V3 doctrine as a high-authority local library collection.
 - Add a deliberate Synapse Mode toggle or planning entry point.
 - Implement app-owned governance routing and state; the LLM assists but does not own state.
@@ -237,25 +323,22 @@ Goal: share one solid core between Synapse AI and later characters/products.
 
 ## Build Order
 
-1. Finish phone QA of the current chat/prompt/diagnostics stabilization slice.
-2. Harden attachment persistence and debug export coverage.
-3. Memory V8 review workflows, summaries, and experimental local-model
-   candidate extraction.
-4. Offline voice selection and local speaker voice import.
-5. Full offline Voice Mode.
-6. Library core schema and text/Markdown ingestion.
-7. PDF/DOCX/exact-URL ingestion.
-8. Retrieval and citation injection.
-9. Research graph relationships.
-10. Synapse Governance V3 planning mode.
-11. Sandbox workspace tools.
-12. Model downloader/importer hardening.
-13. Pickle AI product flavor.
+Synapse Chat Phase 2 begins only after the three entry blockers above are
+designed in order: authentication, provider-neutral sync contract, then push
+provider adapter. The other product tracks in this plan remain independent work
+and are not hidden prerequisites for remote chat.
 
 ## Test Plan
 
 - UI tests for keyboard visibility, composer behavior, auto-follow, scroll
   detach, and typing indicator behavior.
+- Room tests for creation rules, member add/remove/reactivation, attributed
+  messages, and separate human-message/AI-response persistence.
+- AI routing tests for AI-chat automatic response, room automatic response,
+  case-insensitive `@Synapse`, mention-required, and human-only rooms.
+- Room v8→v9 migration tests for exact legacy row preservation, deterministic
+  participant/membership/authorship backfill, SMS correlations, and foreign-key
+  integrity.
 - Regression tests for stale `STREAMING` cleanup.
 - Prompt tests for Persona plus Custom Instructions composition and legacy
   `systemPrompt` migration.
@@ -276,6 +359,13 @@ Goal: share one solid core between Synapse AI and later characters/products.
 
 - Autonomous outbound SMS exists only behind the explicit SMS auto-reply toggle
   and Android SMS permissions.
+- Synapse Chat remains a standalone Android app with app-local Room truth. It
+  does not require a historical Synapse governance runtime or sidecar.
+- Package ID, signing lineage, release tag, update asset, and monotonic
+  `versionCode` remain update-compatibility boundaries.
+- Remote authentication, sync, and push must enter through provider-neutral
+  contracts; provider SDK types do not belong in room/member/message domain
+  records.
 - Memory, research, workspace files, and governance artifacts are separate concerns.
 - Research documents are not memory.
 - GGUF model files are not committed and are not included in normal APKs.

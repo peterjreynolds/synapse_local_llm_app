@@ -1,12 +1,52 @@
-# Synapse Local LLM App
+# Synapse Chat
 
-Synapse is a native Android chat UI for a phone-local `llama.cpp` model.
-The app can run an embedded ARM64 `llama.cpp` runtime directly in the APK, or
-fall back to a Termux `llama-server` on `127.0.0.1:8080`. Chat and
+Synapse Chat is a native Android room-based chat app with a phone-local
+`llama.cpp` AI member. The app can run an embedded ARM64 `llama.cpp` runtime
+directly in the APK, or fall back to a Termux `llama-server` on
+`127.0.0.1:8080`. Rooms, messages, participant profiles, memberships, and
 evidence-backed memory stay in app-local storage.
 
 The active product roadmap is tracked in
 [`docs/canonical-master-plan.md`](docs/canonical-master-plan.md).
+
+## Local Rooms And Members
+
+Phase 1 promotes the original one-user/one-assistant thread into a durable
+local room model without creating a second app or replacing existing chat data.
+
+- `AI_CHAT` rooms keep the original automatic local-AI conversation behavior.
+- `DIRECT` rooms bind the local owner to one placeholder human identity. If
+  that peer leaves, the history remains bound to them; start a new direct room
+  for a different person.
+- `GROUP` rooms contain the local owner and one or more placeholder human
+  members.
+- Synapse can be added to direct and group rooms as a first-class local-AI
+  member.
+- Every message resolves an explicit participant author. The legacy
+  user/assistant/system role remains compatibility metadata rather than the
+  source of identity.
+- Room membership owns posting permission, joined/left state, and Synapse's AI
+  response policy.
+
+Synapse responds automatically in an AI chat. In a direct or group room it
+responds only when `@Synapse` is present or the room's explicit automatic
+response toggle is enabled. A human-only room never starts local inference and
+does not create an empty assistant bubble.
+
+The room drawer shows room kind and member summary, the create-room flow can add
+placeholder humans and Synapse, the member sheet can add/remove Synapse or
+change its response policy, and multi-participant message bubbles show the
+resolved sender. See
+[`docs/synapse-chat-room-architecture.md`](docs/synapse-chat-room-architecture.md)
+for the persistence and routing contract.
+
+## Standalone Boundary
+
+This repository remains one standalone Android application. Its Room database,
+local model runtime, memory, SMS receipts, and UI are app-owned. It does not
+depend on OpenClaw, Wingman, a Synapse governance runtime, or an external
+sidecar. The product name “Synapse” does not activate historical Synapse
+governance infrastructure.
 
 ## Embedded Runtime
 
@@ -103,6 +143,10 @@ change that package id without a deliberate migration plan, because Android
 treats a package-id change as a different app and app-private chats, memory,
 settings, and downloaded models will not carry over automatically.
 
+The visible product name is now Synapse Chat, but Phase 1 intentionally leaves
+the Android namespace, debug application ID, signing lineage, release tag, and
+`Synapse-AI.apk` update asset unchanged.
+
 If those rules fail, Android may show a package conflict or require uninstalling
 first. Uninstalling deletes app-private chats, memory, settings, and downloaded
 models, so stable signing is required for sane updates.
@@ -157,5 +201,7 @@ Synapse pauses memory writes and keeps chat usable.
 
 Settings > Diagnostics > `Export Debug ZIP` creates a private troubleshooting
 archive that excludes GGUF model weights. It includes raw Room/DataStore state,
-readable database summaries, generation timing traces, runtime/model metadata,
-UI state, window metrics, and app-state file manifests.
+including room/member/authorship rows, readable database summaries, generation
+timing traces, runtime/model metadata, UI state, window metrics, and app-state
+file manifests. AI routing returns an explicit decision reason, and generation
+diagnostics are created only when an AI response actually starts.
