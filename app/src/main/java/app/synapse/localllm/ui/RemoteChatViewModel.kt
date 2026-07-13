@@ -34,6 +34,8 @@ import app.synapse.localllm.domain.remote.UploadRemoteAvatarCommand
 import app.synapse.localllm.domain.time.SynapseClock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +45,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteChatViewModel(
@@ -55,6 +59,7 @@ class RemoteChatViewModel(
     private val roomVisibilityTracker: RemoteRoomVisibilityTracker,
     private val idFactory: SynapseIdFactory,
     private val clock: SynapseClock,
+    private val remoteLogoutCleanupTimeoutMillis: Long = REMOTE_LOGOUT_CLEANUP_TIMEOUT_MILLIS,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(RemoteChatUiState())
     private val selectedRoomId = MutableStateFlow<RemoteRoomId?>(null)
@@ -64,6 +69,9 @@ class RemoteChatViewModel(
     val uiState: StateFlow<RemoteChatUiState> = mutableUiState
 
     init {
+        require(remoteLogoutCleanupTimeoutMillis > 0L) {
+            "Remote logout cleanup timeout must be positive."
+        }
         observeAuthentication()
     }
 
@@ -77,8 +85,22 @@ class RemoteChatViewModel(
     fun signOut() = launchAction {
         val accountUid = requireSignedInAccount().accountUid
         runCatching { directoryGateway.updatePresence(accountUid, online = false) }
-        deviceRegistrationGateway.removeCurrentDevice(accountUid)
-        authenticationGateway.signOut()
+        try {
+            try {
+                withTimeout(remoteLogoutCleanupTimeoutMillis) {
+                    deviceRegistrationGateway.removeCurrentDevice(accountUid)
+                }
+            } catch (exception: TimeoutCancellationException) {
+                throw RemoteChatException(
+                    "Signed out locally, but notification cleanup timed out.",
+                    exception,
+                )
+            }
+        } finally {
+            withContext(NonCancellable) {
+                authenticationGateway.signOut()
+            }
+        }
     }
 
     fun changePassword(
@@ -343,6 +365,7 @@ class RemoteChatViewModel(
     private companion object {
         const val HUMAN_AUTHOR_KIND = "HUMAN"
         const val MESSAGE_BODY_LIMIT = 4_000
+        const val REMOTE_LOGOUT_CLEANUP_TIMEOUT_MILLIS = 10_000L
     }
 }
 
