@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Room
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.application.RemoteDeviceRegistrationCoordinator
+import app.synapse.localllm.application.RemoteChatSessionSynchronizer
+import app.synapse.localllm.application.RemoteRoomVisibilityTracker
 import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.application.SmsAutoReplyCoordinator
 import app.synapse.localllm.data.chat.RoomConversationRepository
@@ -112,6 +114,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
     ).build()
 
     val remoteAccountSessionController = RemoteAccountSessionCoordinator()
+    val remoteRoomVisibilityTracker = RemoteRoomVisibilityTracker()
     private val firebaseAuth = FirebaseAuth.getInstance(firebaseApp)
     private val firestore = FirebaseFirestore.getInstance(firebaseApp)
     private val firebaseFunctions = FirebaseFunctions.getInstance(firebaseApp, FIREBASE_FUNCTIONS_REGION)
@@ -156,6 +159,13 @@ class SynapseApplicationGraph private constructor(context: Context) {
             sessionController = remoteAccountSessionController,
             clock = clock,
             applicationScope = applicationScope,
+        )
+    val remoteChatSessionSynchronizer =
+        RemoteChatSessionSynchronizer(
+            directoryGateway = remoteDirectoryGateway,
+            conversationGateway = remoteConversationGateway,
+            cacheRepository = remoteChatCacheRepository,
+            clock = clock,
         )
 
     val settingsStore = SynapseSettingsStore(applicationContext)

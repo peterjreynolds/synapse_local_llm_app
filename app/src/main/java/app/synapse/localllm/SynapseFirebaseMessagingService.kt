@@ -23,8 +23,22 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
             .handleRefreshedInstallation(installationId)
     }
 
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onNewToken(token: String) {
+        // This service owns FID registration through onRegistered. The legacy token must not enter
+        // the FID-only device schema; remove this override when Android lint recognizes FID mode.
+    }
+
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         val payload = parseRemoteNotificationPayload(remoteMessage.data) ?: return
+        if (
+            requireSynapseApplication()
+                .graph
+                .remoteRoomVisibilityTracker
+                .shouldSuppressNotification(payload.roomId)
+        ) {
+            return
+        }
         if (
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED

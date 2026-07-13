@@ -1,28 +1,54 @@
 package app.synapse.localllm
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.core.view.WindowCompat
-import app.synapse.localllm.ui.SynapseApp
+import app.synapse.localllm.ui.RemoteChatApp
+import app.synapse.localllm.ui.RemoteChatViewModel
+import app.synapse.localllm.ui.RemoteChatViewModelFactory
 import app.synapse.localllm.ui.SynapseViewModel
 import app.synapse.localllm.ui.SynapseViewModelFactory
 import app.synapse.localllm.ui.theme.SynapseTheme
 
 class MainActivity : ComponentActivity() {
-    private val synapseViewModel: SynapseViewModel by viewModels {
+    private val localViewModel: SynapseViewModel by viewModels {
         SynapseViewModelFactory(requireSynapseApplication().graph)
+    }
+    private val remoteViewModel: RemoteChatViewModel by viewModels {
+        RemoteChatViewModelFactory(requireSynapseApplication().graph)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        remoteViewModel.openNotificationRoom(intent.getStringExtra(EXTRA_REMOTE_ROOM_ID))
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             SynapseTheme {
-                SynapseApp(viewModel = synapseViewModel)
+                RemoteChatApp(
+                    remoteViewModel = remoteViewModel,
+                    localViewModel = localViewModel,
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        remoteViewModel.openNotificationRoom(intent.getStringExtra(EXTRA_REMOTE_ROOM_ID))
+    }
+
+    override fun onStart() {
+        super.onStart()
+        requireSynapseApplication().graph.remoteRoomVisibilityTracker.setAppForegrounded(true)
+    }
+
+    override fun onStop() {
+        requireSynapseApplication().graph.remoteRoomVisibilityTracker.setAppForegrounded(false)
+        super.onStop()
     }
 
     private fun requireSynapseApplication(): SynapseApplication {

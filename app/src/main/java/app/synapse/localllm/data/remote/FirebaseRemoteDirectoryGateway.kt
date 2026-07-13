@@ -1,7 +1,7 @@
 package app.synapse.localllm.data.remote
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.net.toUri
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
@@ -105,7 +105,7 @@ class FirebaseRemoteDirectoryGateway(
         requireAuthenticatedUid(command.accountUid)
         val extension = allowedAvatarMimeTypes[command.mimeType]
             ?: throw IllegalArgumentException("Choose a JPEG, PNG, or WebP image.")
-        val sourceUri = Uri.parse(command.sourceUri)
+        val sourceUri = command.sourceUri.toUri()
         if (sourceUri.scheme != "content") {
             throw IllegalArgumentException("Avatar source must be an Android content URI.")
         }

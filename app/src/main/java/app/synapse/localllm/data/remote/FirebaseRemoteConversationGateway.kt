@@ -22,10 +22,10 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.functions.FirebaseFunctions
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -42,7 +42,49 @@ class FirebaseRemoteConversationGateway(
         callbackFlow {
             val token = sessionController.requireActiveToken(accountUid)
             requireAuthenticatedUid(accountUid)
-            var mappingJob: Job? = null
+            val listenerLock = Any()
+            var roomDocuments = emptyList<DocumentSnapshot>()
+            val membershipDocuments = mutableMapOf<String, DocumentSnapshot>()
+            val membershipRegistrations = mutableMapOf<String, ListenerRegistration>()
+
+            fun emitRoomSnapshots() {
+                val rooms = synchronized(listenerLock) {
+                    roomDocuments.mapNotNull { roomDocument ->
+                        membershipDocuments[roomDocument.id]?.let { membershipDocument ->
+                            roomDocument.toRoomSnapshot(accountUid, membershipDocument)
+                        }
+                    }
+                }
+                trySend(rooms)
+            }
+
+            fun addMembershipListener(roomDocument: DocumentSnapshot) {
+                val roomId = roomDocument.id
+                val membershipRegistration = roomDocument.reference.collection(MEMBERS_COLLECTION)
+                    .document(accountUid.raw)
+                    .addSnapshotListener { membershipDocument, exception ->
+                        if (exception != null) {
+                            close(exception.toRemoteChatFailure("load remote room membership"))
+                            return@addSnapshotListener
+                        }
+                        synchronized(listenerLock) {
+                            if (membershipDocument == null) {
+                                membershipDocuments.remove(roomId)
+                            } else {
+                                membershipDocuments[roomId] = membershipDocument
+                            }
+                        }
+                        emitRoomSnapshots()
+                    }
+                synchronized(listenerLock) {
+                    membershipRegistrations[roomId] = membershipRegistration
+                }
+                launch {
+                    runCatching { sessionController.registerListener(token, membershipRegistration) }
+                        .onFailure(::close)
+                }
+            }
+
             val registration = firestore.collection(ROOMS_COLLECTION)
                 .whereArrayContains("memberIds", accountUid.raw)
                 .orderBy("updatedAt", Query.Direction.DESCENDING)
@@ -51,14 +93,25 @@ class FirebaseRemoteConversationGateway(
                         close(exception.toRemoteChatFailure("load remote conversations"))
                         return@addSnapshotListener
                     }
-                    mappingJob?.cancel()
-                    mappingJob = launch {
-                        runCatching { snapshot.toRoomSnapshots(accountUid) }
-                            .onSuccess { rooms -> trySend(rooms) }
-                            .onFailure { failure ->
-                                close(failure.toRemoteChatFailure("load rooms"))
-                            }
+                    val updatedRoomDocuments = snapshot?.documents.orEmpty()
+                    val updatedRoomIds = updatedRoomDocuments.mapTo(mutableSetOf()) { roomDocument ->
+                        roomDocument.id
                     }
+                    val removedRegistrations = synchronized(listenerLock) {
+                        val removedRoomIds = membershipRegistrations.keys - updatedRoomIds
+                        val registrations = removedRoomIds.mapNotNull(membershipRegistrations::remove)
+                        removedRoomIds.forEach(membershipDocuments::remove)
+                        roomDocuments = updatedRoomDocuments
+                        registrations
+                    }
+                    removedRegistrations.forEach(ListenerRegistration::remove)
+                    val roomsNeedingMembershipListeners = synchronized(listenerLock) {
+                        updatedRoomDocuments.filter { roomDocument ->
+                            roomDocument.id !in membershipRegistrations
+                        }
+                    }
+                    roomsNeedingMembershipListeners.forEach(::addMembershipListener)
+                    emitRoomSnapshots()
                 }
             val registrationJob = launch {
                 runCatching { sessionController.registerListener(token, registration) }
@@ -66,8 +119,14 @@ class FirebaseRemoteConversationGateway(
             }
             awaitClose {
                 registrationJob.cancel()
-                mappingJob?.cancel()
                 registration.remove()
+                synchronized(listenerLock) {
+                    membershipRegistrations.values.toList().also {
+                        membershipRegistrations.clear()
+                        membershipDocuments.clear()
+                        roomDocuments = emptyList()
+                    }
+                }.forEach(ListenerRegistration::remove)
             }
         }
 
@@ -175,16 +234,9 @@ class FirebaseRemoteConversationGateway(
         }
     }
 
-    private suspend fun QuerySnapshot?.toRoomSnapshots(
+    private fun DocumentSnapshot.toRoomSnapshot(
         accountUid: RemoteAccountUid,
-    ): List<RemoteDirectRoomSnapshot> = buildList {
-        for (roomDocument in this@toRoomSnapshots?.documents.orEmpty()) {
-            roomDocument.toRoomSnapshot(accountUid)?.let(::add)
-        }
-    }
-
-    private suspend fun DocumentSnapshot.toRoomSnapshot(
-        accountUid: RemoteAccountUid,
+        membershipDocument: DocumentSnapshot,
     ): RemoteDirectRoomSnapshot? {
         if (getString("kind") != DIRECT_ROOM_KIND) return null
         val memberIds = (get("memberIds") as? List<*>)
@@ -195,10 +247,6 @@ class FirebaseRemoteConversationGateway(
         val directKey = getString("directKey") ?: return null
         val title = getString("title") ?: return null
         val updatedAt = getTimestamp("updatedAt") ?: return null
-        val membershipDocument = reference.collection(MEMBERS_COLLECTION)
-            .document(accountUid.raw)
-            .get()
-            .await()
         if (!membershipDocument.exists() || membershipDocument.getBoolean("active") != true) return null
         val joinedAt = membershipDocument.getTimestamp("joinedAt") ?: return null
         val latestMessage = get("latestMessage") as? Map<*, *>
@@ -278,10 +326,6 @@ class FirebaseRemoteConversationGateway(
             snapshot.getString("authorKind") == message.authorKind &&
             snapshot.getString("body") == message.body.trim()
     }
-
-    private fun Throwable.toRemoteChatFailure(operation: String): RemoteChatException =
-        (this as? Exception ?: Exception("Remote chat operation failed.", this))
-            .toRemoteChatFailure(operation)
 
     private fun requireAuthenticatedUid(accountUid: RemoteAccountUid) {
         sessionController.requireActiveToken(accountUid)
