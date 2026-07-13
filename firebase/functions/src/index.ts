@@ -9,6 +9,7 @@ import {
   parseHumanMessagePayload,
   parseTargetUid,
 } from "./domain.js";
+import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js";
 
 if (getApps().length === 0) {
   initializeApp();
@@ -167,8 +168,30 @@ export const notifyRemoteMessage = onDocumentCreated(
     if (!Array.isArray(memberIds) || !memberIds.includes(message.senderUid)) {
       return;
     }
-    const recipientUids = memberIds.filter(
-      (memberUid): memberUid is string => typeof memberUid === "string" && memberUid !== message.senderUid,
+    const candidateRecipientUids = [
+      ...new Set(
+        memberIds.filter(
+          (memberUid): memberUid is string =>
+            typeof memberUid === "string" && memberUid !== message.senderUid,
+        ),
+      ),
+    ];
+    if (candidateRecipientUids.length === 0) {
+      return;
+    }
+    const authorizationSnapshots = await firestore.getAll(
+      ...candidateRecipientUids.flatMap((recipientUid) => [
+        firestore.doc(`profiles/${recipientUid}`),
+        roomReference.collection("members").doc(recipientUid),
+      ]),
+    );
+    const recipientUids = selectAuthorizedMessageRecipientUids(
+      candidateRecipientUids,
+      candidateRecipientUids.map((recipientUid, recipientIndex) => ({
+        membershipActive: authorizationSnapshots[recipientIndex * 2 + 1]?.get("active") === true,
+        profileAllowed: authorizationSnapshots[recipientIndex * 2]?.get("allowed") === true,
+        uid: recipientUid,
+      })),
     );
     if (recipientUids.length === 0) {
       return;
