@@ -7,7 +7,9 @@ import app.synapse.localllm.domain.chat.RoomMemberRecord
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
+import app.synapse.localllm.domain.runtime.DeviceRuntimeCapabilities
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
+import app.synapse.localllm.domain.runtime.ModelDeviceCompatibilityAssessment
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
@@ -115,6 +117,8 @@ data class SynapseUiState(
     val isSending: Boolean = false,
     val isImportingModel: Boolean = false,
     val modelCatalogEntries: List<ModelCatalogEntry> = emptyList(),
+    val deviceRuntimeCapabilities: DeviceRuntimeCapabilities? = null,
+    val modelDeviceCompatibilityByEntryId: Map<String, ModelDeviceCompatibilityAssessment> = emptyMap(),
     val activeModelDownload: ModelDownloadUiState? = null,
     val appUpdate: AppUpdateUiState = AppUpdateUiState(),
     val lastNotice: String? = null,

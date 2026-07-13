@@ -125,6 +125,7 @@ import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
+import app.synapse.localllm.domain.runtime.ModelDeviceCompatibilityAssessment
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
 import app.synapse.localllm.domain.runtime.RuntimeStartStatus
 import app.synapse.localllm.domain.runtime.RuntimeStatus
@@ -1991,13 +1992,16 @@ private fun EmbeddedModelSettingsCard(
             }
             if (state.modelCatalogEntries.isNotEmpty()) {
                 Text(
-                    text = "Recommended downloads",
+                    text = state.deviceRuntimeCapabilities?.let { capabilities ->
+                        "Model guidance | ${formatByteCount(capabilities.totalMemoryBytes)} device memory | advisory only"
+                    } ?: "Model guidance unavailable",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelMedium,
                 )
                 state.modelCatalogEntries.forEach { entry ->
                     ModelCatalogEntryRow(
                         entry = entry,
+                        compatibilityAssessment = state.modelDeviceCompatibilityByEntryId[entry.id],
                         activeDownload = state.activeModelDownload,
                         selectedDisplayName = state.settings.embeddedModelDisplayName,
                         onDownloadCatalogModel = onDownloadCatalogModel,
@@ -2011,6 +2015,7 @@ private fun EmbeddedModelSettingsCard(
 @Composable
 private fun ModelCatalogEntryRow(
     entry: ModelCatalogEntry,
+    compatibilityAssessment: ModelDeviceCompatibilityAssessment?,
     activeDownload: ModelDownloadUiState?,
     selectedDisplayName: String?,
     onDownloadCatalogModel: (ModelCatalogEntry) -> Unit,
@@ -2033,7 +2038,13 @@ private fun ModelCatalogEntryRow(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (entry.recommended) "${entry.name} | recommended" else entry.name,
+                        text = when {
+                            compatibilityAssessment?.isRecommendedForDevice == true ->
+                                "${entry.name} | recommended for this device"
+
+                            entry.recommended -> "${entry.name} | catalog recommended"
+                            else -> entry.name
+                        },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -2057,7 +2068,10 @@ private fun ModelCatalogEntryRow(
                 }
             }
             Text(
-                text = entry.compatibilityNotes,
+                text = listOfNotNull(
+                    compatibilityAssessment?.guidance,
+                    entry.compatibilityNotes,
+                ).joinToString(" "),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
             )

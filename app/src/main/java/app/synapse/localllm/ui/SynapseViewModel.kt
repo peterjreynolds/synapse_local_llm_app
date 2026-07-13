@@ -23,12 +23,15 @@ import app.synapse.localllm.domain.library.CreateMarkdownArtifactCommand
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
+import app.synapse.localllm.domain.runtime.DeviceRuntimeCapabilities
 import app.synapse.localllm.domain.runtime.DownloadModelCommand
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelDownloadStage
 import app.synapse.localllm.domain.runtime.ModelDownloadStartStatus
 import app.synapse.localllm.domain.runtime.ModelDownloadState
+import app.synapse.localllm.domain.runtime.ModelDeviceCompatibilityAssessment
+import app.synapse.localllm.domain.runtime.ModelDeviceFit
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
 import app.synapse.localllm.domain.settings.SynapseSettings
@@ -920,14 +923,25 @@ class SynapseViewModel(
     }
 
     fun downloadCatalogModel(entry: ModelCatalogEntry) {
+        val compatibilityRefresh = refreshModelDeviceCompatibility()
+        val compatibilityAssessment = compatibilityRefresh.getOrNull()?.get(entry.id)
         val receipt = graph.modelDownloadController.startModelDownload(DownloadModelCommand(entry))
         mutableUiState.update { state ->
             state.copy(
-                lastNotice = when (receipt.status) {
-                    ModelDownloadStartStatus.STARTED -> receipt.message
-                    ModelDownloadStartStatus.ALREADY_RUNNING -> receipt.message
-                    ModelDownloadStartStatus.FAILED_TO_START -> receipt.message
-                },
+                lastNotice = listOfNotNull(
+                    compatibilityAssessment
+                        ?.takeIf { assessment -> assessment.fit != ModelDeviceFit.SUITABLE }
+                        ?.guidance,
+                    compatibilityRefresh.exceptionOrNull()?.let { exception ->
+                        "Device memory guidance could not be refreshed: " +
+                            (exception.message ?: "Android memory status unavailable.")
+                    },
+                    when (receipt.status) {
+                        ModelDownloadStartStatus.STARTED -> receipt.message
+                        ModelDownloadStartStatus.ALREADY_RUNNING -> receipt.message
+                        ModelDownloadStartStatus.FAILED_TO_START -> receipt.message
+                    },
+                ).joinToString(" "),
             )
         }
     }
@@ -1007,14 +1021,45 @@ class SynapseViewModel(
     private fun loadModelCatalog() {
         viewModelScope.launch {
             runCatching {
-                graph.modelCatalogRepository.listModelCatalogEntries()
-            }.onSuccess { catalogEntries ->
-                mutableUiState.update { state -> state.copy(modelCatalogEntries = catalogEntries) }
+                val catalogEntries = graph.modelCatalogRepository.listModelCatalogEntries()
+                val capabilities = graph.deviceRuntimeCapabilitiesReader.readDeviceRuntimeCapabilities()
+                val compatibilityAssessments = graph.modelDeviceCompatibilityPolicy
+                    .assessModelCatalogForDevice(catalogEntries, capabilities)
+                ModelCatalogDeviceSnapshot(
+                    catalogEntries = catalogEntries,
+                    capabilities = capabilities,
+                    compatibilityAssessments = compatibilityAssessments,
+                )
+            }.onSuccess { snapshot ->
+                mutableUiState.update { state ->
+                    state.copy(
+                        modelCatalogEntries = snapshot.catalogEntries,
+                        deviceRuntimeCapabilities = snapshot.capabilities,
+                        modelDeviceCompatibilityByEntryId = snapshot.compatibilityAssessments,
+                    )
+                }
             }.onFailure { exception ->
                 mutableUiState.update { state ->
                     state.copy(lastNotice = exception.message ?: "Model catalog could not be loaded.")
                 }
             }
+        }
+    }
+
+    private fun refreshModelDeviceCompatibility(): Result<Map<String, ModelDeviceCompatibilityAssessment>> {
+        val catalogEntries = mutableUiState.value.modelCatalogEntries
+        if (catalogEntries.isEmpty()) return Result.success(emptyMap())
+        return runCatching {
+            val capabilities = graph.deviceRuntimeCapabilitiesReader.readDeviceRuntimeCapabilities()
+            val compatibilityAssessments = graph.modelDeviceCompatibilityPolicy
+                .assessModelCatalogForDevice(catalogEntries, capabilities)
+            mutableUiState.update { state ->
+                state.copy(
+                    deviceRuntimeCapabilities = capabilities,
+                    modelDeviceCompatibilityByEntryId = compatibilityAssessments,
+                )
+            }
+            compatibilityAssessments
         }
     }
 
@@ -1346,6 +1391,12 @@ class SynapseViewModel(
         val SYNAPSE_MENTION_PATTERN = Regex("(?i)(?<![A-Za-z0-9_])@synapse\\b")
     }
 }
+
+private data class ModelCatalogDeviceSnapshot(
+    val catalogEntries: List<ModelCatalogEntry>,
+    val capabilities: DeviceRuntimeCapabilities,
+    val compatibilityAssessments: Map<String, ModelDeviceCompatibilityAssessment>,
+)
 
 class SynapseViewModelFactory(
     private val graph: SynapseApplicationGraph,

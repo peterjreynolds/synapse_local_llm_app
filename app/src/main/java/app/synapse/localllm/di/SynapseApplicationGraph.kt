@@ -38,6 +38,7 @@ import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDirectoryGateway
 import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
 import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
+import app.synapse.localllm.data.runtime.AndroidDeviceRuntimeCapabilitiesReader
 import app.synapse.localllm.data.runtime.AndroidEmbeddedModelStore
 import app.synapse.localllm.data.runtime.AndroidForegroundModelDownloadController
 import app.synapse.localllm.data.runtime.AndroidModelDownloader
@@ -67,6 +68,7 @@ import app.synapse.localllm.domain.memory.MemoryRepository
 import app.synapse.localllm.domain.memory.PromptContextAssembler
 import app.synapse.localllm.domain.runtime.LocalInferenceRuntime
 import app.synapse.localllm.domain.runtime.ModelCatalogRepository
+import app.synapse.localllm.domain.runtime.ModelDeviceCompatibilityPolicy
 import app.synapse.localllm.domain.runtime.ModelDownloader
 import app.synapse.localllm.domain.sms.SmsAutoReplyRepository
 import app.synapse.localllm.domain.sms.SmsOutboundGateway
@@ -173,6 +175,8 @@ class SynapseApplicationGraph private constructor(context: Context) {
     val settingsStore = SynapseSettingsStore(applicationContext)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
     val modelCatalogRepository: ModelCatalogRepository = BuiltInModelCatalogRepository()
+    val deviceRuntimeCapabilitiesReader = AndroidDeviceRuntimeCapabilitiesReader(applicationContext)
+    val modelDeviceCompatibilityPolicy = ModelDeviceCompatibilityPolicy()
     val modelDownloader: ModelDownloader = AndroidModelDownloader(applicationContext, createHttpClient())
     val modelDownloadController = AndroidForegroundModelDownloadController(applicationContext)
     val appUpdateRepository: AppUpdateRepository =

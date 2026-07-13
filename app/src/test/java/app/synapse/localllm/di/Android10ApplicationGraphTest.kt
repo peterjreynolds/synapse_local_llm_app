@@ -2,7 +2,9 @@ package app.synapse.localllm.di
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -21,6 +23,9 @@ class Android10ApplicationGraphTest {
             assertNotNull(graph.localInferenceRuntime)
             assertNotNull(graph.remoteDeviceRegistrationCoordinator)
             assertNotNull(graph.smsAutoReplyCoordinator)
+            val capabilities = graph.deviceRuntimeCapabilitiesReader.readDeviceRuntimeCapabilities()
+            assertEquals(29, capabilities.androidApiLevel)
+            assertTrue(capabilities.totalMemoryBytes > 0L)
         } finally {
             graph.database.close()
             context.deleteDatabase("synapse.db")
