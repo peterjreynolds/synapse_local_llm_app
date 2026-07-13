@@ -81,7 +81,7 @@ private fun RemoteLoginScreen(
     onOpenLocalAi: () -> Unit,
 ) {
     var username by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
 
     fun submit() {
         if (!state.isActionRunning) onSignIn(username, password)

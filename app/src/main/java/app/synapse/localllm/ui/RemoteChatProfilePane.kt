@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -40,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -57,8 +59,8 @@ internal fun RemoteProfilePane(
     val profile = state.profiles.firstOrNull { candidate -> candidate.profileUid.raw == accountUid?.raw }
     var displayName by rememberSaveable(accountUid?.raw) { mutableStateOf("") }
     var bio by rememberSaveable(accountUid?.raw) { mutableStateOf("") }
-    var currentPassword by rememberSaveable(accountUid?.raw) { mutableStateOf("") }
-    var newPassword by rememberSaveable(accountUid?.raw) { mutableStateOf("") }
+    var currentPassword by remember(accountUid?.raw) { mutableStateOf("") }
+    var newPassword by remember(accountUid?.raw) { mutableStateOf("") }
     var notificationsGranted by remember {
         mutableStateOf(hasNotificationPermission(context))
     }
@@ -174,6 +176,7 @@ internal fun RemoteProfilePane(
             label = { Text("Current password") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         )
         OutlinedTextField(
             value = newPassword,
@@ -183,6 +186,7 @@ internal fun RemoteProfilePane(
             supportingText = { Text("At least 8 characters") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         )
         OutlinedButton(
             onClick = {
