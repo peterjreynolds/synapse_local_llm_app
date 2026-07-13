@@ -24,6 +24,22 @@ interface ChatDao {
     @Query("SELECT * FROM chat_threads WHERE id = :threadId LIMIT 1")
     suspend fun findThread(threadId: String): ChatThreadEntity?
 
+    @Query("SELECT * FROM chat_participants WHERE id = :participantId LIMIT 1")
+    suspend fun findParticipant(participantId: String): ChatParticipantEntity?
+
+    @Query(
+        """
+        SELECT * FROM room_memberships
+        WHERE roomId = :roomId
+          AND participantId = :participantId
+        LIMIT 1
+        """,
+    )
+    suspend fun findRoomMembership(
+        roomId: String,
+        participantId: String,
+    ): RoomMembershipEntity?
+
     @Query(
         """
         SELECT * FROM chat_threads
@@ -36,8 +52,161 @@ interface ChatDao {
     )
     fun observeThreads(): Flow<List<ChatThreadEntity>>
 
+    @Query(
+        """
+        SELECT
+            membership.*,
+            participant.id AS participant_id,
+            participant.kind AS participant_kind,
+            participant.displayName AS participant_displayName,
+            participant.avatarUri AS participant_avatarUri,
+            participant.avatarColorArgb AS participant_avatarColorArgb,
+            participant.remoteId AS participant_remoteId,
+            participant.revision AS participant_revision,
+            participant.syncState AS participant_syncState,
+            participant.createdAtEpochMillis AS participant_createdAtEpochMillis,
+            participant.updatedAtEpochMillis AS participant_updatedAtEpochMillis
+        FROM room_memberships AS membership
+        LEFT JOIN chat_participants AS participant
+          ON participant.id = membership.participantId
+        WHERE membership.roomId = :roomId
+        ORDER BY
+            CASE WHEN membership.role = 'OWNER' THEN 0 ELSE 1 END ASC,
+            membership.joinedAtEpochMillis ASC,
+            membership.participantId ASC
+        """,
+    )
+    fun observeRoomMembers(roomId: String): Flow<List<RoomMemberWithParticipantEntity>>
+
+    @Query(
+        """
+        SELECT
+            membership.*,
+            participant.id AS participant_id,
+            participant.kind AS participant_kind,
+            participant.displayName AS participant_displayName,
+            participant.avatarUri AS participant_avatarUri,
+            participant.avatarColorArgb AS participant_avatarColorArgb,
+            participant.remoteId AS participant_remoteId,
+            participant.revision AS participant_revision,
+            participant.syncState AS participant_syncState,
+            participant.createdAtEpochMillis AS participant_createdAtEpochMillis,
+            participant.updatedAtEpochMillis AS participant_updatedAtEpochMillis
+        FROM room_memberships AS membership
+        LEFT JOIN chat_participants AS participant
+          ON participant.id = membership.participantId
+        WHERE membership.roomId = :roomId
+        ORDER BY
+            CASE WHEN membership.role = 'OWNER' THEN 0 ELSE 1 END ASC,
+            membership.joinedAtEpochMillis ASC,
+            membership.participantId ASC
+        """,
+    )
+    suspend fun listRoomMembers(roomId: String): List<RoomMemberWithParticipantEntity>
+
+    @Query(
+        """
+        SELECT
+            membership.*,
+            participant.id AS participant_id,
+            participant.kind AS participant_kind,
+            participant.displayName AS participant_displayName,
+            participant.avatarUri AS participant_avatarUri,
+            participant.avatarColorArgb AS participant_avatarColorArgb,
+            participant.remoteId AS participant_remoteId,
+            participant.revision AS participant_revision,
+            participant.syncState AS participant_syncState,
+            participant.createdAtEpochMillis AS participant_createdAtEpochMillis,
+            participant.updatedAtEpochMillis AS participant_updatedAtEpochMillis
+        FROM room_memberships AS membership
+        LEFT JOIN chat_participants AS participant
+          ON participant.id = membership.participantId
+        ORDER BY membership.roomId ASC,
+            CASE WHEN membership.role = 'OWNER' THEN 0 ELSE 1 END ASC,
+            membership.joinedAtEpochMillis ASC,
+            membership.participantId ASC
+        """,
+    )
+    fun observeAllRoomMembers(): Flow<List<RoomMemberWithParticipantEntity>>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertThreadIfAbsent(thread: ChatThreadEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertParticipantIfAbsent(participant: ChatParticipantEntity): Long
+
+    @Query(
+        """
+        UPDATE chat_participants
+        SET displayName = :displayName,
+            avatarUri = :avatarUri,
+            avatarColorArgb = :avatarColorArgb,
+            updatedAtEpochMillis = :updatedAtEpochMillis
+        WHERE id = :participantId
+        """,
+    )
+    suspend fun updateParticipantProfile(
+        participantId: String,
+        displayName: String,
+        avatarUri: String?,
+        avatarColorArgb: Long?,
+        updatedAtEpochMillis: Long,
+    ): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertRoomMembershipIfAbsent(membership: RoomMembershipEntity): Long
+
+    @Query(
+        """
+        UPDATE room_memberships
+        SET role = :role,
+            canPost = :canPost,
+            joinedAtEpochMillis = :joinedAtEpochMillis,
+            leftAtEpochMillis = NULL,
+            aiResponsePolicy = :aiResponsePolicy
+        WHERE roomId = :roomId
+          AND participantId = :participantId
+          AND leftAtEpochMillis IS NOT NULL
+        """,
+    )
+    suspend fun reactivateRoomMembership(
+        roomId: String,
+        participantId: String,
+        role: String,
+        canPost: Boolean,
+        joinedAtEpochMillis: Long,
+        aiResponsePolicy: String,
+    ): Int
+
+    @Query(
+        """
+        UPDATE room_memberships
+        SET leftAtEpochMillis = :leftAtEpochMillis
+        WHERE roomId = :roomId
+          AND participantId = :participantId
+          AND leftAtEpochMillis IS NULL
+        """,
+    )
+    suspend fun softLeaveRoomMembership(
+        roomId: String,
+        participantId: String,
+        leftAtEpochMillis: Long,
+    ): Int
+
+    @Query(
+        """
+        UPDATE room_memberships
+        SET aiResponsePolicy = :aiResponsePolicy
+        WHERE roomId = :roomId
+          AND participantId = :participantId
+          AND leftAtEpochMillis IS NULL
+        """,
+    )
+    suspend fun updateRoomMemberAiResponsePolicy(
+        roomId: String,
+        participantId: String,
+        aiResponsePolicy: String,
+    ): Int
 
     @Query(
         """
@@ -101,33 +270,93 @@ interface ChatDao {
     @Query("DELETE FROM chat_threads WHERE id = :threadId")
     suspend fun deleteThread(threadId: String): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertMessage(message: ChatMessageEntity)
+    @Insert
+    suspend fun insertMessage(message: ChatMessageEntity)
+
+    @Insert
+    suspend fun insertMessageAuthor(author: ChatMessageAuthorEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAttachments(attachments: List<AttachmentEntity>)
 
-    @Query("SELECT * FROM chat_messages WHERE id = :messageId LIMIT 1")
-    suspend fun findMessage(messageId: String): ChatMessageEntity?
-
     @Query(
         """
-        SELECT * FROM chat_messages
-        WHERE threadId = :threadId
-        ORDER BY createdAtEpochMillis ASC
+        SELECT
+            message.*,
+            author.id AS author_id,
+            author.kind AS author_kind,
+            author.displayName AS author_displayName,
+            author.avatarUri AS author_avatarUri,
+            author.avatarColorArgb AS author_avatarColorArgb,
+            author.remoteId AS author_remoteId,
+            author.revision AS author_revision,
+            author.syncState AS author_syncState,
+            author.createdAtEpochMillis AS author_createdAtEpochMillis,
+            author.updatedAtEpochMillis AS author_updatedAtEpochMillis
+        FROM chat_messages AS message
+        LEFT JOIN chat_message_authors AS authorship
+          ON authorship.messageId = message.id
+        LEFT JOIN chat_participants AS author
+          ON author.id = authorship.authorParticipantId
+        WHERE message.id = :messageId
+        LIMIT 1
         """,
     )
-    fun observeMessages(threadId: String): Flow<List<ChatMessageEntity>>
+    suspend fun findMessageWithAuthor(messageId: String): ChatMessageWithAuthorEntity?
 
     @Query(
         """
-        SELECT * FROM chat_messages
-        WHERE threadId = :threadId
-        ORDER BY createdAtEpochMillis DESC
+        SELECT
+            message.*,
+            author.id AS author_id,
+            author.kind AS author_kind,
+            author.displayName AS author_displayName,
+            author.avatarUri AS author_avatarUri,
+            author.avatarColorArgb AS author_avatarColorArgb,
+            author.remoteId AS author_remoteId,
+            author.revision AS author_revision,
+            author.syncState AS author_syncState,
+            author.createdAtEpochMillis AS author_createdAtEpochMillis,
+            author.updatedAtEpochMillis AS author_updatedAtEpochMillis
+        FROM chat_messages AS message
+        LEFT JOIN chat_message_authors AS authorship
+          ON authorship.messageId = message.id
+        LEFT JOIN chat_participants AS author
+          ON author.id = authorship.authorParticipantId
+        WHERE message.threadId = :threadId
+        ORDER BY message.createdAtEpochMillis ASC, message.id ASC
+        """,
+    )
+    fun observeMessagesWithAuthors(threadId: String): Flow<List<ChatMessageWithAuthorEntity>>
+
+    @Query(
+        """
+        SELECT
+            message.*,
+            author.id AS author_id,
+            author.kind AS author_kind,
+            author.displayName AS author_displayName,
+            author.avatarUri AS author_avatarUri,
+            author.avatarColorArgb AS author_avatarColorArgb,
+            author.remoteId AS author_remoteId,
+            author.revision AS author_revision,
+            author.syncState AS author_syncState,
+            author.createdAtEpochMillis AS author_createdAtEpochMillis,
+            author.updatedAtEpochMillis AS author_updatedAtEpochMillis
+        FROM chat_messages AS message
+        LEFT JOIN chat_message_authors AS authorship
+          ON authorship.messageId = message.id
+        LEFT JOIN chat_participants AS author
+          ON author.id = authorship.authorParticipantId
+        WHERE message.threadId = :threadId
+        ORDER BY message.createdAtEpochMillis DESC, message.id DESC
         LIMIT :limit
         """,
     )
-    suspend fun listRecentMessages(threadId: String, limit: Int): List<ChatMessageEntity>
+    suspend fun listRecentMessagesWithAuthors(
+        threadId: String,
+        limit: Int,
+    ): List<ChatMessageWithAuthorEntity>
 
     @Query(
         """

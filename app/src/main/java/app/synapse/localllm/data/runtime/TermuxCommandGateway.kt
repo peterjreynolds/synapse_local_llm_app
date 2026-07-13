@@ -47,10 +47,10 @@ class TermuxCommandGateway(
             putExtra(TERMUX_EXTRA_WORKDIR, command.workingDirectory)
             putExtra(TERMUX_EXTRA_BACKGROUND, command.runInBackground)
             putExtra(TERMUX_EXTRA_SESSION_ACTION, TERMUX_SESSION_NEW)
-            putExtra(TERMUX_EXTRA_COMMAND_LABEL, "Start Synapse local LLM")
+            putExtra(TERMUX_EXTRA_COMMAND_LABEL, "Start Synapse Chat local model")
             putExtra(
                 TERMUX_EXTRA_COMMAND_DESCRIPTION,
-                "Starts llama-server for the Synapse Android app.",
+                "Starts llama-server for the Synapse Chat Android app.",
             )
         }
 

@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.db.SynapseDatabase
+import app.synapse.localllm.domain.chat.BuiltInParticipantIds
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.sms.RecordSmsAutoReplyAcceptedCommand
 import app.synapse.localllm.domain.sms.SmsAutoReplyState
@@ -110,9 +111,15 @@ class RoomSmsAutoReplyRepositoryTest {
         val thread = conversationRepository.createThread("SMS +15551234567")
         val senderAddress = SmsSenderAddress("+15551234567")
 
-        repository.persistThreadLinkForSender(senderAddress, thread.id)
+        repository.persistThreadLinkForSender(
+            senderAddress = senderAddress,
+            threadId = thread.id,
+            participantId = BuiltInParticipantIds.LOCAL_HUMAN,
+        )
 
-        assertEquals(thread.id, repository.findThreadLinkForSender(senderAddress)?.threadId)
+        val persistedLink = repository.findThreadLinkForSender(senderAddress)
+        assertEquals(thread.id, persistedLink?.threadId)
+        assertEquals(BuiltInParticipantIds.LOCAL_HUMAN, persistedLink?.participantId)
     }
 
     private fun acceptedCommand(): RecordSmsAutoReplyAcceptedCommand =

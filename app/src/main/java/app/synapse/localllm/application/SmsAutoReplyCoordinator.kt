@@ -1,9 +1,12 @@
 package app.synapse.localllm.application
 
+import app.synapse.localllm.domain.chat.BuiltInParticipantIds
 import app.synapse.localllm.domain.chat.ConversationRepository
+import app.synapse.localllm.domain.chat.CreateRoomCommand
+import app.synapse.localllm.domain.chat.ParticipantKind
+import app.synapse.localllm.domain.chat.RoomKind
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.ids.ChatMessageId
-import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.settings.composeSmsAutoReplySystemPrompt
 import app.synapse.localllm.domain.sms.InboundSmsAutoReplyCommand
@@ -17,6 +20,7 @@ import app.synapse.localllm.domain.sms.SmsAutoReplyRepository
 import app.synapse.localllm.domain.sms.SmsAutoReplyState
 import app.synapse.localllm.domain.sms.SmsOutboundGateway
 import app.synapse.localllm.domain.sms.SmsSenderAddress
+import app.synapse.localllm.domain.sms.SmsSenderThreadLink
 import app.synapse.localllm.domain.sms.canRetrySmsAutoReplyGeneration
 import app.synapse.localllm.domain.sms.normalizeInboundSmsBody
 import kotlinx.coroutines.CancellationException
@@ -74,7 +78,7 @@ class SmsAutoReplyCoordinator(
             existingReceipt
         }
 
-        val threadId = ensureThreadForSender(command.senderAddress)
+        val senderLink = ensureRoomForSender(command.senderAddress)
         val autoReplySettings = settings.copy(
             systemPrompt = composeSmsAutoReplySystemPrompt(
                 systemPrompt = settings.systemPrompt,
@@ -85,16 +89,18 @@ class SmsAutoReplyCoordinator(
         val outcome = try {
             turnCoordinator.sendUserTurn(
                 command = SubmitUserMessageCommand(
-                    threadId = threadId,
-                    body = buildSmsTurnBody(command.senderAddress, inboundBody),
+                    threadId = senderLink.threadId,
+                    body = inboundBody,
                     attachments = emptyList(),
+                    authorParticipantId = senderLink.participantId,
                 ),
                 settings = autoReplySettings,
+                aiResponseMode = AiResponseMode.REQUIRE_AI_RESPONSE,
                 onTurnStarted = { turnReceipt ->
                     smsAutoReplyRepository.linkAutoReplyTurn(
                         LinkSmsAutoReplyTurnCommand(
                             receiptId = receipt.id,
-                            threadId = threadId,
+                            threadId = senderLink.threadId,
                             userMessageId = turnReceipt.userMessageId,
                             assistantMessageId = turnReceipt.assistantMessageId,
                         ),
@@ -132,16 +138,44 @@ class SmsAutoReplyCoordinator(
                     state = SmsAutoReplyState.GENERATION_FAILED,
                     reason = outcome.reason,
                 )
+
+            is SynapseTurnOutcome.HumanMessageOnly ->
+                smsAutoReplyRepository.markAutoReplyFailed(
+                    receiptId = receipt.id,
+                    state = SmsAutoReplyState.GENERATION_FAILED,
+                    reason = "Synapse AI is not an active member of this SMS room.",
+                )
         }
     }
 
-    private suspend fun ensureThreadForSender(senderAddress: SmsSenderAddress): ChatThreadId {
+    private suspend fun ensureRoomForSender(senderAddress: SmsSenderAddress): SmsSenderThreadLink {
         val existingLink = smsAutoReplyRepository.findThreadLinkForSender(senderAddress)
-        if (existingLink != null) return existingLink.threadId
+        if (existingLink != null) return existingLink
 
-        val thread = conversationRepository.createThread(buildSmsThreadTitle(senderAddress))
-        smsAutoReplyRepository.persistThreadLinkForSender(senderAddress, thread.id)
-        return thread.id
+        val room = conversationRepository.createRoom(
+            CreateRoomCommand(
+                title = buildSmsRoomTitle(senderAddress),
+                kind = RoomKind.DIRECT,
+                placeholderHumanDisplayNames = listOf(buildSmsParticipantDisplayName(senderAddress)),
+                includeSynapseAi = true,
+                synapseAiAutoResponseEnabled = true,
+            ),
+        )
+        val senderParticipant = checkNotNull(
+            room.activeMembers
+                .map { member -> member.participant }
+                .singleOrNull { participant ->
+                    participant.kind == ParticipantKind.HUMAN &&
+                        participant.id != BuiltInParticipantIds.LOCAL_HUMAN
+                },
+        ) {
+            "SMS room was created without its sender participant."
+        }
+        return smsAutoReplyRepository.persistThreadLinkForSender(
+            senderAddress = senderAddress,
+            threadId = room.id,
+            participantId = senderParticipant.id,
+        )
     }
 
     private suspend fun queueCompletedAssistantReply(
@@ -201,13 +235,15 @@ class SmsAutoReplyCoordinator(
         const val SMS_AUTO_REPLY_INTERRUPTED_REASON =
             "SMS auto-reply generation was interrupted before the reply was queued."
 
-        fun buildSmsThreadTitle(senderAddress: SmsSenderAddress): String =
+        fun buildSmsRoomTitle(senderAddress: SmsSenderAddress): String =
             "SMS ${senderAddress.raw}".take(72).trimEnd()
 
-        fun buildSmsTurnBody(
-            senderAddress: SmsSenderAddress,
-            inboundBody: String,
-        ): String =
-            "Incoming SMS from ${senderAddress.raw}:\n$inboundBody"
+        fun buildSmsParticipantDisplayName(senderAddress: SmsSenderAddress): String =
+            senderAddress.raw
+                .filterNot(Char::isISOControl)
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .take(64)
+                .ifBlank { "SMS sender" }
     }
 }

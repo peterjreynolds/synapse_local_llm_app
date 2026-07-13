@@ -7,8 +7,11 @@ import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.sms.RoomSmsAutoReplyRepository
 import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
+import app.synapse.localllm.domain.chat.BuiltInParticipantIds
 import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ConversationRole
+import app.synapse.localllm.domain.chat.ParticipantRecord
+import app.synapse.localllm.domain.chat.RoomKind
 import app.synapse.localllm.domain.diagnostics.AssistantGenerationFinishedCommand
 import app.synapse.localllm.domain.diagnostics.AssistantGenerationStartedCommand
 import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
@@ -133,6 +136,10 @@ class SmsAutoReplyCoordinatorTest {
         assertNotNull(persistedReceipt?.assistantMessageId)
         val assistantReply = conversationRepository.findMessage(persistedReceipt!!.assistantMessageId!!)
         assertEquals("I will call you back soon.", assistantReply?.body)
+        val inboundMessage = conversationRepository.findMessage(persistedReceipt.userMessageId!!)
+        assertEquals(INBOUND_BODY, inboundMessage?.body)
+        assertEquals(SENDER_ADDRESS.raw, inboundMessage?.author?.displayName)
+        assertEquals(RoomKind.DIRECT, conversationRepository.findRoom(persistedReceipt.threadId!!)?.kind)
     }
 
     @Test
@@ -203,6 +210,56 @@ class SmsAutoReplyCoordinatorTest {
         assertNotEquals(firstReceipt.threadId, secondReceipt.threadId)
         assertEquals(firstReceipt.threadId, firstFollowUpReceipt.threadId)
         assertEquals(3, outboundGateway.queuedCommands.size)
+    }
+
+    @Test
+    fun processInboundSmsDistinguishesSenderWhoseLabelMatchesLocalOwner() = runTest {
+        val outboundGateway = RecordingSmsOutboundGateway(clock)
+        val coordinator = createCoordinator(
+            outboundGateway = outboundGateway,
+            runtime = FixedReplyRuntime(replyText = "Got it."),
+        )
+        val inboundSms = inboundCommand(
+            inboundMessageKey = SmsInboundMessageKey("4".repeat(64)),
+            senderAddress = SmsSenderAddress("You"),
+            messageBody = "Alphanumeric sender",
+        )
+
+        val receipt = coordinator.processInboundSms(
+            command = inboundSms,
+            settings = SynapseSettings(smsAutoReplyEnabled = true),
+        )
+
+        assertEquals(SmsAutoReplyState.SMS_QUEUED, receipt.state)
+        val inboundMessage = conversationRepository.findMessage(receipt.userMessageId!!)
+        assertEquals("You", inboundMessage?.author?.displayName)
+        assertNotEquals(BuiltInParticipantIds.LOCAL_HUMAN, inboundMessage?.author?.id)
+    }
+
+    @Test
+    fun processInboundSmsKeepsLongSenderKeyWithBoundedParticipantLabel() = runTest {
+        val outboundGateway = RecordingSmsOutboundGateway(clock)
+        val coordinator = createCoordinator(
+            outboundGateway = outboundGateway,
+            runtime = FixedReplyRuntime(replyText = "Got it."),
+        )
+        val longSenderAddress = SmsSenderAddress("sender-${"x".repeat(90)}")
+        val inboundSms = inboundCommand(
+            inboundMessageKey = SmsInboundMessageKey("5".repeat(64)),
+            senderAddress = longSenderAddress,
+            messageBody = "Long sender identifier",
+        )
+
+        val receipt = coordinator.processInboundSms(
+            command = inboundSms,
+            settings = SynapseSettings(smsAutoReplyEnabled = true),
+        )
+
+        assertEquals(SmsAutoReplyState.SMS_QUEUED, receipt.state)
+        assertEquals(longSenderAddress, receipt.senderAddress)
+        val inboundMessage = conversationRepository.findMessage(receipt.userMessageId!!)
+        assertTrue(inboundMessage!!.author.displayName.length <= 64)
+        assertNotEquals(BuiltInParticipantIds.LOCAL_HUMAN, inboundMessage.author.id)
     }
 
     private fun createCoordinator(
@@ -298,6 +355,7 @@ class SmsAutoReplyCoordinatorTest {
     private object DirectPromptContextAssembler : PromptContextAssembler {
         override suspend fun assemblePromptMessages(
             userMessage: String,
+            currentAuthor: ParticipantRecord,
             priorMessages: List<ChatMessageRecord>,
             retrievalBundle: RetrievalBundle,
             memoryWriteStatusBlock: String,

@@ -2,16 +2,20 @@ package app.synapse.localllm.application
 
 import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
 import app.synapse.localllm.domain.chat.AttachmentKind
+import app.synapse.localllm.domain.chat.AiResponseDecisionReason
+import app.synapse.localllm.domain.chat.BuiltInParticipantIds
 import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ConversationRepository
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.ConversationTurnReceipt
 import app.synapse.localllm.domain.chat.PendingAttachment
+import app.synapse.localllm.domain.chat.RoomAiResponseRoutingPolicy
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.diagnostics.AssistantGenerationFinishedCommand
 import app.synapse.localllm.domain.diagnostics.AssistantGenerationStartedCommand
 import app.synapse.localllm.domain.diagnostics.AssistantGenerationStopReason
 import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
+import app.synapse.localllm.domain.ids.AssistantGenerationTraceId
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.memory.ContextualMemoryCandidateResolver
@@ -36,7 +40,9 @@ import app.synapse.localllm.domain.storage.StorageThresholds
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 
 class SynapseTurnCoordinator(
     private val conversationRepository: ConversationRepository,
@@ -54,56 +60,129 @@ class SynapseTurnCoordinator(
     private val generationDiagnosticsRepository: GenerationDiagnosticsRepository,
     private val idFactory: SynapseIdFactory,
     private val clock: SynapseClock,
+    private val aiResponseRoutingPolicy: RoomAiResponseRoutingPolicy = RoomAiResponseRoutingPolicy(),
 ) {
     suspend fun sendUserTurn(
         command: SubmitUserMessageCommand,
         settings: SynapseSettings,
+        aiResponseMode: AiResponseMode = AiResponseMode.ROOM_POLICY,
         onTurnStarted: suspend (ConversationTurnReceipt) -> Unit = {},
     ): SynapseTurnOutcome {
         val priorMessages = conversationRepository.listRecentMessages(
             threadId = command.threadId,
             limit = RECENT_THREAD_MESSAGE_LIMIT,
         )
-        val turnReceipt = conversationRepository.submitUserMessage(command)
-        onTurnStarted(turnReceipt)
-        val promptText = buildPromptText(command.body, command.attachments)
-        val memoryPreparation = prepareMemoryForTurn(
-            userMessageId = turnReceipt.userMessageId,
-            userText = command.body,
-            promptText = promptText,
-            priorMessages = priorMessages,
-            settings = settings,
+        val humanMessageReceipt = conversationRepository.submitHumanMessage(command)
+        val room = checkNotNull(conversationRepository.findRoom(command.threadId)) {
+            "Room ${command.threadId.raw} was not found after the human message was persisted."
+        }
+        val currentAuthor = checkNotNull(
+            room.activeMembers
+                .firstOrNull { member -> member.participant.id == command.authorParticipantId }
+                ?.participant,
+        ) {
+            "Message author ${command.authorParticipantId.raw} was not an active room member."
+        }
+        val aiResponseDecision = aiResponseRoutingPolicy.decide(
+            room = room,
+            humanMessageBody = command.body,
         )
-        val promptMessages = promptContextAssembler.assemblePromptMessages(
-            userMessage = promptText,
-            priorMessages = priorMessages,
-            retrievalBundle = memoryPreparation.retrievalBundle,
-            memoryWriteStatusBlock = memoryPreparation.writeStatusPromptBlock,
-            systemPrompt = settings.systemPrompt,
+        val shouldRespond = aiResponseDecision.shouldRespond ||
+            (
+                aiResponseMode == AiResponseMode.REQUIRE_AI_RESPONSE &&
+                    room.activeMembers.any { member ->
+                        member.participant.id == BuiltInParticipantIds.SYNAPSE_LOCAL_AI
+                    }
+            )
+        if (!shouldRespond) {
+            return SynapseTurnOutcome.HumanMessageOnly(
+                userMessageId = humanMessageReceipt.messageId,
+                decisionReason = aiResponseDecision.reason,
+            )
+        }
+
+        val aiResponseReceipt = conversationRepository.startAiResponse(
+            roomId = command.threadId,
+            inReplyToHumanMessageId = humanMessageReceipt.messageId,
         )
-        val completionRequest = ChatCompletionRequest(
-            backend = settings.runtimeBackend,
-            baseUrl = settings.baseUrl,
-            model = settings.modelName,
-            embeddedModelPath = settings.embeddedModelPath,
-            modelPromptProfile = settings.modelPromptProfile,
-            messages = promptMessages,
-            temperature = settings.temperature,
-            maxTokens = settings.maxTokens,
+        val turnReceipt = ConversationTurnReceipt(
+            userMessageId = humanMessageReceipt.messageId,
+            assistantMessageId = aiResponseReceipt.messageId,
+            submittedAt = humanMessageReceipt.submittedAt,
         )
-        val generationTraceId = generationDiagnosticsRepository.recordAssistantGenerationStarted(
-            AssistantGenerationStartedCommand(
-                assistantMessageId = turnReceipt.assistantMessageId,
+        val preparedGeneration = try {
+            onTurnStarted(turnReceipt)
+            val promptText = buildPromptText(command.body, command.attachments)
+            val memoryPreparation = prepareMemoryForTurn(
+                userMessageId = turnReceipt.userMessageId,
+                userText = command.body,
+                promptText = promptText,
+                priorMessages = priorMessages,
+                settings = settings,
+            )
+            val promptMessages = promptContextAssembler.assemblePromptMessages(
+                userMessage = promptText,
+                currentAuthor = currentAuthor,
+                priorMessages = priorMessages,
+                retrievalBundle = memoryPreparation.retrievalBundle,
+                memoryWriteStatusBlock = memoryPreparation.writeStatusPromptBlock,
+                systemPrompt = settings.systemPrompt,
+            )
+            val completionRequest = ChatCompletionRequest(
                 backend = settings.runtimeBackend,
-                modelName = settings.modelName,
-                promptMessageCount = promptMessages.size,
-                promptCharacterCount = promptMessages.sumOf { message -> message.content.length },
-                retrievedMemoryCount = memoryPreparation.retrievalBundle.refs.size,
-                maxTokens = settings.maxTokens,
+                baseUrl = settings.baseUrl,
+                model = settings.modelName,
+                embeddedModelPath = settings.embeddedModelPath,
+                modelPromptProfile = settings.modelPromptProfile,
+                messages = promptMessages,
                 temperature = settings.temperature,
-                startedAt = clock.now(),
-            ),
-        )
+                maxTokens = settings.maxTokens,
+            )
+            val generationTraceId = generationDiagnosticsRepository.recordAssistantGenerationStarted(
+                AssistantGenerationStartedCommand(
+                    assistantMessageId = turnReceipt.assistantMessageId,
+                    backend = settings.runtimeBackend,
+                    modelName = settings.modelName,
+                    promptMessageCount = promptMessages.size,
+                    promptCharacterCount = promptMessages.sumOf { message -> message.content.length },
+                    retrievedMemoryCount = memoryPreparation.retrievalBundle.refs.size,
+                    maxTokens = settings.maxTokens,
+                    temperature = settings.temperature,
+                    startedAt = clock.now(),
+                ),
+            )
+            PreparedAiGeneration(
+                completionRequest = completionRequest,
+                generationTraceId = generationTraceId,
+            )
+        } catch (exception: CancellationException) {
+            withContext(NonCancellable) {
+                try {
+                    conversationRepository.failAssistantMessage(
+                        messageId = turnReceipt.assistantMessageId,
+                        reason = STOPPED_BY_USER_REASON,
+                    )
+                } catch (cleanupFailure: Exception) {
+                    exception.addSuppressed(cleanupFailure)
+                }
+            }
+            throw exception
+        } catch (exception: Exception) {
+            val reason = exception.message ?: "Local AI response preparation failed."
+            withContext(NonCancellable) {
+                conversationRepository.failAssistantMessage(
+                    messageId = turnReceipt.assistantMessageId,
+                    reason = reason,
+                )
+            }
+            return SynapseTurnOutcome.Failed(
+                userMessageId = turnReceipt.userMessageId,
+                assistantMessageId = turnReceipt.assistantMessageId,
+                reason = reason,
+            )
+        }
+        val completionRequest = preparedGeneration.completionRequest
+        val generationTraceId = preparedGeneration.generationTraceId
 
         var rawTokenEvents = 0
         var rawCharacterCount = 0
@@ -207,12 +286,31 @@ class SynapseTurnCoordinator(
         } catch (exception: CancellationException) {
             finalFailureReason = STOPPED_BY_USER_REASON
             stopReason = AssistantGenerationStopReason.CANCELLED
+            withContext(NonCancellable) {
+                try {
+                    conversationRepository.failAssistantMessage(
+                        messageId = turnReceipt.assistantMessageId,
+                        reason = STOPPED_BY_USER_REASON,
+                    )
+                } catch (cleanupFailure: Exception) {
+                    exception.addSuppressed(cleanupFailure)
+                }
+                try {
+                    recordGenerationFinishedOnce()
+                } catch (cleanupFailure: Exception) {
+                    exception.addSuppressed(cleanupFailure)
+                }
+            }
+            throw exception
+        } catch (exception: Exception) {
+            val reason = exception.message ?: "Local AI generation failed."
+            finalFailureReason = reason
+            stopReason = AssistantGenerationStopReason.FAILED
             conversationRepository.failAssistantMessage(
                 messageId = turnReceipt.assistantMessageId,
-                reason = STOPPED_BY_USER_REASON,
+                reason = reason,
             )
-            recordGenerationFinishedOnce()
-            throw exception
+            reason
         }
         if (failureReason != null && finalFailureReason == null) {
             finalFailureReason = failureReason
@@ -463,7 +561,17 @@ private data class MemoryWriteAttemptSummary(
     val reason: String,
 )
 
+private data class PreparedAiGeneration(
+    val completionRequest: ChatCompletionRequest,
+    val generationTraceId: AssistantGenerationTraceId,
+)
+
 sealed interface SynapseTurnOutcome {
+    data class HumanMessageOnly(
+        val userMessageId: ChatMessageId,
+        val decisionReason: AiResponseDecisionReason,
+    ) : SynapseTurnOutcome
+
     data class Completed(
         val userMessageId: ChatMessageId,
         val assistantMessageId: ChatMessageId,
@@ -474,4 +582,9 @@ sealed interface SynapseTurnOutcome {
         val assistantMessageId: ChatMessageId,
         val reason: String,
     ) : SynapseTurnOutcome
+}
+
+enum class AiResponseMode {
+    ROOM_POLICY,
+    REQUIRE_AI_RESPONSE,
 }

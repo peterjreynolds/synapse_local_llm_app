@@ -30,14 +30,14 @@ enum class InferenceRuntimeBackend {
 }
 
 const val DEFAULT_SYSTEM_PROMPT =
-    "You are Synapse AI, a private local Android LLM assistant. Reply like a normal chat partner. " +
+    "You are Synapse, the private phone-local AI member in Synapse Chat. Reply like a normal chat partner. " +
         "Answer the user's actual message directly. Do not echo the user's text. " +
         "Do not wrap answers in diagnostic labels or bracketed echoes. " +
         "Ask a short clarifying question only when needed. " +
         "Be concise by default, and give technical detail when asked."
 
 const val DEFAULT_PERSONA =
-    "You are Synapse AI, a private local Android LLM assistant. Reply like a normal chat partner. " +
+    "You are Synapse, the private phone-local AI member in Synapse Chat. Reply like a normal chat partner. " +
         "Use light, natural emojis when they genuinely fit, but do not force them into every response."
 
 const val DEFAULT_CUSTOM_INSTRUCTIONS =
@@ -51,6 +51,10 @@ private const val LEGACY_DEFAULT_OWNER_NAME = "Pet" + "er"
 internal const val LEGACY_DEFAULT_PERSONA =
     "You are Synapse, " + LEGACY_DEFAULT_OWNER_NAME + "'s local Android LLM assistant. " +
         "Reply like a normal chat partner."
+
+internal const val LEGACY_SYNAPSE_AI_DEFAULT_PERSONA =
+    "You are Synapse AI, a private local Android LLM assistant. Reply like a normal chat partner. " +
+        "Use light, natural emojis when they genuinely fit, but do not force them into every response."
 
 internal const val LEGACY_DEFAULT_CUSTOM_INSTRUCTIONS =
     "Answer the user's actual message directly. Do not echo the user's text. " +
@@ -90,6 +94,7 @@ fun normalizePersona(persona: String?): String =
     when (val trimmedPersona = persona?.trim().orEmpty()) {
         "" -> DEFAULT_PERSONA
         LEGACY_DEFAULT_PERSONA -> DEFAULT_PERSONA
+        LEGACY_SYNAPSE_AI_DEFAULT_PERSONA -> DEFAULT_PERSONA
         else -> trimmedPersona
     }
 

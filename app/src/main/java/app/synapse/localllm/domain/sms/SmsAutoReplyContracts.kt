@@ -2,6 +2,7 @@ package app.synapse.localllm.domain.sms
 
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.ChatThreadId
+import app.synapse.localllm.domain.ids.ParticipantId
 import app.synapse.localllm.domain.ids.ReceiptId
 import java.security.MessageDigest
 import java.time.Instant
@@ -48,6 +49,7 @@ data class InboundSmsAutoReplyCommand(
 data class SmsSenderThreadLink(
     val senderAddress: SmsSenderAddress,
     val threadId: ChatThreadId,
+    val participantId: ParticipantId,
 )
 
 data class SmsAutoReplyReceiptRecord(
@@ -117,6 +119,7 @@ interface SmsAutoReplyRepository {
     suspend fun persistThreadLinkForSender(
         senderAddress: SmsSenderAddress,
         threadId: ChatThreadId,
+        participantId: ParticipantId,
     ): SmsSenderThreadLink
 }
 
@@ -145,6 +148,7 @@ fun parseSmsSenderAddress(rawAddress: String?): SmsSenderAddress? {
     val trimmedAddress = rawAddress?.trim().orEmpty()
     if (trimmedAddress.isBlank()) return null
     if (trimmedAddress.length > SMS_SENDER_ADDRESS_LIMIT) return null
+    if (trimmedAddress.any(Char::isISOControl)) return null
     return SmsSenderAddress(trimmedAddress)
 }
 

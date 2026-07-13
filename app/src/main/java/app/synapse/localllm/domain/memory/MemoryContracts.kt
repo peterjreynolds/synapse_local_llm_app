@@ -2,6 +2,7 @@ package app.synapse.localllm.domain.memory
 
 import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ConversationRole
+import app.synapse.localllm.domain.chat.ParticipantRecord
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.MemoryObjectId
 import app.synapse.localllm.domain.ids.MemoryVersionId
@@ -319,6 +320,7 @@ interface MemoryRepository {
 interface PromptContextAssembler {
     suspend fun assemblePromptMessages(
         userMessage: String,
+        currentAuthor: ParticipantRecord,
         priorMessages: List<ChatMessageRecord>,
         retrievalBundle: RetrievalBundle,
         memoryWriteStatusBlock: String,

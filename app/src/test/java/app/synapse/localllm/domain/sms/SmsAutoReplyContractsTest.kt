@@ -2,9 +2,9 @@ package app.synapse.localllm.domain.sms
 
 import java.time.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -16,6 +16,8 @@ class SmsAutoReplyContractsTest {
             parseSmsSenderAddress(" +15551234567 "),
         )
         assertNull(parseSmsSenderAddress("   "))
+        assertNull(parseSmsSenderAddress("sender\u0000name"))
+        assertNull(parseSmsSenderAddress("x".repeat(129)))
     }
 
     @Test

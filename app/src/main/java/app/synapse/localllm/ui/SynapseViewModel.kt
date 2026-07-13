@@ -8,11 +8,16 @@ import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.application.SynapseTurnOutcome
 import app.synapse.localllm.data.library.MarkdownPdfExportCommand
 import app.synapse.localllm.di.SynapseApplicationGraph
-import app.synapse.localllm.domain.chat.ChatThreadRecord
+import app.synapse.localllm.domain.chat.AddHumanRoomMemberCommand
+import app.synapse.localllm.domain.chat.AiResponseDecisionReason
+import app.synapse.localllm.domain.chat.BuiltInParticipantIds
+import app.synapse.localllm.domain.chat.ChatRoomRecord
+import app.synapse.localllm.domain.chat.CreateRoomCommand
 import app.synapse.localllm.domain.chat.PendingAttachment
+import app.synapse.localllm.domain.chat.RoomId
+import app.synapse.localllm.domain.chat.RoomMemberRecord
 import app.synapse.localllm.domain.chat.SubmitUserMessageCommand
 import app.synapse.localllm.domain.diagnostics.DebugUiSnapshot
-import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.ids.MemoryObjectId
 import app.synapse.localllm.domain.library.CreateMarkdownArtifactCommand
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
@@ -26,7 +31,6 @@ import app.synapse.localllm.domain.runtime.ModelDownloadStartStatus
 import app.synapse.localllm.domain.runtime.ModelDownloadState
 import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.StartLlamaServerCommand
-import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageThresholds
 import app.synapse.localllm.domain.update.AppUpdateCheckResult
@@ -35,6 +39,7 @@ import app.synapse.localllm.domain.update.DownloadAppUpdateCommand
 import java.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,16 +57,18 @@ class SynapseViewModel(
 
     private val voiceModeStateMachine = VoiceModeStateMachine()
     private var messageObservationJob: Job? = null
+    private var roomMemberObservationJob: Job? = null
     private var activeSendJob: Job? = null
+    private var activeSendRoomId: RoomId? = null
     private var activeVoiceModeTurnJob: Job? = null
 
     init {
         observeSettings()
         observeStorageHealth()
         observeModelDownloadState()
-        observeThreads()
+        observeRooms()
         loadModelCatalog()
-        bindDefaultThread()
+        bindDefaultRoom()
     }
 
     fun updateComposer(text: String) {
@@ -99,99 +106,200 @@ class SynapseViewModel(
         }
     }
 
-    fun openThreadDrawer() {
-        mutableUiState.update { state -> state.copy(isThreadDrawerOpen = true) }
+    fun openRoomDrawer() {
+        mutableUiState.update { state -> state.copy(isRoomDrawerOpen = true) }
     }
 
-    fun closeThreadDrawer() {
-        mutableUiState.update { state -> state.copy(isThreadDrawerOpen = false) }
+    fun closeRoomDrawer() {
+        mutableUiState.update { state -> state.copy(isRoomDrawerOpen = false) }
     }
 
-    fun createNewThread() {
+    fun createRoom(command: CreateRoomCommand) {
         viewModelScope.launch {
-            val thread = graph.conversationRepository.createThread()
-            bindThread(thread)
+            try {
+                bindRoom(graph.conversationRepository.createRoom(command))
+            } catch (exception: IllegalArgumentException) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Room details are not valid.")
+                }
+            }
         }
     }
 
-    fun selectThread(thread: ChatThreadRecord) {
-        bindThread(thread)
+    fun selectRoom(room: ChatRoomRecord) {
+        bindRoom(room)
     }
 
-    fun setThreadPinned(thread: ChatThreadRecord, pinned: Boolean) {
+    fun setRoomPinned(room: ChatRoomRecord, pinned: Boolean) {
         viewModelScope.launch {
-            val receipt = graph.conversationRepository.setThreadPinned(thread.id, pinned)
+            val receipt = graph.conversationRepository.setRoomPinned(room.id, pinned)
             mutableUiState.update { state ->
                 state.copy(
                     lastNotice = if (receipt.affectedRows > 0) {
-                        if (pinned) "Pinned chat." else "Unpinned chat."
+                        if (pinned) "Pinned room." else "Unpinned room."
                     } else {
-                        "Chat was not updated."
+                        "Room was not updated."
                     },
                 )
             }
         }
     }
 
-    fun renameThread(thread: ChatThreadRecord, title: String) {
+    fun renameRoom(room: ChatRoomRecord, title: String) {
         viewModelScope.launch {
             try {
-                val receipt = graph.conversationRepository.renameThread(thread.id, title)
+                val receipt = graph.conversationRepository.renameRoom(room.id, title)
                 mutableUiState.update { state ->
                     state.copy(
                         lastNotice = if (receipt.affectedRows > 0) {
-                            "Renamed chat."
+                            "Renamed room."
                         } else {
-                            "Chat was not renamed."
+                            "Room was not renamed."
                         },
                     )
                 }
             } catch (exception: IllegalArgumentException) {
                 mutableUiState.update { state ->
-                    state.copy(lastNotice = exception.message ?: "Chat title is not valid.")
+                    state.copy(lastNotice = exception.message ?: "Room title is not valid.")
                 }
             }
         }
     }
 
-    fun archiveThread(thread: ChatThreadRecord) {
+    fun archiveRoom(room: ChatRoomRecord) {
         viewModelScope.launch {
-            val wasCurrentThread = thread.id == mutableUiState.value.currentThread?.id
-            cancelGenerationIfActiveThread(thread.id)
-            val receipt = graph.conversationRepository.archiveThread(thread.id)
-            if (wasCurrentThread) {
-                bindThread(graph.conversationRepository.ensureDefaultThread())
+            val wasCurrentRoom = room.id == mutableUiState.value.currentRoom?.id
+            cancelGenerationIfActiveRoom(room.id)
+            val receipt = graph.conversationRepository.archiveRoom(room.id)
+            if (wasCurrentRoom) {
+                bindRoom(graph.conversationRepository.ensureDefaultRoom())
             }
             mutableUiState.update { state ->
                 state.copy(
-                    isSending = if (wasCurrentThread) false else state.isSending,
                     lastNotice = if (receipt.affectedRows > 0) {
-                        "Archived chat."
+                        "Archived room."
                     } else {
-                        "Chat was not archived."
+                        "Room was not archived."
                     },
                 )
             }
         }
     }
 
-    fun deleteThread(thread: ChatThreadRecord) {
+    fun deleteRoom(room: ChatRoomRecord) {
         viewModelScope.launch {
-            val wasCurrentThread = thread.id == mutableUiState.value.currentThread?.id
-            cancelGenerationIfActiveThread(thread.id)
-            val receipt = graph.conversationRepository.deleteThread(thread.id)
-            if (wasCurrentThread) {
-                bindThread(graph.conversationRepository.ensureDefaultThread())
+            val wasCurrentRoom = room.id == mutableUiState.value.currentRoom?.id
+            cancelGenerationIfActiveRoom(room.id)
+            val receipt = graph.conversationRepository.deleteRoom(room.id)
+            if (wasCurrentRoom) {
+                bindRoom(graph.conversationRepository.ensureDefaultRoom())
             }
             mutableUiState.update { state ->
                 state.copy(
-                    isSending = if (wasCurrentThread) false else state.isSending,
                     lastNotice = if (receipt.affectedRows > 0) {
-                        "Deleted chat."
+                        "Deleted room."
                     } else {
-                        "Chat was not deleted."
+                        "Room was not deleted."
                     },
                 )
+            }
+        }
+    }
+
+    fun addHumanRoomMember(displayName: String) {
+        val room = mutableUiState.value.currentRoom ?: return
+        viewModelScope.launch {
+            try {
+                val receipt = graph.conversationRepository.addHumanRoomMember(
+                    AddHumanRoomMemberCommand(roomId = room.id, displayName = displayName),
+                )
+                refreshCurrentRoom(room.id)
+                mutableUiState.update { state ->
+                    state.copy(
+                        lastNotice = if (receipt.affectedRows > 0) {
+                            "Added ${displayName.trim()} to the room."
+                        } else {
+                            "Room membership was not updated."
+                        },
+                    )
+                }
+            } catch (exception: IllegalArgumentException) {
+                mutableUiState.update { state ->
+                    state.copy(lastNotice = exception.message ?: "Member name is not valid.")
+                }
+            }
+        }
+    }
+
+    fun removeRoomMember(member: RoomMemberRecord) {
+        val room = mutableUiState.value.currentRoom ?: return
+        viewModelScope.launch {
+            if (member.participant.id == BuiltInParticipantIds.SYNAPSE_LOCAL_AI) {
+                cancelGenerationIfActiveRoom(room.id)
+            }
+            val receipt = graph.conversationRepository.removeRoomMember(room.id, member.participant.id)
+            refreshCurrentRoom(room.id)
+            mutableUiState.update { state ->
+                state.copy(
+                    lastNotice = if (receipt.affectedRows > 0) {
+                        "Removed ${member.participant.displayName} from the room."
+                    } else {
+                        "Room membership was not updated."
+                    },
+                )
+            }
+        }
+    }
+
+    fun setSynapseAiEnabled(enabled: Boolean) {
+        val room = mutableUiState.value.currentRoom ?: return
+        viewModelScope.launch {
+            if (!enabled) cancelGenerationIfActiveRoom(room.id)
+            val receipt = graph.conversationRepository.setSynapseAiEnabled(room.id, enabled)
+            refreshCurrentRoom(room.id)
+            mutableUiState.update { state ->
+                state.copy(
+                    lastNotice = if (receipt.affectedRows > 0) {
+                        if (enabled) "Added Synapse to the room." else "Removed Synapse from the room."
+                    } else {
+                        "Synapse membership was not updated."
+                    },
+                )
+            }
+        }
+    }
+
+    fun setRoomAiAutoResponse(enabled: Boolean) {
+        val room = mutableUiState.value.currentRoom ?: return
+        viewModelScope.launch {
+            val receipt = graph.conversationRepository.setRoomAiAutoResponse(room.id, enabled)
+            refreshCurrentRoom(room.id)
+            mutableUiState.update { state ->
+                state.copy(
+                    lastNotice = if (receipt.affectedRows > 0) {
+                        if (enabled) "Synapse will respond automatically." else "Synapse now responds to @Synapse."
+                    } else {
+                        "AI response policy was not updated."
+                    },
+                )
+            }
+        }
+    }
+
+    fun insertSynapseMention() {
+        val snapshot = mutableUiState.value
+        val synapseIsActive = snapshot.currentRoomMembers.any { member ->
+            member.isActive && member.participant.id == BuiltInParticipantIds.SYNAPSE_LOCAL_AI
+        }
+        if (!synapseIsActive) {
+            mutableUiState.update { state -> state.copy(lastNotice = "Add Synapse to this room before mentioning it.") }
+            return
+        }
+        mutableUiState.update { state ->
+            if (SYNAPSE_MENTION_PATTERN.containsMatchIn(state.composerText)) {
+                state
+            } else {
+                state.copy(composerText = "@Synapse ${state.composerText.trimStart()}")
             }
         }
     }
@@ -323,7 +431,7 @@ class SynapseViewModel(
 
     fun sendComposerMessage() {
         val snapshot = mutableUiState.value
-        val thread = snapshot.currentThread ?: return
+        val room = snapshot.currentRoom ?: return
         val body = snapshot.composerText.trim()
         if (body.isBlank() && snapshot.pendingAttachments.isEmpty()) return
         if (snapshot.isSending) return
@@ -343,11 +451,12 @@ class SynapseViewModel(
             )
         }
 
-        activeSendJob = viewModelScope.launch {
+        val sendJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val thisSendJob = coroutineContext[Job]
             try {
                 val outcome = graph.turnCoordinator.sendUserTurn(
                     command = SubmitUserMessageCommand(
-                        threadId = thread.id,
+                        threadId = room.id,
                         body = body.ifBlank { "Attached context." },
                         attachments = snapshot.pendingAttachments,
                     ),
@@ -356,31 +465,41 @@ class SynapseViewModel(
                 mutableUiState.update { state ->
                     state.copy(
                         lastNotice = when (outcome) {
+                            is SynapseTurnOutcome.HumanMessageOnly -> outcome.decisionReason.toNotice()
                             is SynapseTurnOutcome.Completed -> null
                             is SynapseTurnOutcome.Failed -> outcome.reason
                         },
                     )
                 }
             } finally {
-                activeSendJob = null
-                mutableUiState.update { state -> state.copy(isSending = false) }
+                if (activeSendJob == thisSendJob) {
+                    activeSendJob = null
+                    activeSendRoomId = null
+                    mutableUiState.update { state -> state.copy(isSending = false) }
+                }
             }
         }
+        activeSendRoomId = room.id
+        activeSendJob = sendJob
+        sendJob.start()
     }
 
     fun cancelActiveSend() {
-        graph.localInferenceRuntime.cancelActiveGeneration()
-        activeSendJob?.cancel()
-        activeVoiceModeTurnJob?.cancel()
+        val sendJob = activeSendJob
+        val voiceTurnJob = activeVoiceModeTurnJob
+        if (sendJob?.isActive == true || voiceTurnJob?.isActive == true) {
+            graph.localInferenceRuntime.cancelActiveGeneration()
+        }
+        sendJob?.cancel()
+        voiceTurnJob?.cancel()
         mutableUiState.update { state ->
             if (state.voiceMode.isActive) {
                 state.copy(
-                    isSending = false,
                     voiceMode = voiceModeStateMachine.stop(),
-                    lastNotice = "Voice Mode stopped.",
+                    lastNotice = "Stopping Voice Mode.",
                 )
             } else {
-                state.copy(isSending = false, lastNotice = "Generation stopped.")
+                state.copy(lastNotice = "Stopping generation.")
             }
         }
     }
@@ -400,29 +519,28 @@ class SynapseViewModel(
     }
 
     fun stopVoiceMode() {
-        graph.localInferenceRuntime.cancelActiveGeneration()
-        activeVoiceModeTurnJob?.cancel()
-        if (activeSendJob == activeVoiceModeTurnJob) {
-            activeSendJob = null
+        val voiceTurnJob = activeVoiceModeTurnJob
+        val wasProcessingVoiceTurn = voiceTurnJob?.isActive == true
+        if (wasProcessingVoiceTurn) {
+            graph.localInferenceRuntime.cancelActiveGeneration()
         }
-        activeVoiceModeTurnJob = null
+        voiceTurnJob?.cancel()
         mutableUiState.update { state ->
             state.copy(
-                isSending = if (state.voiceMode.status == VoiceModeStatus.PROCESSING) {
-                    false
-                } else {
-                    state.isSending
-                },
                 voiceMode = voiceModeStateMachine.stop(),
-                lastNotice = "Voice Mode stopped.",
+                lastNotice = if (wasProcessingVoiceTurn) {
+                    "Stopping Voice Mode."
+                } else {
+                    "Voice Mode stopped."
+                },
             )
         }
     }
 
     fun onVoiceModeSpeechResult(transcript: String) {
         val snapshot = mutableUiState.value
-        val thread = snapshot.currentThread ?: run {
-            failVoiceMode("No active chat is ready for Voice Mode.")
+        val room = snapshot.currentRoom ?: run {
+            failVoiceMode("No active room is ready for Voice Mode.")
             return
         }
         val userText = transcript.trim()
@@ -444,20 +562,24 @@ class SynapseViewModel(
                 lastNotice = "Voice Mode heard: $userText",
             )
         }
-        val voiceTurnJob = viewModelScope.launch {
+        val voiceTurnJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val thisVoiceTurnJob = coroutineContext[Job]
             try {
                 val outcome = graph.turnCoordinator.sendUserTurn(
                     command = SubmitUserMessageCommand(
-                        threadId = thread.id,
+                        threadId = room.id,
                         body = userText,
                         attachments = emptyList(),
                     ),
                     settings = snapshot.settings,
                 )
                 when (outcome) {
+                    is SynapseTurnOutcome.HumanMessageOnly ->
+                        failVoiceMode(outcome.decisionReason.toNotice())
+
                     is SynapseTurnOutcome.Completed -> {
                         val assistantText = graph.conversationRepository
-                            .listRecentMessages(thread.id, limit = VOICE_MODE_RECENT_MESSAGE_LIMIT)
+                            .listRecentMessages(room.id, limit = VOICE_MODE_RECENT_MESSAGE_LIMIT)
                             .firstOrNull { message -> message.id == outcome.assistantMessageId }
                             ?.body
                             .orEmpty()
@@ -489,15 +611,20 @@ class SynapseViewModel(
             } catch (exception: Exception) {
                 failVoiceMode(exception.message ?: "Voice Mode turn failed.")
             } finally {
-                activeVoiceModeTurnJob = null
-                if (activeSendJob == this.coroutineContext[Job]) {
-                    activeSendJob = null
+                if (activeVoiceModeTurnJob == thisVoiceTurnJob) {
+                    activeVoiceModeTurnJob = null
                 }
-                mutableUiState.update { state -> state.copy(isSending = false) }
+                if (activeSendJob == thisVoiceTurnJob) {
+                    activeSendJob = null
+                    activeSendRoomId = null
+                    mutableUiState.update { state -> state.copy(isSending = false) }
+                }
             }
         }
         activeVoiceModeTurnJob = voiceTurnJob
+        activeSendRoomId = room.id
         activeSendJob = voiceTurnJob
+        voiceTurnJob.start()
     }
 
     fun onVoiceModeSpeechError(reason: String) {
@@ -940,15 +1067,23 @@ class SynapseViewModel(
         }
     }
 
-    private fun observeThreads() {
+    private fun observeRooms() {
         viewModelScope.launch {
-            graph.conversationRepository.observeThreads().collect { threads ->
-                mutableUiState.update { state -> state.copy(threads = threads) }
+            graph.conversationRepository.observeRooms().collect { rooms ->
+                mutableUiState.update { state ->
+                    val refreshedCurrentRoom = state.currentRoom?.let { currentRoom ->
+                        rooms.firstOrNull { room -> room.id == currentRoom.id } ?: currentRoom
+                    }
+                    state.copy(
+                        rooms = rooms,
+                        currentRoom = refreshedCurrentRoom,
+                    )
+                }
             }
         }
     }
 
-    private fun bindDefaultThread() {
+    private fun bindDefaultRoom() {
         viewModelScope.launch {
             val activeSmsAutoReplyAfter = graph.clock.now().minus(SMS_AUTO_REPLY_GENERATION_GRACE)
             graph.smsAutoReplyRepository.markStaleGeneratingAutoRepliesFailed(
@@ -959,33 +1094,65 @@ class SynapseViewModel(
                 reason = "Generation was interrupted before Synapse reopened.",
                 activeSmsAutoReplyAfter = activeSmsAutoReplyAfter,
             )
-            val thread = graph.conversationRepository.ensureDefaultThread()
-            bindThread(thread)
+            bindRoom(graph.conversationRepository.ensureDefaultRoom())
         }
     }
 
-    private fun bindThread(thread: ChatThreadRecord) {
+    private fun bindRoom(room: ChatRoomRecord) {
         mutableUiState.update { state ->
             state.copy(
-                currentThread = thread,
+                currentRoom = room,
+                currentRoomMembers = room.members,
                 activePanel = SynapsePanel.CHAT,
-                isThreadDrawerOpen = false,
+                isRoomDrawerOpen = false,
                 messages = emptyList(),
                 lastNotice = null,
             )
         }
         messageObservationJob?.cancel()
         messageObservationJob = viewModelScope.launch {
-            graph.conversationRepository.observeMessages(thread.id).collect { messages ->
+            graph.conversationRepository.observeMessages(room.id).collect { messages ->
                 mutableUiState.update { state -> state.copy(messages = messages) }
+            }
+        }
+        roomMemberObservationJob?.cancel()
+        roomMemberObservationJob = viewModelScope.launch {
+            graph.conversationRepository.observeRoomMembers(room.id).collect { members ->
+                mutableUiState.update { state ->
+                    val currentRoom = state.currentRoom
+                    if (currentRoom?.id != room.id) {
+                        state
+                    } else {
+                        state.copy(
+                            currentRoom = currentRoom.copy(members = members),
+                            currentRoomMembers = members,
+                        )
+                    }
+                }
             }
         }
     }
 
-    private fun cancelGenerationIfActiveThread(threadId: ChatThreadId) {
-        if (mutableUiState.value.currentThread?.id != threadId) return
+    private fun cancelGenerationIfActiveRoom(roomId: RoomId) {
+        if (activeSendRoomId != roomId) return
+        val sendJob = activeSendJob?.takeIf { job -> job.isActive } ?: return
         graph.localInferenceRuntime.cancelActiveGeneration()
-        activeSendJob?.cancel()
+        sendJob.cancel()
+    }
+
+    private suspend fun refreshCurrentRoom(roomId: RoomId) {
+        val refreshedRoom = graph.conversationRepository.findRoom(roomId) ?: return
+        mutableUiState.update { state ->
+            if (state.currentRoom?.id != roomId) {
+                state
+            } else {
+                state.copy(
+                    currentRoom = refreshedRoom,
+                    currentRoomMembers = refreshedRoom.members,
+                    rooms = state.rooms.map { room -> if (room.id == roomId) refreshedRoom else room },
+                )
+            }
+        }
     }
 
     private fun SynapseSettings.toDraft(): RuntimeSettingsDraft =
@@ -1033,6 +1200,20 @@ class SynapseViewModel(
         }
     }
 
+    private fun AiResponseDecisionReason.toNotice(): String =
+        when (this) {
+            AiResponseDecisionReason.SYNAPSE_NOT_A_MEMBER ->
+                "Message sent. Synapse is not a member of this room."
+
+            AiResponseDecisionReason.MENTION_REQUIRED ->
+                "Message sent. Mention @Synapse to request an AI response."
+
+            AiResponseDecisionReason.AI_CHAT_AUTOMATIC,
+            AiResponseDecisionReason.ROOM_AUTOMATIC,
+            AiResponseDecisionReason.SYNAPSE_MENTIONED,
+            -> "Message sent."
+        }
+
     private fun startVoiceMode() {
         if (mutableUiState.value.isSending) {
             mutableUiState.update { state ->
@@ -1043,11 +1224,11 @@ class SynapseViewModel(
             }
             return
         }
-        if (mutableUiState.value.currentThread == null) {
+        if (mutableUiState.value.currentRoom == null) {
             mutableUiState.update { state ->
                 state.copy(
-                    voiceMode = voiceModeStateMachine.fail("No active chat is ready for Voice Mode."),
-                    lastNotice = "No active chat is ready for Voice Mode.",
+                    voiceMode = voiceModeStateMachine.fail("No active room is ready for Voice Mode."),
+                    lastNotice = "No active room is ready for Voice Mode.",
                 )
             }
             return
@@ -1062,11 +1243,6 @@ class SynapseViewModel(
     }
 
     private fun failVoiceMode(reason: String) {
-        val failedVoiceTurnJob = activeVoiceModeTurnJob
-        activeVoiceModeTurnJob = null
-        if (failedVoiceTurnJob != null && activeSendJob == failedVoiceTurnJob) {
-            activeSendJob = null
-        }
         mutableUiState.update { state ->
             state.copy(
                 voiceMode = voiceModeStateMachine.fail(reason),
@@ -1152,10 +1328,10 @@ class SynapseViewModel(
     private fun SynapseUiState.toDebugUiSnapshot(): DebugUiSnapshot =
         DebugUiSnapshot(
             activePanel = activePanel.name,
-            isThreadDrawerOpen = isThreadDrawerOpen,
-            currentThreadId = currentThread?.id?.raw,
-            currentThreadTitle = currentThread?.title,
-            visibleThreadCount = threads.size,
+            isThreadDrawerOpen = isRoomDrawerOpen,
+            currentThreadId = currentRoom?.id?.raw,
+            currentThreadTitle = currentRoom?.title,
+            visibleThreadCount = rooms.size,
             visibleMessageCount = messages.size,
             composerCharacterCount = composerText.length,
             pendingAttachmentCount = pendingAttachments.size,
@@ -1167,6 +1343,7 @@ class SynapseViewModel(
     private companion object {
         const val VOICE_MODE_RECENT_MESSAGE_LIMIT = 12
         val SMS_AUTO_REPLY_GENERATION_GRACE: Duration = Duration.ofMinutes(20)
+        val SYNAPSE_MENTION_PATTERN = Regex("(?i)(?<![A-Za-z0-9_])@synapse\\b")
     }
 }
 

@@ -15,6 +15,7 @@ import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_5_6
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_6_7
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_7_8
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_8_9
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.data.library.AndroidMarkdownPdfExporter
 import app.synapse.localllm.data.library.RoomLibraryWorkspaceRepository
@@ -42,6 +43,7 @@ import app.synapse.localllm.data.storage.RoomStorageHealthSnapshotRepository
 import app.synapse.localllm.data.update.AndroidAppUpdateDownloader
 import app.synapse.localllm.data.update.GitHubReleaseAppUpdateRepository
 import app.synapse.localllm.domain.chat.ConversationRepository
+import app.synapse.localllm.domain.chat.RoomAiResponseRoutingPolicy
 import app.synapse.localllm.domain.diagnostics.GenerationDiagnosticsRepository
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.library.LibraryWorkspaceRepository
@@ -82,6 +84,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_5_6,
         SYNAPSE_DATABASE_MIGRATION_6_7,
         SYNAPSE_DATABASE_MIGRATION_7_8,
+        SYNAPSE_DATABASE_MIGRATION_8_9,
     ).build()
 
     val settingsStore = SynapseSettingsStore(applicationContext)
@@ -157,6 +160,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
     val storageHealthSnapshotRepository =
         RoomStorageHealthSnapshotRepository(database.storageHealthDao(), idFactory)
     val promptContextAssembler: PromptContextAssembler = VerifiedPromptContextAssembler()
+    val aiResponseRoutingPolicy = RoomAiResponseRoutingPolicy()
 
     val localInferenceRuntime: LocalInferenceRuntime =
         PhoneLocalInferenceRuntime(
@@ -193,6 +197,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
             generationDiagnosticsRepository = generationDiagnosticsRepository,
             idFactory = idFactory,
             clock = clock,
+            aiResponseRoutingPolicy = aiResponseRoutingPolicy,
         )
 
     val smsAutoReplyCoordinator =

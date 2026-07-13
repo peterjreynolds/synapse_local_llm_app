@@ -1,5 +1,6 @@
 package app.synapse.localllm.data.memory
 
+import app.synapse.localllm.domain.chat.BuiltInParticipantIds
 import app.synapse.localllm.domain.chat.ChatMessageRecord
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.MessageDeliveryState
@@ -60,6 +61,7 @@ class RecentUserTurnMemoryCandidateResolver(
 
     private fun isContextualMemorySource(message: ChatMessageRecord): Boolean {
         if (message.role != ConversationRole.USER) return false
+        if (message.author.id != BuiltInParticipantIds.LOCAL_HUMAN) return false
         if (message.deliveryState != MessageDeliveryState.COMPLETE) return false
         val normalizedText = message.body.trim().replace(whitespacePattern, " ")
         if (normalizedText.length < MINIMUM_CONTEXTUAL_SOURCE_LENGTH) return false
@@ -71,6 +73,7 @@ class RecentUserTurnMemoryCandidateResolver(
 
     private fun extractRecentCorrection(message: ChatMessageRecord): TextCorrection? {
         if (message.role != ConversationRole.USER) return null
+        if (message.author.id != BuiltInParticipantIds.LOCAL_HUMAN) return null
         if (message.deliveryState != MessageDeliveryState.COMPLETE) return null
         val normalizedText = message.body.trim().replace(whitespacePattern, " ")
         val match = correctionOnlyPattern.find(normalizedText) ?: return null

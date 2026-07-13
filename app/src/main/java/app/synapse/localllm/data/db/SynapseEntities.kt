@@ -7,7 +7,10 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "chat_threads")
+@Entity(
+    tableName = "chat_threads",
+    indices = [Index("roomKind"), Index("remoteId"), Index("syncState")],
+)
 data class ChatThreadEntity(
     @PrimaryKey val id: String,
     val title: String,
@@ -16,6 +19,10 @@ data class ChatThreadEntity(
     val titleEditedByUser: Boolean,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    @ColumnInfo(defaultValue = "'AI_CHAT'") val roomKind: String = "AI_CHAT",
+    @ColumnInfo(defaultValue = "NULL") val remoteId: String? = null,
+    @ColumnInfo(defaultValue = "0") val revision: Long = 0,
+    @ColumnInfo(defaultValue = "'LOCAL_ONLY'") val syncState: String = "LOCAL_ONLY",
 )
 
 @Entity(
@@ -28,7 +35,12 @@ data class ChatThreadEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("threadId"), Index("createdAtEpochMillis")],
+    indices = [
+        Index("threadId"),
+        Index("createdAtEpochMillis"),
+        Index("remoteId"),
+        Index("syncState"),
+    ],
 )
 data class ChatMessageEntity(
     @PrimaryKey val id: String,
@@ -39,6 +51,89 @@ data class ChatMessageEntity(
     val createdAtEpochMillis: Long,
     val completedAtEpochMillis: Long?,
     val failureReason: String?,
+    @ColumnInfo(defaultValue = "NULL") val remoteId: String? = null,
+    @ColumnInfo(defaultValue = "0") val revision: Long = 0,
+    @ColumnInfo(defaultValue = "'LOCAL_ONLY'") val syncState: String = "LOCAL_ONLY",
+)
+
+@Entity(
+    tableName = "chat_participants",
+    indices = [Index("kind"), Index("remoteId"), Index("syncState")],
+)
+data class ChatParticipantEntity(
+    @PrimaryKey val id: String,
+    val kind: String,
+    val displayName: String,
+    val avatarUri: String?,
+    val avatarColorArgb: Long?,
+    @ColumnInfo(defaultValue = "NULL") val remoteId: String? = null,
+    @ColumnInfo(defaultValue = "0") val revision: Long = 0,
+    @ColumnInfo(defaultValue = "'LOCAL_ONLY'") val syncState: String = "LOCAL_ONLY",
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "room_memberships",
+    primaryKeys = ["roomId", "participantId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = ChatThreadEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["roomId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = ChatParticipantEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["participantId"],
+        ),
+    ],
+    indices = [Index("participantId"), Index("leftAtEpochMillis"), Index("syncState")],
+)
+data class RoomMembershipEntity(
+    val roomId: String,
+    val participantId: String,
+    val role: String,
+    val canPost: Boolean,
+    val joinedAtEpochMillis: Long,
+    val leftAtEpochMillis: Long?,
+    val aiResponsePolicy: String,
+    @ColumnInfo(defaultValue = "NULL") val remoteId: String? = null,
+    @ColumnInfo(defaultValue = "0") val revision: Long = 0,
+    @ColumnInfo(defaultValue = "'LOCAL_ONLY'") val syncState: String = "LOCAL_ONLY",
+)
+
+@Entity(
+    tableName = "chat_message_authors",
+    foreignKeys = [
+        ForeignKey(
+            entity = ChatMessageEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["messageId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = ChatParticipantEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["authorParticipantId"],
+        ),
+    ],
+    indices = [Index("authorParticipantId")],
+)
+data class ChatMessageAuthorEntity(
+    @PrimaryKey val messageId: String,
+    val authorParticipantId: String,
+)
+
+data class RoomMemberWithParticipantEntity(
+    @Embedded val membership: RoomMembershipEntity,
+    @Embedded(prefix = "participant_") val participant: ChatParticipantEntity?,
+)
+
+data class ChatMessageWithAuthorEntity(
+    @Embedded val message: ChatMessageEntity,
+    @Embedded(prefix = "author_") val author: ChatParticipantEntity?,
 )
 
 @Entity(
@@ -308,13 +403,14 @@ data class StorageHealthSnapshotEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("threadId")],
+    indices = [Index("threadId"), Index("participantId")],
 )
 data class SmsSenderThreadEntity(
     @PrimaryKey val senderAddress: String,
     val threadId: String,
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    @ColumnInfo(defaultValue = "NULL") val participantId: String? = null,
 )
 
 @Entity(

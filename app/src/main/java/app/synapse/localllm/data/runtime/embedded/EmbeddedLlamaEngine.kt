@@ -24,6 +24,7 @@ class EmbeddedLlamaEngine private constructor(
     val state: StateFlow<EmbeddedLlamaEngineState> = mutableState.asStateFlow()
 
     private var loadedModelPath: String? = null
+    @Volatile
     private var cancelGeneration = false
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -94,7 +95,8 @@ class EmbeddedLlamaEngine private constructor(
 
             val stopSequenceFilter = StopSequenceTextFilter(stopSequences)
             mutableState.value = EmbeddedLlamaEngineState.Generating
-            while (!cancelGeneration) {
+            while (true) {
+                if (cancelGeneration) throw EmbeddedGenerationCancelledException()
                 val token = generateNextToken() ?: break
                 val tokenResult = stopSequenceFilter.append(token)
                 if (tokenResult.visibleText.isNotEmpty()) {
@@ -104,11 +106,15 @@ class EmbeddedLlamaEngine private constructor(
                     break
                 }
             }
+            if (cancelGeneration) throw EmbeddedGenerationCancelledException()
             val remainingText = stopSequenceFilter.flush()
-            if (remainingText.isNotEmpty() && !cancelGeneration) {
+            if (remainingText.isNotEmpty()) {
                 emit(remainingText)
             }
             mutableState.value = EmbeddedLlamaEngineState.ModelReady
+        } catch (exception: EmbeddedGenerationCancelledException) {
+            mutableState.value = EmbeddedLlamaEngineState.ModelReady
+            throw exception
         } catch (exception: CancellationException) {
             cancelGeneration = true
             mutableState.value = EmbeddedLlamaEngineState.ModelReady
@@ -207,6 +213,10 @@ class EmbeddedLlamaEngine private constructor(
             }
     }
 }
+
+private class EmbeddedGenerationCancelledException : RuntimeException(
+    "Embedded llama.cpp generation was cancelled.",
+)
 
 sealed interface EmbeddedLlamaEngineState {
     data object Uninitialized : EmbeddedLlamaEngineState

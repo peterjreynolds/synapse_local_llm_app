@@ -2,10 +2,10 @@ package app.synapse.localllm.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.ClipData
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -25,7 +25,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,15 +32,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -58,12 +54,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Memory
@@ -71,13 +64,10 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -107,8 +97,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboard
@@ -121,11 +109,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.synapse.localllm.R
 import app.synapse.localllm.domain.chat.AttachmentKind
+import app.synapse.localllm.domain.chat.BuiltInParticipantIds
 import app.synapse.localllm.domain.chat.ChatMessageRecord
-import app.synapse.localllm.domain.chat.ChatThreadRecord
-import app.synapse.localllm.domain.chat.ConversationRole
+import app.synapse.localllm.domain.chat.ChatRoomRecord
+import app.synapse.localllm.domain.chat.CreateRoomCommand
 import app.synapse.localllm.domain.chat.MessageDeliveryState
 import app.synapse.localllm.domain.chat.PendingAttachment
+import app.synapse.localllm.domain.chat.ParticipantKind
+import app.synapse.localllm.domain.chat.RoomMemberRecord
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.MemoryKind
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
@@ -141,6 +132,10 @@ import app.synapse.localllm.domain.runtime.formatModelDownloadProgressText
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
 import app.synapse.localllm.domain.storage.StorageHealthSnapshot
 import app.synapse.localllm.domain.storage.StorageHealthState
+import app.synapse.localllm.ui.chat.ChatRoomDrawerOverlay
+import app.synapse.localllm.ui.chat.ChatRoomHeader
+import app.synapse.localllm.ui.chat.ChatRoomMemberSheet
+import app.synapse.localllm.ui.chat.ParticipantAvatar
 import java.io.IOException
 import java.util.Locale
 import kotlin.random.Random
@@ -294,16 +289,21 @@ fun SynapseApp(viewModel: SynapseViewModel) {
             )
         },
         onVoiceModeToggle = viewModel::toggleVoiceMode,
+        onMentionSynapse = viewModel::insertSynapseMention,
         messageSpeechController = messageSpeechController,
         onPanelSelected = viewModel::selectPanel,
-        onThreadDrawerOpen = viewModel::openThreadDrawer,
-        onThreadDrawerClose = viewModel::closeThreadDrawer,
-        onCreateThread = viewModel::createNewThread,
-        onThreadSelected = viewModel::selectThread,
-        onThreadPinnedChanged = viewModel::setThreadPinned,
-        onThreadRenamed = viewModel::renameThread,
-        onThreadArchived = viewModel::archiveThread,
-        onThreadDeleted = viewModel::deleteThread,
+        onRoomDrawerOpen = viewModel::openRoomDrawer,
+        onRoomDrawerClose = viewModel::closeRoomDrawer,
+        onCreateRoom = viewModel::createRoom,
+        onRoomSelected = viewModel::selectRoom,
+        onRoomPinnedChanged = viewModel::setRoomPinned,
+        onRoomRenamed = viewModel::renameRoom,
+        onRoomArchived = viewModel::archiveRoom,
+        onRoomDeleted = viewModel::deleteRoom,
+        onAddHumanRoomMember = viewModel::addHumanRoomMember,
+        onRemoveRoomMember = viewModel::removeRoomMember,
+        onSynapseAiEnabledChanged = viewModel::setSynapseAiEnabled,
+        onRoomAiAutoResponseChanged = viewModel::setRoomAiAutoResponse,
         onRuntimeCheck = viewModel::checkRuntimeStatus,
         onRuntimeStart = viewModel::startRuntime,
         onCheckAppUpdate = { viewModel.checkForAppUpdate(automatic = false) },
@@ -387,16 +387,21 @@ private fun SynapseScreen(
     onRemoveAttachment: (Int) -> Unit,
     onStartSpeech: () -> Unit,
     onVoiceModeToggle: () -> Unit,
+    onMentionSynapse: () -> Unit,
     messageSpeechController: MessageSpeechPlaybackController,
     onPanelSelected: (SynapsePanel) -> Unit,
-    onThreadDrawerOpen: () -> Unit,
-    onThreadDrawerClose: () -> Unit,
-    onCreateThread: () -> Unit,
-    onThreadSelected: (ChatThreadRecord) -> Unit,
-    onThreadPinnedChanged: (ChatThreadRecord, Boolean) -> Unit,
-    onThreadRenamed: (ChatThreadRecord, String) -> Unit,
-    onThreadArchived: (ChatThreadRecord) -> Unit,
-    onThreadDeleted: (ChatThreadRecord) -> Unit,
+    onRoomDrawerOpen: () -> Unit,
+    onRoomDrawerClose: () -> Unit,
+    onCreateRoom: (CreateRoomCommand) -> Unit,
+    onRoomSelected: (ChatRoomRecord) -> Unit,
+    onRoomPinnedChanged: (ChatRoomRecord, Boolean) -> Unit,
+    onRoomRenamed: (ChatRoomRecord, String) -> Unit,
+    onRoomArchived: (ChatRoomRecord) -> Unit,
+    onRoomDeleted: (ChatRoomRecord) -> Unit,
+    onAddHumanRoomMember: (String) -> Unit,
+    onRemoveRoomMember: (RoomMemberRecord) -> Unit,
+    onSynapseAiEnabledChanged: (Boolean) -> Unit,
+    onRoomAiAutoResponseChanged: (Boolean) -> Unit,
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
     onCheckAppUpdate: () -> Unit,
@@ -446,7 +451,7 @@ private fun SynapseScreen(
                 SynapseTopBar(
                     state = state,
                     onPanelSelected = onPanelSelected,
-                    onThreadDrawerOpen = onThreadDrawerOpen,
+                    onRoomDrawerOpen = onRoomDrawerOpen,
                     onRuntimeCheck = onRuntimeCheck,
                     onRuntimeStart = onRuntimeStart,
                 )
@@ -462,6 +467,7 @@ private fun SynapseScreen(
                         onRemoveAttachment = onRemoveAttachment,
                         onStartSpeech = onStartSpeech,
                         onVoiceModeToggle = onVoiceModeToggle,
+                        onMentionSynapse = onMentionSynapse,
                         modifier = Modifier.imePadding(),
                     )
                 }
@@ -491,6 +497,10 @@ private fun SynapseScreen(
                                 .fillMaxSize(),
                             state = state,
                             messageSpeechController = messageSpeechController,
+                            onAddHumanRoomMember = onAddHumanRoomMember,
+                            onRemoveRoomMember = onRemoveRoomMember,
+                            onSynapseAiEnabledChanged = onSynapseAiEnabledChanged,
+                            onRoomAiAutoResponseChanged = onRoomAiAutoResponseChanged,
                         )
 
                     SynapsePanel.LIBRARY ->
@@ -530,16 +540,17 @@ private fun SynapseScreen(
                 }
             }
         }
-        if (state.isThreadDrawerOpen) {
-            ThreadDrawerOverlay(
-                state = state,
-                onClose = onThreadDrawerClose,
-                onCreateThread = onCreateThread,
-                onThreadSelected = onThreadSelected,
-                onThreadPinnedChanged = onThreadPinnedChanged,
-                onThreadRenamed = onThreadRenamed,
-                onThreadArchived = onThreadArchived,
-                onThreadDeleted = onThreadDeleted,
+        if (state.isRoomDrawerOpen) {
+            ChatRoomDrawerOverlay(
+                rooms = state.rooms,
+                currentRoomId = state.currentRoom?.id,
+                onClose = onRoomDrawerClose,
+                onCreateRoom = onCreateRoom,
+                onRoomSelected = onRoomSelected,
+                onRoomPinnedChanged = onRoomPinnedChanged,
+                onRoomRenamed = onRoomRenamed,
+                onRoomArchived = onRoomArchived,
+                onRoomDeleted = onRoomDeleted,
             )
         }
     }
@@ -549,7 +560,7 @@ private fun SynapseScreen(
 private fun SynapseTopBar(
     state: SynapseUiState,
     onPanelSelected: (SynapsePanel) -> Unit,
-    onThreadDrawerOpen: () -> Unit,
+    onRoomDrawerOpen: () -> Unit,
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
 ) {
@@ -561,12 +572,12 @@ private fun SynapseTopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(
-            onClick = onThreadDrawerOpen,
+            onClick = onRoomDrawerOpen,
             modifier = Modifier.size(40.dp),
         ) {
             Icon(
                 Icons.Rounded.Menu,
-                contentDescription = "Recent chats",
+                contentDescription = "Rooms",
                 tint = MaterialTheme.colorScheme.onBackground,
             )
         }
@@ -578,7 +589,7 @@ private fun SynapseTopBar(
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
-            text = "Synapse",
+            text = "Synapse Chat",
             color = MaterialTheme.colorScheme.onBackground,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
@@ -653,325 +664,6 @@ private fun SynapseTopBar(
             )
         }
     }
-}
-
-@Composable
-private fun ThreadDrawerOverlay(
-    state: SynapseUiState,
-    onClose: () -> Unit,
-    onCreateThread: () -> Unit,
-    onThreadSelected: (ChatThreadRecord) -> Unit,
-    onThreadPinnedChanged: (ChatThreadRecord, Boolean) -> Unit,
-    onThreadRenamed: (ChatThreadRecord, String) -> Unit,
-    onThreadArchived: (ChatThreadRecord) -> Unit,
-    onThreadDeleted: (ChatThreadRecord) -> Unit,
-) {
-    var actionThread by remember { mutableStateOf<ChatThreadRecord?>(null) }
-    var renameThread by remember { mutableStateOf<ChatThreadRecord?>(null) }
-    var deleteThread by remember { mutableStateOf<ChatThreadRecord?>(null) }
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.56f))
-                .clickable(onClick = onClose),
-        )
-        Surface(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(0.86f),
-            color = Color(0xFF070907),
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shadowElevation = 12.dp,
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(WindowInsets.safeDrawing.asPaddingValues())
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Recent chats",
-                        modifier = Modifier.weight(1f),
-                        color = MaterialTheme.colorScheme.onBackground,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    IconButton(onClick = onClose) {
-                        Icon(
-                            Icons.Rounded.Close,
-                            contentDescription = "Close recent chats",
-                            tint = MaterialTheme.colorScheme.onBackground,
-                        )
-                    }
-                }
-                Button(
-                    onClick = onCreateThread,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    shape = RoundedCornerShape(8.dp),
-                ) {
-                    Icon(Icons.Rounded.Add, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("New chat")
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    items(state.threads, key = { thread -> thread.id.raw }) { thread ->
-                        ThreadDrawerRow(
-                            thread = thread,
-                            selected = thread.id == state.currentThread?.id,
-                            onThreadSelected = onThreadSelected,
-                            onThreadActionsRequested = { selectedThread ->
-                                actionThread = selectedThread
-                            },
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    actionThread?.let { thread ->
-        ThreadActionsDialog(
-            thread = thread,
-            onDismiss = { actionThread = null },
-            onPinnedChanged = { pinned ->
-                actionThread = null
-                onThreadPinnedChanged(thread, pinned)
-            },
-            onRenameRequested = {
-                actionThread = null
-                renameThread = thread
-            },
-            onArchiveRequested = {
-                actionThread = null
-                onThreadArchived(thread)
-            },
-            onDeleteRequested = {
-                actionThread = null
-                deleteThread = thread
-            },
-        )
-    }
-
-    renameThread?.let { thread ->
-        RenameThreadDialog(
-            thread = thread,
-            onDismiss = { renameThread = null },
-            onRenamed = { title ->
-                renameThread = null
-                onThreadRenamed(thread, title)
-            },
-        )
-    }
-
-    deleteThread?.let { thread ->
-        DeleteThreadDialog(
-            thread = thread,
-            onDismiss = { deleteThread = null },
-            onDeleted = {
-                deleteThread = null
-                onThreadDeleted(thread)
-            },
-        )
-    }
-}
-
-@Composable
-private fun ThreadDrawerRow(
-    thread: ChatThreadRecord,
-    selected: Boolean,
-    onThreadSelected: (ChatThreadRecord) -> Unit,
-    onThreadActionsRequested: (ChatThreadRecord) -> Unit,
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp)
-            .pointerInput(thread.id.raw) {
-                detectTapGestures(
-                    onTap = { onThreadSelected(thread) },
-                    onLongPress = { onThreadActionsRequested(thread) },
-                )
-            },
-        color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
-        shape = RoundedCornerShape(8.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (thread.isPinned) {
-                Icon(
-                    Icons.Rounded.PushPin,
-                    contentDescription = "Pinned chat",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-            }
-            Text(
-                text = thread.title,
-                modifier = Modifier.weight(1f),
-                color = MaterialTheme.colorScheme.onSurface,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ThreadActionsDialog(
-    thread: ChatThreadRecord,
-    onDismiss: () -> Unit,
-    onPinnedChanged: (Boolean) -> Unit,
-    onRenameRequested: () -> Unit,
-    onArchiveRequested: () -> Unit,
-    onDeleteRequested: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = thread.title,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                ThreadActionDialogButton(
-                    icon = Icons.Rounded.PushPin,
-                    label = if (thread.isPinned) "Unpin chat" else "Pin chat",
-                    onClick = { onPinnedChanged(!thread.isPinned) },
-                )
-                ThreadActionDialogButton(
-                    icon = Icons.Rounded.Edit,
-                    label = "Rename chat",
-                    onClick = onRenameRequested,
-                )
-                ThreadActionDialogButton(
-                    icon = Icons.Rounded.Archive,
-                    label = "Archive chat",
-                    onClick = onArchiveRequested,
-                )
-                ThreadActionDialogButton(
-                    icon = Icons.Rounded.Delete,
-                    label = "Delete chat",
-                    contentColor = MaterialTheme.colorScheme.error,
-                    onClick = onDeleteRequested,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-    )
-}
-
-@Composable
-private fun ThreadActionDialogButton(
-    icon: ImageVector,
-    label: String,
-    contentColor: Color = MaterialTheme.colorScheme.onSurface,
-    onClick: () -> Unit,
-) {
-    TextButton(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Icon(icon, contentDescription = null, tint = contentColor)
-            Text(text = label, color = contentColor)
-        }
-    }
-}
-
-@Composable
-private fun RenameThreadDialog(
-    thread: ChatThreadRecord,
-    onDismiss: () -> Unit,
-    onRenamed: (String) -> Unit,
-) {
-    var draftTitle by remember(thread.id.raw) { mutableStateOf(thread.title) }
-    val normalizedTitle = draftTitle.trim()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Rename chat") },
-        text = {
-            OutlinedTextField(
-                value = draftTitle,
-                onValueChange = { value -> draftTitle = value },
-                label = { Text("Title") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onRenamed(normalizedTitle) },
-                enabled = normalizedTitle.isNotEmpty(),
-            ) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-    )
-}
-
-@Composable
-private fun DeleteThreadDialog(
-    thread: ChatThreadRecord,
-    onDismiss: () -> Unit,
-    onDeleted: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Delete chat?") },
-        text = {
-            Text(
-                text = "This removes the chat and its messages from recent chats.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onDeleted) {
-                Text("Delete", color = MaterialTheme.colorScheme.error)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-    )
 }
 
 @Composable
@@ -1122,10 +814,23 @@ private fun ChatWorkspace(
     modifier: Modifier = Modifier,
     state: SynapseUiState,
     messageSpeechController: MessageSpeechPlaybackController,
+    onAddHumanRoomMember: (String) -> Unit,
+    onRemoveRoomMember: (RoomMemberRecord) -> Unit,
+    onSynapseAiEnabledChanged: (Boolean) -> Unit,
+    onRoomAiAutoResponseChanged: (Boolean) -> Unit,
 ) {
+    val room = state.currentRoom
+    var isMemberSheetOpen by remember(room?.id?.raw) { mutableStateOf(false) }
     Column(
         modifier = modifier,
     ) {
+        if (room != null) {
+            ChatRoomHeader(
+                room = room,
+                members = state.currentRoomMembers,
+                onOpenMembers = { isMemberSheetOpen = true },
+            )
+        }
         ChatPanel(
             modifier = Modifier
                 .weight(1f)
@@ -1133,6 +838,17 @@ private fun ChatWorkspace(
             messages = state.messages,
             speechPlaybackEnabled = state.settings.speechPlaybackEnabled,
             messageSpeechController = messageSpeechController,
+        )
+    }
+    if (isMemberSheetOpen && room != null) {
+        ChatRoomMemberSheet(
+            room = room,
+            members = state.currentRoomMembers,
+            onDismiss = { isMemberSheetOpen = false },
+            onAddHuman = onAddHumanRoomMember,
+            onRemoveMember = onRemoveRoomMember,
+            onSynapseEnabledChanged = onSynapseAiEnabledChanged,
+            onAiAutoResponseChanged = onRoomAiAutoResponseChanged,
         )
     }
 }
@@ -1156,7 +872,10 @@ private fun ChatPanel(
         derivedStateOf { listState.isAtChatBottom(bottomAnchorIndex) }
     }
     val isAssistantTyping = messages.any { message ->
-        message.role == ConversationRole.ASSISTANT &&
+        (
+            message.author.kind == ParticipantKind.LOCAL_AI ||
+                message.author.kind == ParticipantKind.REMOTE_AI
+        ) &&
             message.deliveryState == MessageDeliveryState.STREAMING
     }
 
@@ -1251,27 +970,45 @@ private fun MessageBubble(
     speechPlaybackEnabled: Boolean,
     messageSpeechController: MessageSpeechPlaybackController,
 ) {
-    val isUser = message.role == ConversationRole.USER
+    val isLocalOwner = message.author.id == BuiltInParticipantIds.LOCAL_HUMAN
+    val isAiAuthor = message.author.kind == ParticipantKind.LOCAL_AI ||
+        message.author.kind == ParticipantKind.REMOTE_AI
     val clipboard = LocalClipboard.current
     val coroutineScope = rememberCoroutineScope()
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+        horizontalArrangement = if (isLocalOwner) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
-            color = if (isUser) Color(0xFF10351A) else MaterialTheme.colorScheme.surface,
+            color = if (isLocalOwner) Color(0xFF10351A) else MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
             shape = RoundedCornerShape(
                 topStart = 22.dp,
                 topEnd = 22.dp,
-                bottomStart = if (isUser) 22.dp else 6.dp,
-                bottomEnd = if (isUser) 6.dp else 22.dp,
+                bottomStart = if (isLocalOwner) 22.dp else 6.dp,
+                bottomEnd = if (isLocalOwner) 6.dp else 22.dp,
             ),
-            modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.92f),
+            modifier = Modifier.fillMaxWidth(if (isLocalOwner) 0.84f else 0.92f),
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    ParticipantAvatar(
+                        participant = message.author,
+                        size = 24.dp,
+                    )
+                    Text(
+                        text = message.author.displayName,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
                 if (
-                    !isUser &&
+                    isAiAuthor &&
                     message.deliveryState == MessageDeliveryState.STREAMING &&
                     message.body.isBlank()
                 ) {
@@ -1290,7 +1027,7 @@ private fun MessageBubble(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (!isUser && message.deliveryState == MessageDeliveryState.FAILED) {
+                        if (message.deliveryState == MessageDeliveryState.FAILED) {
                             Text(
                                 text = message.failureReason ?: "Failed",
                                 color = MaterialTheme.colorScheme.error,
@@ -1305,7 +1042,7 @@ private fun MessageBubble(
                                         clipboard.setClipEntry(
                                             ClipEntry(
                                                 ClipData.newPlainText(
-                                                    "Synapse message",
+                                                    "${message.author.displayName} message",
                                                     message.body,
                                                 ),
                                             ),
@@ -1319,7 +1056,7 @@ private fun MessageBubble(
                                 )
                             }
                         }
-                        if (!isUser && speechPlaybackEnabled && message.body.isNotBlank()) {
+                        if (isAiAuthor && speechPlaybackEnabled && message.body.isNotBlank()) {
                             IconButton(
                                 onClick = {
                                     messageSpeechController.toggleMessagePlayback(
@@ -1452,9 +1189,13 @@ private fun ComposerBar(
     onRemoveAttachment: (Int) -> Unit,
     onStartSpeech: () -> Unit,
     onVoiceModeToggle: () -> Unit,
+    onMentionSynapse: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
+    val synapseIsActive = state.currentRoomMembers.any { member ->
+        member.isActive && member.participant.id == BuiltInParticipantIds.SYNAPSE_LOCAL_AI
+    }
     val sendAndHideKeyboard = {
         keyboardController?.hide()
         onSend()
@@ -1470,6 +1211,16 @@ private fun ComposerBar(
             voiceMode = state.voiceMode,
             onVoiceModeToggle = onVoiceModeToggle,
         )
+        if (synapseIsActive) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onMentionSynapse) {
+                    Text("@Synapse")
+                }
+            }
+        }
         Spacer(modifier = Modifier.height(8.dp))
         if (state.pendingAttachments.isNotEmpty()) {
             AttachmentStrip(
@@ -1497,7 +1248,7 @@ private fun ComposerBar(
                 TextField(
                     value = state.composerText,
                     onValueChange = onComposerChanged,
-                    placeholder = { Text("Ask Synapse") },
+                    placeholder = { Text("Message room") },
                     modifier = Modifier.weight(1f),
                     maxLines = 5,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),

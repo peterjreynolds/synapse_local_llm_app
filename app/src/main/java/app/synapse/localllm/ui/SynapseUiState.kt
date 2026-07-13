@@ -1,8 +1,9 @@
 package app.synapse.localllm.ui
 
 import app.synapse.localllm.domain.chat.ChatMessageRecord
-import app.synapse.localllm.domain.chat.ChatThreadRecord
+import app.synapse.localllm.domain.chat.ChatRoomRecord
 import app.synapse.localllm.domain.chat.PendingAttachment
+import app.synapse.localllm.domain.chat.RoomMemberRecord
 import app.synapse.localllm.domain.library.LibraryArtifactRecord
 import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
@@ -103,9 +104,10 @@ data class SynapseUiState(
         smsAutoReplyInstructions = SynapseSettings().smsAutoReplyInstructions,
     ),
     val runtimeStatus: RuntimeStatus = RuntimeStatus.Unknown,
-    val currentThread: ChatThreadRecord? = null,
-    val threads: List<ChatThreadRecord> = emptyList(),
-    val isThreadDrawerOpen: Boolean = false,
+    val currentRoom: ChatRoomRecord? = null,
+    val rooms: List<ChatRoomRecord> = emptyList(),
+    val currentRoomMembers: List<RoomMemberRecord> = emptyList(),
+    val isRoomDrawerOpen: Boolean = false,
     val messages: List<ChatMessageRecord> = emptyList(),
     val composerText: String = "",
     val pendingAttachments: List<PendingAttachment> = emptyList(),

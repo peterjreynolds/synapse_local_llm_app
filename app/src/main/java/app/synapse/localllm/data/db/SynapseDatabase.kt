@@ -9,6 +9,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         ChatThreadEntity::class,
         ChatMessageEntity::class,
+        ChatParticipantEntity::class,
+        RoomMembershipEntity::class,
+        ChatMessageAuthorEntity::class,
         AssistantGenerationTraceEntity::class,
         AttachmentEntity::class,
         LibraryArtifactEntity::class,
@@ -24,7 +27,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SmsSenderThreadEntity::class,
         SmsAutoReplyReceiptEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -348,3 +351,346 @@ val SYNAPSE_DATABASE_MIGRATION_7_8 =
             )
         }
     }
+
+val SYNAPSE_DATABASE_MIGRATION_8_9 =
+    object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            requireKnownLegacyConversationRoles(db)
+
+            db.execSQL("ALTER TABLE chat_threads ADD COLUMN roomKind TEXT NOT NULL DEFAULT 'AI_CHAT'")
+            db.execSQL("ALTER TABLE chat_threads ADD COLUMN remoteId TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE chat_threads ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE chat_threads ADD COLUMN syncState TEXT NOT NULL DEFAULT 'LOCAL_ONLY'")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_threads_roomKind ON chat_threads(roomKind)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_threads_remoteId ON chat_threads(remoteId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_threads_syncState ON chat_threads(syncState)")
+
+            db.execSQL("ALTER TABLE chat_messages ADD COLUMN remoteId TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE chat_messages ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE chat_messages ADD COLUMN syncState TEXT NOT NULL DEFAULT 'LOCAL_ONLY'")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_messages_remoteId ON chat_messages(remoteId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_messages_syncState ON chat_messages(syncState)")
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS chat_participants (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    displayName TEXT NOT NULL,
+                    avatarUri TEXT,
+                    avatarColorArgb INTEGER,
+                    remoteId TEXT DEFAULT NULL,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    syncState TEXT NOT NULL DEFAULT 'LOCAL_ONLY',
+                    createdAtEpochMillis INTEGER NOT NULL,
+                    updatedAtEpochMillis INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_participants_kind ON chat_participants(kind)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_participants_remoteId ON chat_participants(remoteId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_participants_syncState ON chat_participants(syncState)")
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS room_memberships (
+                    roomId TEXT NOT NULL,
+                    participantId TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    canPost INTEGER NOT NULL,
+                    joinedAtEpochMillis INTEGER NOT NULL,
+                    leftAtEpochMillis INTEGER,
+                    aiResponsePolicy TEXT NOT NULL,
+                    remoteId TEXT DEFAULT NULL,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    syncState TEXT NOT NULL DEFAULT 'LOCAL_ONLY',
+                    PRIMARY KEY(roomId, participantId),
+                    FOREIGN KEY(roomId) REFERENCES chat_threads(id)
+                    ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(participantId) REFERENCES chat_participants(id)
+                    ON UPDATE NO ACTION ON DELETE NO ACTION
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_room_memberships_participantId " +
+                    "ON room_memberships(participantId)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_room_memberships_leftAtEpochMillis " +
+                    "ON room_memberships(leftAtEpochMillis)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_room_memberships_syncState " +
+                    "ON room_memberships(syncState)",
+            )
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS chat_message_authors (
+                    messageId TEXT NOT NULL PRIMARY KEY,
+                    authorParticipantId TEXT NOT NULL,
+                    FOREIGN KEY(messageId) REFERENCES chat_messages(id)
+                    ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(authorParticipantId) REFERENCES chat_participants(id)
+                    ON UPDATE NO ACTION ON DELETE NO ACTION
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_chat_message_authors_authorParticipantId " +
+                    "ON chat_message_authors(authorParticipantId)",
+            )
+
+            db.execSQL("ALTER TABLE sms_sender_threads ADD COLUMN participantId TEXT DEFAULT NULL")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_sms_sender_threads_participantId " +
+                    "ON sms_sender_threads(participantId)",
+            )
+
+            insertBuiltInParticipants(db)
+            db.execSQL("UPDATE chat_threads SET roomKind = 'AI_CHAT'")
+            insertLegacyCoreRoomMemberships(db)
+            insertLegacySystemRoomMemberships(db)
+            insertLegacyMessageAuthors(db)
+            insertLegacySmsParticipants(db)
+            assertEveryLegacyMessageHasAuthor(db)
+        }
+    }
+
+private fun requireKnownLegacyConversationRoles(db: SupportSQLiteDatabase) {
+    db.query(
+        """
+        SELECT role
+        FROM chat_messages
+        WHERE role NOT IN ('USER', 'ASSISTANT', 'SYSTEM')
+        LIMIT 1
+        """.trimIndent(),
+    ).use { cursor ->
+        check(!cursor.moveToFirst()) {
+            "Cannot migrate chat message with unsupported conversation role '${cursor.getString(0)}'."
+        }
+    }
+}
+
+private fun insertBuiltInParticipants(db: SupportSQLiteDatabase) {
+    db.execSQL(
+        """
+        INSERT INTO chat_participants (
+            id, kind, displayName, avatarUri, avatarColorArgb,
+            remoteId, revision, syncState, createdAtEpochMillis, updatedAtEpochMillis
+        )
+        VALUES (
+            '$LOCAL_HUMAN_PARTICIPANT_ID',
+            'HUMAN',
+            'You',
+            NULL,
+            NULL,
+            NULL,
+            0,
+            'LOCAL_ONLY',
+            COALESCE((SELECT MIN(createdAtEpochMillis) FROM chat_threads), 0),
+            COALESCE((SELECT MAX(updatedAtEpochMillis) FROM chat_threads), 0)
+        )
+        """.trimIndent(),
+    )
+    db.execSQL(
+        """
+        INSERT INTO chat_participants (
+            id, kind, displayName, avatarUri, avatarColorArgb,
+            remoteId, revision, syncState, createdAtEpochMillis, updatedAtEpochMillis
+        )
+        VALUES (
+            '$SYNAPSE_LOCAL_AI_PARTICIPANT_ID',
+            'LOCAL_AI',
+            'Synapse',
+            NULL,
+            NULL,
+            NULL,
+            0,
+            'LOCAL_ONLY',
+            COALESCE((SELECT MIN(createdAtEpochMillis) FROM chat_threads), 0),
+            COALESCE((SELECT MAX(updatedAtEpochMillis) FROM chat_threads), 0)
+        )
+        """.trimIndent(),
+    )
+    db.execSQL(
+        """
+        INSERT INTO chat_participants (
+            id, kind, displayName, avatarUri, avatarColorArgb,
+            remoteId, revision, syncState, createdAtEpochMillis, updatedAtEpochMillis
+        )
+        VALUES (
+            '$SYSTEM_PARTICIPANT_ID',
+            'SYSTEM',
+            'System',
+            NULL,
+            NULL,
+            NULL,
+            0,
+            'LOCAL_ONLY',
+            COALESCE((SELECT MIN(createdAtEpochMillis) FROM chat_threads), 0),
+            COALESCE((SELECT MAX(updatedAtEpochMillis) FROM chat_threads), 0)
+        )
+        """.trimIndent(),
+    )
+}
+
+private fun insertLegacyCoreRoomMemberships(db: SupportSQLiteDatabase) {
+    db.execSQL(
+        """
+        INSERT INTO room_memberships (
+            roomId, participantId, role, canPost, joinedAtEpochMillis,
+            leftAtEpochMillis, aiResponsePolicy, remoteId, revision, syncState
+        )
+        SELECT
+            id,
+            '$LOCAL_HUMAN_PARTICIPANT_ID',
+            'OWNER',
+            1,
+            createdAtEpochMillis,
+            NULL,
+            'NEVER',
+            NULL,
+            0,
+            'LOCAL_ONLY'
+        FROM chat_threads
+        """.trimIndent(),
+    )
+    db.execSQL(
+        """
+        INSERT INTO room_memberships (
+            roomId, participantId, role, canPost, joinedAtEpochMillis,
+            leftAtEpochMillis, aiResponsePolicy, remoteId, revision, syncState
+        )
+        SELECT
+            id,
+            '$SYNAPSE_LOCAL_AI_PARTICIPANT_ID',
+            'MEMBER',
+            1,
+            createdAtEpochMillis,
+            NULL,
+            'AUTOMATIC',
+            NULL,
+            0,
+            'LOCAL_ONLY'
+        FROM chat_threads
+        """.trimIndent(),
+    )
+}
+
+private fun insertLegacySystemRoomMemberships(db: SupportSQLiteDatabase) {
+    db.execSQL(
+        """
+        INSERT INTO room_memberships (
+            roomId, participantId, role, canPost, joinedAtEpochMillis,
+            leftAtEpochMillis, aiResponsePolicy, remoteId, revision, syncState
+        )
+        SELECT
+            thread.id,
+            '$SYSTEM_PARTICIPANT_ID',
+            'MEMBER',
+            1,
+            thread.createdAtEpochMillis,
+            NULL,
+            'NEVER',
+            NULL,
+            0,
+            'LOCAL_ONLY'
+        FROM chat_threads AS thread
+        WHERE EXISTS (
+            SELECT 1
+            FROM chat_messages AS message
+            WHERE message.threadId = thread.id
+              AND message.role = 'SYSTEM'
+        )
+        """.trimIndent(),
+    )
+}
+
+private fun insertLegacyMessageAuthors(db: SupportSQLiteDatabase) {
+    db.execSQL(
+        """
+        INSERT INTO chat_message_authors (messageId, authorParticipantId)
+        SELECT
+            id,
+            CASE role
+                WHEN 'USER' THEN '$LOCAL_HUMAN_PARTICIPANT_ID'
+                WHEN 'ASSISTANT' THEN '$SYNAPSE_LOCAL_AI_PARTICIPANT_ID'
+                WHEN 'SYSTEM' THEN '$SYSTEM_PARTICIPANT_ID'
+            END
+        FROM chat_messages
+        """.trimIndent(),
+    )
+}
+
+private fun insertLegacySmsParticipants(db: SupportSQLiteDatabase) {
+    db.execSQL(
+        """
+        INSERT INTO chat_participants (
+            id, kind, displayName, avatarUri, avatarColorArgb,
+            remoteId, revision, syncState, createdAtEpochMillis, updatedAtEpochMillis
+        )
+        SELECT
+            '$SMS_PARTICIPANT_ID_PREFIX' || lower(hex(CAST(senderAddress AS BLOB))),
+            'HUMAN',
+            senderAddress,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            'LOCAL_ONLY',
+            createdAtEpochMillis,
+            updatedAtEpochMillis
+        FROM sms_sender_threads
+        """.trimIndent(),
+    )
+    db.execSQL(
+        """
+        UPDATE sms_sender_threads
+        SET participantId = '$SMS_PARTICIPANT_ID_PREFIX' || lower(hex(CAST(senderAddress AS BLOB)))
+        """.trimIndent(),
+    )
+    db.execSQL(
+        """
+        INSERT INTO room_memberships (
+            roomId, participantId, role, canPost, joinedAtEpochMillis,
+            leftAtEpochMillis, aiResponsePolicy, remoteId, revision, syncState
+        )
+        SELECT
+            threadId,
+            participantId,
+            'MEMBER',
+            1,
+            createdAtEpochMillis,
+            NULL,
+            'NEVER',
+            NULL,
+            0,
+            'LOCAL_ONLY'
+        FROM sms_sender_threads
+        WHERE participantId IS NOT NULL
+        """.trimIndent(),
+    )
+}
+
+private fun assertEveryLegacyMessageHasAuthor(db: SupportSQLiteDatabase) {
+    db.query(
+        """
+        SELECT COUNT(*)
+        FROM chat_messages AS message
+        LEFT JOIN chat_message_authors AS authorship
+          ON authorship.messageId = message.id
+        WHERE authorship.messageId IS NULL
+        """.trimIndent(),
+    ).use { cursor ->
+        check(cursor.moveToFirst() && cursor.getLong(0) == 0L) {
+            "Chat authorship backfill did not cover every legacy message."
+        }
+    }
+}
+
+private const val LOCAL_HUMAN_PARTICIPANT_ID = "participant-local-human"
+private const val SYNAPSE_LOCAL_AI_PARTICIPANT_ID = "participant-synapse-local-ai"
+private const val SYSTEM_PARTICIPANT_ID = "participant-system"
+private const val SMS_PARTICIPANT_ID_PREFIX = "participant-sms-"

@@ -9,6 +9,9 @@ value class ChatThreadId(val raw: String)
 value class ChatMessageId(val raw: String)
 
 @JvmInline
+value class ParticipantId(val raw: String)
+
+@JvmInline
 value class AttachmentId(val raw: String)
 
 @JvmInline
@@ -33,6 +36,8 @@ class SynapseIdFactory {
     fun createChatThreadId(): ChatThreadId = ChatThreadId(createPrefixedUuid("thread"))
 
     fun createChatMessageId(): ChatMessageId = ChatMessageId(createPrefixedUuid("message"))
+
+    fun createParticipantId(): ParticipantId = ParticipantId(createPrefixedUuid("participant"))
 
     fun createAttachmentId(): AttachmentId = AttachmentId(createPrefixedUuid("attachment"))
 

@@ -5,6 +5,7 @@ import app.synapse.localllm.data.db.SmsAutoReplyReceiptEntity
 import app.synapse.localllm.data.db.SmsSenderThreadEntity
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.ChatThreadId
+import app.synapse.localllm.domain.ids.ParticipantId
 import app.synapse.localllm.domain.ids.ReceiptId
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.sms.LinkSmsAutoReplyTurnCommand
@@ -151,12 +152,14 @@ class RoomSmsAutoReplyRepository(
     override suspend fun persistThreadLinkForSender(
         senderAddress: SmsSenderAddress,
         threadId: ChatThreadId,
+        participantId: ParticipantId,
     ): SmsSenderThreadLink {
         val existingLink = smsAutoReplyDao.findSenderThread(senderAddress.raw)
         val now = clock.now()
         val senderThread = SmsSenderThreadEntity(
             senderAddress = senderAddress.raw,
             threadId = threadId.raw,
+            participantId = participantId.raw,
             createdAtEpochMillis = existingLink?.createdAtEpochMillis ?: now.toEpochMilli(),
             updatedAtEpochMillis = now.toEpochMilli(),
         )
@@ -187,6 +190,11 @@ class RoomSmsAutoReplyRepository(
         SmsSenderThreadLink(
             senderAddress = SmsSenderAddress(senderAddress),
             threadId = ChatThreadId(threadId),
+            participantId = ParticipantId(
+                checkNotNull(participantId) {
+                    "SMS sender $senderAddress has no attributed room participant."
+                },
+            ),
         )
 
     private companion object {

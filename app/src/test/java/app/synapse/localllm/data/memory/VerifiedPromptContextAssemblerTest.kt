@@ -1,8 +1,12 @@
 package app.synapse.localllm.data.memory
 
 import app.synapse.localllm.domain.chat.ChatMessageRecord
+import app.synapse.localllm.domain.chat.BuiltInParticipantIds
 import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.chat.MessageDeliveryState
+import app.synapse.localllm.domain.chat.ParticipantKind
+import app.synapse.localllm.domain.chat.ParticipantRecord
+import app.synapse.localllm.domain.chat.SyncMetadata
 import app.synapse.localllm.domain.ids.ChatMessageId
 import app.synapse.localllm.domain.ids.ChatThreadId
 import app.synapse.localllm.domain.ids.MemoryObjectId
@@ -23,6 +27,7 @@ class VerifiedPromptContextAssemblerTest {
     fun assemblesSystemMemoryRecentMessagesAndUserMessage() = runTest {
         val messages = assembler.assemblePromptMessages(
             userMessage = "What should we build next?",
+            currentAuthor = participant(ConversationRole.USER),
             priorMessages = listOf(
                 chatMessage(ConversationRole.USER, "Remember I prefer native Android."),
                 chatMessage(ConversationRole.ASSISTANT, "Got it."),
@@ -49,6 +54,7 @@ class VerifiedPromptContextAssemblerTest {
     fun removesLeakedAssistantScaffoldingFromPromptHistory() = runTest {
         val messages = assembler.assemblePromptMessages(
             userMessage = "Continue normally.",
+            currentAuthor = participant(ConversationRole.USER),
             priorMessages = listOf(
                 chatMessage(ConversationRole.USER, "Hey"),
                 chatMessage(
@@ -72,6 +78,7 @@ class VerifiedPromptContextAssemblerTest {
     fun includesCurrentTurnMemoryWriteReceiptsInSystemPrompt() = runTest {
         val messages = assembler.assemblePromptMessages(
             userMessage = "Add that to memory.",
+            currentAuthor = participant(ConversationRole.USER),
             priorMessages = emptyList(),
             retrievalBundle = RetrievalBundle(
                 retrievedAt = Instant.parse("2026-06-14T16:00:00Z"),
@@ -91,12 +98,30 @@ class VerifiedPromptContextAssemblerTest {
         ChatMessageRecord(
             id = ChatMessageId("message-${role.name}"),
             threadId = ChatThreadId("thread-1"),
+            author = participant(role),
             role = role,
             body = body,
             deliveryState = MessageDeliveryState.COMPLETE,
+            syncMetadata = SyncMetadata(),
             createdAt = Instant.parse("2026-06-14T16:00:00Z"),
             completedAt = Instant.parse("2026-06-14T16:00:00Z"),
             failureReason = null,
+        )
+
+    private fun participant(role: ConversationRole): ParticipantRecord =
+        ParticipantRecord(
+            id = if (role == ConversationRole.ASSISTANT) {
+                BuiltInParticipantIds.SYNAPSE_LOCAL_AI
+            } else {
+                BuiltInParticipantIds.LOCAL_HUMAN
+            },
+            kind = if (role == ConversationRole.ASSISTANT) ParticipantKind.LOCAL_AI else ParticipantKind.HUMAN,
+            displayName = if (role == ConversationRole.ASSISTANT) "Synapse" else "You",
+            avatarUri = null,
+            avatarColorArgb = null,
+            syncMetadata = SyncMetadata(),
+            createdAt = Instant.parse("2026-06-14T16:00:00Z"),
+            updatedAt = Instant.parse("2026-06-14T16:00:00Z"),
         )
 
     private fun retrievedMemory(): RetrievedMemoryRef =

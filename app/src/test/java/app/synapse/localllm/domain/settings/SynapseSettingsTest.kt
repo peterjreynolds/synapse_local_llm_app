@@ -25,6 +25,7 @@ class SynapseSettingsTest {
     @Test
     fun migratesOldDefaultPersonaAndInstructionsToCurrentDefaults() {
         assertEquals(DEFAULT_PERSONA, normalizePersona(LEGACY_DEFAULT_PERSONA))
+        assertEquals(DEFAULT_PERSONA, normalizePersona(LEGACY_SYNAPSE_AI_DEFAULT_PERSONA))
         assertEquals(
             DEFAULT_CUSTOM_INSTRUCTIONS,
             normalizeCustomInstructions(LEGACY_DEFAULT_CUSTOM_INSTRUCTIONS),

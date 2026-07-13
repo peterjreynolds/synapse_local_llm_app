@@ -52,7 +52,7 @@ class SynapseViewModelLibraryTest {
                 SynapseViewModelFactory(graph, mainDispatcher),
             )[SynapseViewModel::class.java]
 
-            waitForInitialThreadBinding(viewModel)
+            waitForInitialRoomBinding(viewModel)
             viewModel.selectPanel(SynapsePanel.LIBRARY)
             viewModel.updateLibraryDraftTitle("Project Note")
             viewModel.updateLibraryDraftMarkdown("This is saved as a workspace artifact.")
@@ -95,12 +95,12 @@ class SynapseViewModelLibraryTest {
         throw AssertionError("Unreachable after fail.")
     }
 
-    private fun waitForInitialThreadBinding(viewModel: SynapseViewModel) {
+    private fun waitForInitialRoomBinding(viewModel: SynapseViewModel) {
         repeat(100) {
             mainDispatcher.scheduler.advanceUntilIdle()
-            if (viewModel.uiState.value.currentThread != null) return
+            if (viewModel.uiState.value.currentRoom != null) return
             Thread.sleep(20)
         }
-        fail("Timed out waiting for default thread binding. Last state: ${viewModel.uiState.value}")
+        fail("Timed out waiting for default room binding. Last state: ${viewModel.uiState.value}")
     }
 }

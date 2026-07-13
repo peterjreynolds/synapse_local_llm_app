@@ -100,7 +100,7 @@ class AndroidDebugArchiveExporter(
 
     private fun buildReadme(createdAt: Instant): String =
         """
-        Synapse AI debug archive
+        Synapse Chat debug archive
 
         Created at: $createdAt
 
@@ -184,10 +184,10 @@ class AndroidDebugArchiveExporter(
     private fun buildUiStateMetadata(uiSnapshot: DebugUiSnapshot): String =
         buildString {
             appendLine("activePanel=${uiSnapshot.activePanel}")
-            appendLine("isThreadDrawerOpen=${uiSnapshot.isThreadDrawerOpen}")
-            appendLine("currentThreadId=${uiSnapshot.currentThreadId ?: "none"}")
-            appendLine("currentThreadTitle=${uiSnapshot.currentThreadTitle ?: "none"}")
-            appendLine("visibleThreadCount=${uiSnapshot.visibleThreadCount}")
+            appendLine("isRoomDrawerOpen=${uiSnapshot.isThreadDrawerOpen}")
+            appendLine("currentRoomId=${uiSnapshot.currentThreadId ?: "none"}")
+            appendLine("currentRoomTitle=${uiSnapshot.currentThreadTitle ?: "none"}")
+            appendLine("visibleRoomCount=${uiSnapshot.visibleThreadCount}")
             appendLine("visibleMessageCount=${uiSnapshot.visibleMessageCount}")
             appendLine("composerCharacterCount=${uiSnapshot.composerCharacterCount}")
             appendLine("pendingAttachmentCount=${uiSnapshot.pendingAttachmentCount}")
@@ -226,8 +226,11 @@ class AndroidDebugArchiveExporter(
                     appendLine()
                     appendSection("tableCounts", database.queryText(TABLE_COUNTS_SQL))
                     appendSection("activeStreamingMessages", database.queryText(ACTIVE_STREAMING_MESSAGES_SQL))
-                    appendSection("recentThreads", database.queryText(RECENT_THREADS_SQL))
+                    appendSection("recentRooms", database.queryText(RECENT_ROOMS_SQL))
+                    appendSection("recentRoomMembers", database.queryText(RECENT_ROOM_MEMBERS_SQL))
                     appendSection("recentMessages", database.queryText(RECENT_MESSAGES_SQL))
+                    appendSection("smsSenderRooms", database.queryText(SMS_SENDER_ROOMS_SQL))
+                    appendSection("recentSmsAutoReplyReceipts", database.queryText(RECENT_SMS_RECEIPTS_SQL))
                     appendSection("assistantGenerationTraces", database.queryText(GENERATION_TRACES_SQL))
                     appendSection("recentLibraryArtifacts", database.queryText(RECENT_LIBRARY_ARTIFACTS_SQL))
                     appendSection("recentMemoryVersions", database.queryText(RECENT_MEMORY_VERSIONS_SQL))
@@ -359,6 +362,9 @@ class AndroidDebugArchiveExporter(
             """
             SELECT 'chat_threads' AS tableName, COUNT(*) AS rowCount FROM chat_threads
             UNION ALL SELECT 'chat_messages', COUNT(*) FROM chat_messages
+            UNION ALL SELECT 'chat_participants', COUNT(*) FROM chat_participants
+            UNION ALL SELECT 'room_memberships', COUNT(*) FROM room_memberships
+            UNION ALL SELECT 'chat_message_authors', COUNT(*) FROM chat_message_authors
             UNION ALL SELECT 'assistant_generation_traces', COUNT(*) FROM assistant_generation_traces
             UNION ALL SELECT 'attachments', COUNT(*) FROM attachments
             UNION ALL SELECT 'library_artifacts', COUNT(*) FROM library_artifacts
@@ -371,35 +377,82 @@ class AndroidDebugArchiveExporter(
             UNION ALL SELECT 'retrieval_receipts', COUNT(*) FROM retrieval_receipts
             UNION ALL SELECT 'retrieved_memory_receipts', COUNT(*) FROM retrieved_memory_receipts
             UNION ALL SELECT 'storage_health_snapshots', COUNT(*) FROM storage_health_snapshots
+            UNION ALL SELECT 'sms_sender_threads', COUNT(*) FROM sms_sender_threads
+            UNION ALL SELECT 'sms_auto_reply_receipts', COUNT(*) FROM sms_auto_reply_receipts
             """.trimIndent()
 
         val ACTIVE_STREAMING_MESSAGES_SQL =
             """
-            SELECT id, threadId, role, deliveryState, length(body) AS bodyChars,
-                   createdAtEpochMillis, completedAtEpochMillis, failureReason
-            FROM chat_messages
-            WHERE deliveryState = 'STREAMING'
-            ORDER BY createdAtEpochMillis DESC
+            SELECT message.id, message.threadId AS roomId, message.role, message.deliveryState,
+                   author.authorParticipantId, participant.kind AS authorKind,
+                   participant.displayName AS authorDisplayName, length(message.body) AS bodyChars,
+                   message.createdAtEpochMillis, message.completedAtEpochMillis, message.failureReason
+            FROM chat_messages AS message
+            LEFT JOIN chat_message_authors AS author ON author.messageId = message.id
+            LEFT JOIN chat_participants AS participant ON participant.id = author.authorParticipantId
+            WHERE message.deliveryState = 'STREAMING'
+            ORDER BY message.createdAtEpochMillis DESC
             LIMIT 40
             """.trimIndent()
 
-        val RECENT_THREADS_SQL =
+        val RECENT_ROOMS_SQL =
             """
-            SELECT id, title, pinnedAtEpochMillis, archivedAtEpochMillis,
-                   titleEditedByUser, createdAtEpochMillis, updatedAtEpochMillis
+            SELECT id, title, roomKind, pinnedAtEpochMillis, archivedAtEpochMillis,
+                   titleEditedByUser, remoteId, revision, syncState,
+                   createdAtEpochMillis, updatedAtEpochMillis
             FROM chat_threads
             ORDER BY updatedAtEpochMillis DESC
             LIMIT 40
             """.trimIndent()
 
+        val RECENT_ROOM_MEMBERS_SQL =
+            """
+            SELECT membership.roomId, membership.participantId,
+                   participant.kind AS participantKind,
+                   participant.displayName AS participantDisplayName,
+                   membership.role, membership.canPost, membership.aiResponsePolicy,
+                   membership.joinedAtEpochMillis, membership.leftAtEpochMillis,
+                   membership.remoteId, membership.revision, membership.syncState
+            FROM room_memberships AS membership
+            LEFT JOIN chat_participants AS participant ON participant.id = membership.participantId
+            ORDER BY membership.joinedAtEpochMillis DESC
+            LIMIT 120
+            """.trimIndent()
+
         val RECENT_MESSAGES_SQL =
             """
-            SELECT id, threadId, role, deliveryState, length(body) AS bodyChars,
-                   substr(replace(replace(body, char(10), ' '), char(13), ' '), 1, 220) AS bodyPreview,
-                   createdAtEpochMillis, completedAtEpochMillis, failureReason
-            FROM chat_messages
-            ORDER BY createdAtEpochMillis DESC
+            SELECT message.id, message.threadId AS roomId, message.role, message.deliveryState,
+                   author.authorParticipantId, participant.kind AS authorKind,
+                   participant.displayName AS authorDisplayName, length(message.body) AS bodyChars,
+                   substr(replace(replace(message.body, char(10), ' '), char(13), ' '), 1, 220) AS bodyPreview,
+                   message.remoteId, message.revision, message.syncState,
+                   message.createdAtEpochMillis, message.completedAtEpochMillis, message.failureReason
+            FROM chat_messages AS message
+            LEFT JOIN chat_message_authors AS author ON author.messageId = message.id
+            LEFT JOIN chat_participants AS participant ON participant.id = author.authorParticipantId
+            ORDER BY message.createdAtEpochMillis DESC
             LIMIT 80
+            """.trimIndent()
+
+        val SMS_SENDER_ROOMS_SQL =
+            """
+            SELECT senderAddress, threadId AS roomId, participantId,
+                   createdAtEpochMillis, updatedAtEpochMillis
+            FROM sms_sender_threads
+            ORDER BY updatedAtEpochMillis DESC
+            LIMIT 40
+            """.trimIndent()
+
+        val RECENT_SMS_RECEIPTS_SQL =
+            """
+            SELECT id, inboundMessageKey, senderAddress, inboundBodySha256,
+                   inboundCharacterCount, inboundReceivedAtEpochMillis,
+                   threadId AS roomId, userMessageId, assistantMessageId, state,
+                   replyBodySha256, replyCharacterCount, smsPartCount,
+                   queuedAtEpochMillis, decidedAtEpochMillis, failureReason
+            FROM sms_auto_reply_receipts
+            ORDER BY decidedAtEpochMillis DESC
+            LIMIT 40
             """.trimIndent()
 
         val GENERATION_TRACES_SQL =
