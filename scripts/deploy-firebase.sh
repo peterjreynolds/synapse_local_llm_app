@@ -14,4 +14,5 @@ npx --yes firebase-tools@15.23.0 emulators:exec \
   'npm --prefix firebase test'
 npx --yes firebase-tools@15.23.0 deploy \
   --project "$project_id" \
-  --only firestore:rules,firestore:indexes,storage,functions
+  --force \
+  --only auth,firestore:rules,firestore:indexes,storage,functions
