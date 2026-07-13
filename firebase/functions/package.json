@@ -11,8 +11,8 @@
     "provision": "npm run build && node lib/provision.js"
   },
   "dependencies": {
-    "firebase-admin": "13.10.0",
-    "firebase-functions": "7.2.5"
+    "firebase-admin": "14.1.0",
+    "firebase-functions": "7.3.0-rc.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

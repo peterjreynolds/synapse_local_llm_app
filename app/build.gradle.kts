@@ -209,6 +209,7 @@ dependencies {
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-functions")
+    implementation("com.google.firebase:firebase-installations")
     implementation("com.google.firebase:firebase-messaging")
     implementation("com.google.firebase:firebase-storage")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

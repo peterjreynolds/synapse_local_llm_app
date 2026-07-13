@@ -184,16 +184,16 @@ test("rejects invalid messages and all client membership writes", async () => {
   );
 });
 
-test("binds FCM device tokens to the authenticated owner", async () => {
+test("binds FCM installation IDs to the authenticated owner", async () => {
   const peter = testEnvironment.authenticatedContext(PETER_UID).firestore();
   const peterDevice = doc(peter, "devices", "peter-device");
   await assertSucceeds(
     setDoc(peterDevice, {
       active: true,
       createdAt: serverTimestamp(),
+      installationId: "peter-firebase-installation-id",
       ownerUid: PETER_UID,
       platform: "ANDROID",
-      token: "peter-fcm-token-long-enough",
       updatedAt: serverTimestamp(),
     }),
   );
@@ -201,9 +201,9 @@ test("binds FCM device tokens to the authenticated owner", async () => {
     setDoc(doc(peter, "devices", "forged-device"), {
       active: true,
       createdAt: serverTimestamp(),
+      installationId: "trish-firebase-installation-id",
       ownerUid: TRISH_UID,
       platform: "ANDROID",
-      token: "trish-fcm-token-long-enough",
       updatedAt: serverTimestamp(),
     }),
   );

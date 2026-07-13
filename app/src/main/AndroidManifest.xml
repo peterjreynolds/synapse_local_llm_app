@@ -33,6 +33,9 @@
         android:roundIcon="@drawable/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Synapse">
+        <meta-data
+            android:name="firebase_messaging_installation_id_enabled"
+            android:value="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -50,6 +53,13 @@
             android:name=".SmsAutoReplyForegroundService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
+        <service
+            android:name=".SynapseFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
         <receiver
             android:name=".SmsAutoReplyReceiver"
             android:exported="true"

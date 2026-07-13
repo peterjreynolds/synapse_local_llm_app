@@ -26,8 +26,8 @@ interface ProfileDocument {
 
 interface DeviceDocument {
   active?: unknown;
+  installationId?: unknown;
   ownerUid?: unknown;
-  token?: unknown;
 }
 
 function requireAllowedProfile(
@@ -204,8 +204,9 @@ export const notifyRemoteMessage = onDocumentCreated(
           value: snapshot.data() as DeviceDocument,
         }))
         .filter(
-          (device): device is typeof device & {value: DeviceDocument & {token: string}} =>
-            typeof device.value.token === "string" && recipientUids.includes(String(device.value.ownerUid)),
+          (device): device is typeof device & {value: DeviceDocument & {installationId: string}} =>
+            typeof device.value.installationId === "string" &&
+            recipientUids.includes(String(device.value.ownerUid)),
         );
 
       let successCount = 0;
@@ -223,12 +224,12 @@ export const notifyRemoteMessage = onDocumentCreated(
             senderUid: message.senderUid,
             type: "SYNAPSE_CHAT_MESSAGE",
           },
-          tokens: deviceRecords.map((device) => device.value.token),
+          fids: deviceRecords.map((device) => device.value.installationId),
         });
         successCount = sendResult.successCount;
         failureCount = sendResult.failureCount;
 
-        const invalidTokenWrites = firestore.batch();
+        const invalidInstallationWrites = firestore.batch();
         sendResult.responses.forEach((response, index) => {
           const errorCode = response.error?.code;
           if (
@@ -237,14 +238,14 @@ export const notifyRemoteMessage = onDocumentCreated(
           ) {
             const deviceRecord = deviceRecords[index];
             if (deviceRecord) {
-              invalidTokenWrites.update(deviceRecord.reference, {
+              invalidInstallationWrites.update(deviceRecord.reference, {
                 active: false,
                 disabledAt: FieldValue.serverTimestamp(),
               });
             }
           }
         });
-        await invalidTokenWrites.commit();
+        await invalidInstallationWrites.commit();
       }
 
       const updatedAt = Timestamp.now();

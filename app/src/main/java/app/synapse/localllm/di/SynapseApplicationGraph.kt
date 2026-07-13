@@ -3,6 +3,7 @@ package app.synapse.localllm.di
 import android.content.Context
 import androidx.room.Room
 import app.synapse.localllm.BuildConfig
+import app.synapse.localllm.application.RemoteDeviceRegistrationCoordinator
 import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.application.SmsAutoReplyCoordinator
 import app.synapse.localllm.data.chat.RoomConversationRepository
@@ -28,6 +29,10 @@ import app.synapse.localllm.data.memory.RecentUserTurnMemoryCandidateResolver
 import app.synapse.localllm.data.memory.RuleBasedMemoryCandidateProposer
 import app.synapse.localllm.data.memory.RoomMemoryRepository
 import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
+import app.synapse.localllm.data.remote.FirebaseRemoteAuthenticationGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteDirectoryGateway
 import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
 import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
 import app.synapse.localllm.data.runtime.AndroidEmbeddedModelStore
@@ -67,6 +72,13 @@ import app.synapse.localllm.domain.time.SynapseClock
 import app.synapse.localllm.domain.time.SystemSynapseClock
 import app.synapse.localllm.domain.update.AppUpdateDownloader
 import app.synapse.localllm.domain.update.AppUpdateRepository
+import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.installations.FirebaseInstallations
+import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.storage.FirebaseStorage
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -76,6 +88,10 @@ import okhttp3.OkHttpClient
 class SynapseApplicationGraph private constructor(context: Context) {
     private val applicationContext = context.applicationContext
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val firebaseApp = FirebaseApp.getApps(applicationContext).firstOrNull()
+        ?: checkNotNull(FirebaseApp.initializeApp(applicationContext)) {
+            "Synapse Chat requires the bundled Firebase configuration."
+        }
 
     val clock: SynapseClock = SystemSynapseClock()
     val idFactory = SynapseIdFactory()
@@ -96,6 +112,43 @@ class SynapseApplicationGraph private constructor(context: Context) {
     ).build()
 
     val remoteAccountSessionController = RemoteAccountSessionCoordinator()
+    private val firebaseAuth = FirebaseAuth.getInstance(firebaseApp)
+    private val firestore = FirebaseFirestore.getInstance(firebaseApp)
+    private val firebaseFunctions = FirebaseFunctions.getInstance(firebaseApp, FIREBASE_FUNCTIONS_REGION)
+    private val firebaseInstallations = FirebaseInstallations.getInstance(firebaseApp)
+    private val firebaseMessaging = FirebaseMessaging.getInstance()
+    private val firebaseStorage = FirebaseStorage.getInstance(firebaseApp)
+
+    val remoteAuthenticationGateway = FirebaseRemoteAuthenticationGateway(firebaseAuth)
+    val remoteDirectoryGateway =
+        FirebaseRemoteDirectoryGateway(
+            context = applicationContext,
+            firebaseAuth = firebaseAuth,
+            firestore = firestore,
+            storage = firebaseStorage,
+            sessionController = remoteAccountSessionController,
+        )
+    val remoteConversationGateway =
+        FirebaseRemoteConversationGateway(
+            firebaseAuth = firebaseAuth,
+            firestore = firestore,
+            functions = firebaseFunctions,
+            sessionController = remoteAccountSessionController,
+        )
+    val remoteDeviceRegistrationGateway =
+        FirebaseRemoteDeviceRegistrationGateway(
+            firebaseAuth = firebaseAuth,
+            firestore = firestore,
+            firebaseInstallations = firebaseInstallations,
+            firebaseMessaging = firebaseMessaging,
+            sessionController = remoteAccountSessionController,
+        )
+    val remoteDeviceRegistrationCoordinator =
+        RemoteDeviceRegistrationCoordinator(
+            authenticationGateway = remoteAuthenticationGateway,
+            deviceRegistrationGateway = remoteDeviceRegistrationGateway,
+            applicationScope = applicationScope,
+        )
     val remoteChatCacheRepository =
         RoomRemoteChatCacheRepository(
             database = database,
@@ -238,5 +291,6 @@ class SynapseApplicationGraph private constructor(context: Context) {
             SynapseApplicationGraph(context)
 
         private const val DATABASE_NAME = "synapse.db"
+        private const val FIREBASE_FUNCTIONS_REGION = "northamerica-northeast1"
     }
 }
