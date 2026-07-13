@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("com.android.legacy-kapt")
+    id("com.google.gms.google-services")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jlleitschuh.gradle.ktlint")
@@ -181,7 +182,9 @@ ktlint {
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.02.00")
+    val firebaseBom = platform("com.google.firebase:firebase-bom:34.15.0")
     implementation(composeBom)
+    implementation(firebaseBom)
     androidTestImplementation(composeBom)
 
     implementation("androidx.activity:activity-compose:1.12.2")
@@ -203,8 +206,14 @@ dependencies {
     kapt("androidx.room:room-compiler:2.8.4")
 
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.firebase:firebase-functions")
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("com.google.firebase:firebase-storage")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
 
     testImplementation("junit:junit:4.13.2")

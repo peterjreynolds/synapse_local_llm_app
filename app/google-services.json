@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "254793367634",
+    "project_id": "synapse-chat-pjr-2026",
+    "storage_bucket": "synapse-chat-pjr-2026.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:254793367634:android:a6e07ea950b2008e019f8b",
+        "android_client_info": {
+          "package_name": "app.synapse.localllm.debug"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGhYZG-CyYyss8oeo541R1_1YmaljMnno"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
