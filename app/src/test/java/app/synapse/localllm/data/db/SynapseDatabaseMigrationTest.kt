@@ -183,7 +183,7 @@ class SynapseDatabaseMigrationTest {
     }
 
     @Test
-    fun migration8To12PreservesRowsAndBackfillsRoomParticipantsAndAuthors() {
+    fun migration8To13PreservesRowsAndBackfillsRoomParticipantsAndAuthors() {
         val helper = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(TEST_DATABASE_NAME)
@@ -221,13 +221,14 @@ class SynapseDatabaseMigrationTest {
                 SYNAPSE_DATABASE_MIGRATION_9_10,
                 SYNAPSE_DATABASE_MIGRATION_10_11,
                 SYNAPSE_DATABASE_MIGRATION_11_12,
+                SYNAPSE_DATABASE_MIGRATION_12_13,
             )
             .allowMainThreadQueries()
             .build()
         try {
             val migratedDatabase = database.openHelper.writableDatabase
 
-            assertEquals(12, migratedDatabase.version)
+            assertEquals(13, migratedDatabase.version)
             assertEquals(legacyRowsBeforeMigration, readVersion8LegacyRows(migratedDatabase))
             assertMainThreadPreservedWithVersion9Defaults(migratedDatabase)
             assertArchivedThreadPreserved(migratedDatabase)
@@ -243,7 +244,7 @@ class SynapseDatabaseMigrationTest {
     }
 
     @Test
-    fun migration9To12AddsAccountScopedRemoteCacheWithoutChangingLocalState() = runTest {
+    fun migration9To13AddsAccountScopedRemoteCacheWithoutChangingLocalState() = runTest {
         val settingsStore = SynapseSettingsStore(context)
         settingsStore.updateMemoryWritesEnabled(false)
         settingsStore.updateSmsAutoReplyEnabled(true)
@@ -286,13 +287,14 @@ class SynapseDatabaseMigrationTest {
                 SYNAPSE_DATABASE_MIGRATION_9_10,
                 SYNAPSE_DATABASE_MIGRATION_10_11,
                 SYNAPSE_DATABASE_MIGRATION_11_12,
+                SYNAPSE_DATABASE_MIGRATION_12_13,
             )
             .allowMainThreadQueries()
             .build()
         try {
             val migratedDatabase = database.openHelper.writableDatabase
 
-            assertEquals(12, migratedDatabase.version)
+            assertEquals(13, migratedDatabase.version)
             assertEquals(version9RowsBeforeMigration, readVersion9LocalRows(migratedDatabase))
             assertEquals(settingsBeforeMigration, settingsStore.settingsFlow.first())
             version12RemoteCacheTables.forEach { tableName ->
@@ -305,7 +307,7 @@ class SynapseDatabaseMigrationTest {
     }
 
     @Test
-    fun migration10To12PreservesRemoteMessagesAndFlattensCurrentMembership() {
+    fun migration10To13PreservesRemoteMessagesAndFlattensCurrentMembership() {
         val helper = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(TEST_DATABASE_NAME)
@@ -343,13 +345,14 @@ class SynapseDatabaseMigrationTest {
             .addMigrations(
                 SYNAPSE_DATABASE_MIGRATION_10_11,
                 SYNAPSE_DATABASE_MIGRATION_11_12,
+                SYNAPSE_DATABASE_MIGRATION_12_13,
             )
             .allowMainThreadQueries()
             .build()
         try {
             val migratedDatabase = database.openHelper.writableDatabase
 
-            assertEquals(12, migratedDatabase.version)
+            assertEquals(13, migratedDatabase.version)
             migratedDatabase.query(
                 """
                 SELECT roomKind, directKey, peerUid, title, avatarObjectPath,
@@ -379,7 +382,8 @@ class SynapseDatabaseMigrationTest {
             migratedDatabase.query(
                 """
                 SELECT replyToMessageId, editedAtEpochMillis, deletedAtEpochMillis,
-                       revision, reactionCountsJson, deliveredToCount, readByCount
+                       revision, reactionCountsJson, deliveredToCount, readByCount,
+                       attachmentsJson
                 FROM remote_message_cache
                 WHERE accountUid = 'peter-uid' AND remoteMessageId = 'message-1'
                 """.trimIndent(),
@@ -392,6 +396,7 @@ class SynapseDatabaseMigrationTest {
                 assertEquals("{}", cursor.getString(4))
                 assertEquals(0, cursor.getInt(5))
                 assertEquals(0, cursor.getInt(6))
+                assertEquals("[]", cursor.getString(7))
             }
             assertEquals(
                 0L,

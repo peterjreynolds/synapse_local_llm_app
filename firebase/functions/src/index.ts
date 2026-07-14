@@ -67,6 +67,15 @@ export {
 } from "./groupRoomMutation.js";
 export {getGroupRoomDetails} from "./groupRoomQuery.js";
 export {
+  cleanupDeletedMessageAttachments,
+  cleanupExpiredAttachmentUploads,
+} from "./attachmentCleanup.js";
+export {
+  cancelRemoteAttachment,
+  finalizeRemoteAttachment,
+  prepareRemoteAttachment,
+} from "./attachmentMutation.js";
+export {
   acknowledgeRemoteMessages,
   deleteRemoteMessage,
   editRemoteMessage,

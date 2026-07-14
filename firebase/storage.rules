@@ -34,6 +34,29 @@ service firebase.storage {
         && firestore.get(membershipPath).data.role in ['OWNER', 'ADMIN'];
     }
 
+    function attachmentUpload(attachmentId) {
+      return firestore.get(
+        /databases/(default)/documents/attachmentUploads/$(attachmentId)
+      ).data;
+    }
+
+    function validAttachmentUpload(roomId, messageId, attachmentId, variant) {
+      let uploadPath = /databases/(default)/documents/attachmentUploads/$(attachmentId);
+      let upload = attachmentUpload(attachmentId);
+      return isActiveRoomMember(roomId)
+        && firestore.exists(uploadPath)
+        && upload.actorUid == request.auth.uid
+        && upload.attachmentId == attachmentId
+        && upload.roomId == roomId
+        && upload.messageId == messageId
+        && upload.status == 'PENDING'
+        && request.resource.metadata.attachmentId == attachmentId
+        && request.resource.metadata.messageId == messageId
+        && request.resource.metadata.ownerUid == request.auth.uid
+        && request.resource.metadata.roomId == roomId
+        && request.resource.metadata.variant == variant;
+    }
+
     match /avatars/{uid}/{fileName} {
       allow read: if isActiveUser() && isVisibleProfile(uid);
       allow create, update: if isActiveUser()
@@ -52,6 +75,37 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
       allow delete: if isGroupAdministrator(roomId);
+    }
+
+    match /roomAttachments/{roomId}/{messageId}/{attachmentId}/{variant} {
+      allow read: if isActiveRoomMember(roomId)
+        && firestore.exists(
+          /databases/(default)/documents/attachmentUploads/$(attachmentId)
+        )
+        && attachmentUpload(attachmentId).roomId == roomId
+        && attachmentUpload(attachmentId).messageId == messageId
+        && attachmentUpload(attachmentId).status == 'ATTACHED';
+      allow create, update: if attachmentId.matches(
+          'attachment-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
+        )
+        && messageId.matches('[A-Za-z0-9_-]{1,128}')
+        && validAttachmentUpload(roomId, messageId, attachmentId, variant)
+        && (
+          (
+            variant == 'content'
+            && request.resource.size == attachmentUpload(attachmentId).byteCount
+            && request.resource.contentType == attachmentUpload(attachmentId).mimeType
+          )
+          ||
+          (
+            variant == 'thumbnail'
+            && attachmentUpload(attachmentId).kind == 'IMAGE'
+            && request.resource.size > 0
+            && request.resource.size <= 256 * 1024
+            && request.resource.contentType == 'image/jpeg'
+          )
+        );
+      allow delete: if false;
     }
 
     match /{allPaths=**} {

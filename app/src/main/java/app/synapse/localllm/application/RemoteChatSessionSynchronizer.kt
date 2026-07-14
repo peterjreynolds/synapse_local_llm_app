@@ -120,6 +120,7 @@ class RemoteChatSessionSynchronizer(
                         senderUid = operation.senderUid,
                         authorKind = HUMAN_AUTHOR_KIND,
                         body = operation.body,
+                        attachments = operation.attachments,
                         replyToMessageId = operation.replyToMessageId,
                         editedAt = null,
                         deletedAt = null,

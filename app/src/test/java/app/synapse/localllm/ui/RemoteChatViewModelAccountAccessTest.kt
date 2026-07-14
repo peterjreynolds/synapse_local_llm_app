@@ -65,12 +65,14 @@ class RemoteChatViewModelAccountAccessTest {
                 val sessionSynchronizer = mockk<RemoteChatSessionSynchronizer>(relaxed = true)
                 val viewModel = RemoteChatViewModel(
                     authenticationGateway = authenticationGateway,
+                    attachmentGateway = mockk(relaxed = true),
                     directoryGateway = directoryGateway,
                     conversationGateway = conversationGateway,
                     deviceRegistrationGateway = deviceRegistrationGateway,
                     cacheRepository = cacheRepository,
                     sessionSynchronizer = sessionSynchronizer,
                     roomVisibilityTracker = RemoteRoomVisibilityTracker(),
+                    voiceNoteRecorder = mockk(relaxed = true),
                     idFactory = SynapseIdFactory(),
                     clock = object : SynapseClock {
                         override fun now(): Instant = Instant.EPOCH

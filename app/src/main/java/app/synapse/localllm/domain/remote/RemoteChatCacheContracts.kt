@@ -132,6 +132,7 @@ data class RemoteCachedMessage(
     val senderUid: RemoteProfileUid,
     val authorKind: String,
     val body: String,
+    val attachments: List<RemoteCachedAttachment> = emptyList(),
     val replyToMessageId: RemoteMessageId?,
     val editedAt: Instant?,
     val deletedAt: Instant?,
@@ -151,7 +152,12 @@ data class RemoteCachedMessage(
             "Remote reaction identifiers are invalid."
         }
         require(reactionCounts.values.all { count -> count > 0 }) { "Remote reaction counts must be positive." }
-        require(deletedAt != null || body.isNotBlank()) { "Active remote messages require a body." }
+        require(deletedAt != null || body.isNotBlank() || attachments.isNotEmpty()) {
+            "Active remote messages require text or an attachment."
+        }
+        require(attachments.size <= 8 && attachments.distinctBy(RemoteCachedAttachment::attachmentId).size == attachments.size) {
+            "Remote message attachments must be unique and bounded."
+        }
     }
 }
 
@@ -163,6 +169,7 @@ data class RemoteMessageOutboxOperation(
     val idempotencyKey: RemoteIdempotencyKey,
     val senderUid: RemoteProfileUid,
     val body: String,
+    val attachments: List<RemoteCachedAttachment> = emptyList(),
     val replyToMessageId: RemoteMessageId?,
     val state: RemoteOutboxState,
     val attemptCount: Int,

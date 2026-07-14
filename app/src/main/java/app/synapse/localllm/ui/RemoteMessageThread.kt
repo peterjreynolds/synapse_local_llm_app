@@ -1,6 +1,12 @@
 package app.synapse.localllm.ui
 
+import android.Manifest
 import android.content.ClipData
+import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledIconButton
@@ -45,12 +52,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
+import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
@@ -67,6 +76,19 @@ internal fun RemoteMessageThread(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onComposerChanged: (String) -> Unit,
+    onAttachmentSelected: (String) -> Unit,
+    onRetryAttachment: (RemoteAttachmentId) -> Unit,
+    onCancelAttachment: (RemoteAttachmentId) -> Unit,
+    onDownloadAttachment: (
+        RemoteCachedMessage,
+        RemoteAttachmentId,
+        Boolean,
+    ) -> Unit,
+    onCancelAttachmentDownload: (RemoteAttachmentId, Boolean) -> Unit,
+    onStartVoiceNote: () -> Unit,
+    onFinishVoiceNote: () -> Unit,
+    onCancelVoiceNote: () -> Unit,
+    onVoicePermissionDenied: () -> Unit,
     onReply: (RemoteMessageId) -> Unit,
     onCancelReply: () -> Unit,
     onEdit: (RemoteCachedMessage, String) -> Unit,
@@ -80,6 +102,18 @@ internal fun RemoteMessageThread(
     groupViewModel: RemoteGroupViewModel,
 ) {
     var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
+    val context = LocalContext.current
+    val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        onAttachmentSelected(uri.toString())
+    }
+    val microphonePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        granted ->
+        if (granted) onStartVoiceNote() else onVoicePermissionDenied()
+    }
     val listState = rememberLazyListState()
     val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room?.peerUid }
     val currentProfile = state.profiles.firstOrNull { profile ->
@@ -94,7 +128,9 @@ internal fun RemoteMessageThread(
     }
 
     fun submit() {
-        if (state.composerText.isNotBlank() && !state.isActionRunning) {
+        val attachmentsReady = state.pendingAttachments.isNotEmpty() &&
+            state.pendingAttachments.all { attachment -> attachment.state == RemoteAttachmentTransferState.READY }
+        if ((state.composerText.isNotBlank() || attachmentsReady) && !state.isActionRunning) {
             onSend(state.composerText)
         }
     }
@@ -219,6 +255,11 @@ internal fun RemoteMessageThread(
                         onEdit = { body -> onEdit(message, body) },
                         onDelete = { onDelete(message) },
                         onReaction = { emoji -> onReaction(message, emoji) },
+                        attachmentDownloads = state.attachmentDownloads,
+                        onDownloadAttachment = { attachmentId, thumbnail ->
+                            onDownloadAttachment(message, attachmentId, thumbnail)
+                        },
+                        onCancelAttachmentDownload = onCancelAttachmentDownload,
                         onJumpToReply = { replyId -> onJumpToMessage(replyId) },
                     )
                 }
@@ -240,6 +281,22 @@ internal fun RemoteMessageThread(
                     TextButton(onClick = onCancelReply) { Text("Cancel") }
                 }
             }
+            RemotePendingAttachmentList(
+                attachments = state.pendingAttachments,
+                onRetry = onRetryAttachment,
+                onCancel = onCancelAttachment,
+            )
+            if (state.isRecordingVoiceNote) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Recording voice note…", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = onCancelVoiceNote) { Text("Cancel") }
+                    TextButton(onClick = onFinishVoiceNote) { Text("Finish") }
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -247,6 +304,24 @@ internal fun RemoteMessageThread(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                TextButton(
+                    onClick = {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            onStartVoiceNote()
+                        } else {
+                            microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    enabled = !state.isRecordingVoiceNote && !state.isActionRunning,
+                ) { Text("Voice") }
+                IconButton(
+                    onClick = { attachmentPicker.launch(REMOTE_ATTACHMENT_MIME_TYPES) },
+                    enabled = !state.isActionRunning && state.pendingAttachments.size < 8,
+                ) {
+                    Icon(Icons.Default.AttachFile, contentDescription = "Attach image, document, or audio")
+                }
                 OutlinedTextField(
                     value = state.composerText,
                     onValueChange = onComposerChanged,
@@ -262,7 +337,15 @@ internal fun RemoteMessageThread(
                 )
                 FilledIconButton(
                     onClick = ::submit,
-                    enabled = state.composerText.isNotBlank() && !state.isActionRunning,
+                    enabled = (
+                        state.composerText.isNotBlank() ||
+                            (
+                                state.pendingAttachments.isNotEmpty() &&
+                                    state.pendingAttachments.all { attachment ->
+                                        attachment.state == RemoteAttachmentTransferState.READY
+                                    }
+                            )
+                        ) && !state.isActionRunning,
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
                 }
@@ -282,6 +365,9 @@ private fun RemoteMessageBubble(
     onEdit: (String) -> Unit,
     onDelete: () -> Unit,
     onReaction: (String) -> Unit,
+    attachmentDownloads: Map<String, RemoteAttachmentDownloadUi>,
+    onDownloadAttachment: (RemoteAttachmentId, Boolean) -> Unit,
+    onCancelAttachmentDownload: (RemoteAttachmentId, Boolean) -> Unit,
     onJumpToReply: (RemoteMessageId) -> Unit,
 ) {
     val clipboard = LocalClipboard.current
@@ -328,6 +414,16 @@ private fun RemoteMessageBubble(
                     Spacer(Modifier.height(6.dp))
                 }
                 Text(if (message.deletedAt != null) "Message deleted" else message.body)
+                if (message.deletedAt == null) {
+                    message.attachments.forEach { attachment ->
+                        RemoteMessageAttachmentCard(
+                            attachment = attachment,
+                            downloads = attachmentDownloads,
+                            onDownload = onDownloadAttachment,
+                            onCancelDownload = onCancelAttachmentDownload,
+                        )
+                    }
+                }
                 if (message.editedAt != null && message.deletedAt == null) {
                     Text("Edited", style = MaterialTheme.typography.labelSmall)
                 }

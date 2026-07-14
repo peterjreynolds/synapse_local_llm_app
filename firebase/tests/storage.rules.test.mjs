@@ -14,6 +14,8 @@ const PETER_UID = "peter-uid";
 const TRISH_UID = "trish-uid";
 const MALLORY_UID = "mallory-uid";
 const GROUP_ROOM_ID = `group_${"a".repeat(32)}`;
+const ATTACHMENT_ID = "attachment-12345678-1234-4123-8123-123456789abc";
+const MESSAGE_ID = "message-123";
 const storageRules = fs.readFileSync(new URL("../storage.rules", import.meta.url), "utf8");
 
 let testEnvironment;
@@ -58,6 +60,40 @@ async function seedProfiles() {
       uid: TRISH_UID,
     });
   });
+}
+
+async function seedAttachmentUpload({
+  actorUid = PETER_UID,
+  byteCount = 3,
+  kind = "DOCUMENT",
+  mimeType = "application/pdf",
+  status = "PENDING",
+} = {}) {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "attachmentUploads", ATTACHMENT_ID), {
+      actorUid,
+      attachmentId: ATTACHMENT_ID,
+      byteCount,
+      contentObjectPath: `roomAttachments/${GROUP_ROOM_ID}/${MESSAGE_ID}/${ATTACHMENT_ID}/content`,
+      kind,
+      messageId: MESSAGE_ID,
+      mimeType,
+      roomId: GROUP_ROOM_ID,
+      status,
+      thumbnailObjectPath: kind === "IMAGE" ?
+        `roomAttachments/${GROUP_ROOM_ID}/${MESSAGE_ID}/${ATTACHMENT_ID}/thumbnail` : null,
+    });
+  });
+}
+
+function attachmentMetadata(variant) {
+  return {
+    attachmentId: ATTACHMENT_ID,
+    messageId: MESSAGE_ID,
+    ownerUid: PETER_UID,
+    roomId: GROUP_ROOM_ID,
+    variant,
+  };
 }
 
 function activeContext(uid) {
@@ -173,4 +209,66 @@ test("allows bounded group avatars only for active group administrators", async 
     );
   });
   await assertFails(getMetadata(ref(trishStorage, avatarPath)));
+});
+
+test("allows only the upload owner to write exact intent-bound attachment content", async () => {
+  await seedAttachmentUpload();
+  const attachmentPath = `roomAttachments/${GROUP_ROOM_ID}/${MESSAGE_ID}/${ATTACHMENT_ID}/content`;
+  const peterStorage = activeContext(PETER_UID).storage(BUCKET);
+  await assertSucceeds(uploadBytes(
+    ref(peterStorage, attachmentPath),
+    new Uint8Array([1, 2, 3]),
+    {contentType: "application/pdf", customMetadata: attachmentMetadata("content")},
+  ));
+  const trishStorage = activeContext(TRISH_UID).storage(BUCKET);
+  await assertFails(uploadBytes(
+    ref(trishStorage, attachmentPath),
+    new Uint8Array([1, 2, 3]),
+    {contentType: "application/pdf", customMetadata: attachmentMetadata("content")},
+  ));
+  await assertFails(uploadBytes(
+    ref(peterStorage, attachmentPath),
+    new Uint8Array([1, 2]),
+    {contentType: "application/pdf", customMetadata: attachmentMetadata("content")},
+  ));
+  await assertFails(uploadBytes(
+    ref(peterStorage, attachmentPath),
+    new Uint8Array([1, 2, 3]),
+    {contentType: "application/vnd.android.package-archive", customMetadata: attachmentMetadata("content")},
+  ));
+});
+
+test("requires bounded JPEG thumbnails and revokes reads after membership deletion", async () => {
+  await seedAttachmentUpload({kind: "IMAGE", mimeType: "image/png"});
+  const prefix = `roomAttachments/${GROUP_ROOM_ID}/${MESSAGE_ID}/${ATTACHMENT_ID}`;
+  const peterStorage = activeContext(PETER_UID).storage(BUCKET);
+  await assertSucceeds(uploadBytes(
+    ref(peterStorage, `${prefix}/content`),
+    new Uint8Array([1, 2, 3]),
+    {contentType: "image/png", customMetadata: attachmentMetadata("content")},
+  ));
+  await assertSucceeds(uploadBytes(
+    ref(peterStorage, `${prefix}/thumbnail`),
+    new Uint8Array([4, 5, 6]),
+    {contentType: "image/jpeg", customMetadata: attachmentMetadata("thumbnail")},
+  ));
+  await assertFails(uploadBytes(
+    ref(peterStorage, `${prefix}/thumbnail`),
+    new Uint8Array([4, 5, 6]),
+    {contentType: "image/png", customMetadata: attachmentMetadata("thumbnail")},
+  ));
+
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "attachmentUploads", ATTACHMENT_ID), {status: "ATTACHED"}, {merge: true});
+  });
+  const trishStorage = activeContext(TRISH_UID).storage(BUCKET);
+  await assertSucceeds(getMetadata(ref(trishStorage, `${prefix}/content`)));
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(
+      doc(context.firestore(), "rooms", GROUP_ROOM_ID, "members", TRISH_UID),
+      {active: false},
+      {merge: true},
+    );
+  });
+  await assertFails(getMetadata(ref(trishStorage, `${prefix}/content`)));
 });

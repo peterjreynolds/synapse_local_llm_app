@@ -35,6 +35,15 @@ test("narrows human notification messages", () => {
   assert.throws(() =>
     parseHumanMessagePayload({authorKind: "HUMAN", body: "", senderUid: "peter-uid"}),
   );
+  assert.deepEqual(
+    parseHumanMessagePayload({
+      attachmentIds: ["attachment-12345678-1234-4123-8123-123456789abc"],
+      authorKind: "HUMAN",
+      body: "",
+      senderUid: "peter-uid",
+    }),
+    {body: "Attachment", senderUid: "peter-uid"},
+  );
 });
 
 test("hashes provider event identifiers into safe receipt ids", () => {

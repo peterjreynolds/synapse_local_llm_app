@@ -21,12 +21,24 @@ test("normalizes bounded send and edit commands", () => {
       roomId,
     }),
     {
+      attachmentIds: [],
       body: "Hello",
       clientCreatedAtMillis: 1_000,
       messageId: "message-1",
       replyToMessageId: null,
       roomId,
     },
+  );
+  assert.equal(
+    parseSendRemoteMessageCommand({
+      attachmentIds: ["attachment-12345678-1234-4123-8123-123456789abc"],
+      body: "",
+      clientCreatedAtMillis: 1_000,
+      messageId: "message-2",
+      replyToMessageId: null,
+      roomId,
+    }).body,
+    "",
   );
   assert.equal(
     parseEditRemoteMessageCommand({

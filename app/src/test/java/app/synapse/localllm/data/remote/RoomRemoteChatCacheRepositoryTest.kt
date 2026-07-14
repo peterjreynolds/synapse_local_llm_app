@@ -10,7 +10,10 @@ import app.synapse.localllm.domain.remote.CacheRemoteRoomsCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
 import app.synapse.localllm.domain.remote.RemoteAccountSessionResource
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAttachmentId
+import app.synapse.localllm.domain.remote.RemoteAttachmentKind
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
+import app.synapse.localllm.domain.remote.RemoteCachedAttachment
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
@@ -188,6 +191,19 @@ class RoomRemoteChatCacheRepositoryTest {
         repository.activateAccount(PETER_ACCOUNT)
         cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
         val richMessage = remoteMessage(PETER_ACCOUNT, "message-rich", "key-rich", FixedClock.now()).copy(
+            attachments = listOf(
+                RemoteCachedAttachment(
+                    attachmentId = RemoteAttachmentId("attachment-12345678-1234-4123-8123-123456789abc"),
+                    displayName = "report.pdf",
+                    mimeType = "application/pdf",
+                    byteCount = 1_024,
+                    kind = RemoteAttachmentKind.DOCUMENT,
+                    durationMillis = null,
+                    contentObjectPath =
+                        "roomAttachments/direct-room/message-rich/attachment-12345678-1234-4123-8123-123456789abc/content",
+                    thumbnailObjectPath = null,
+                ),
+            ),
             replyToMessageId = RemoteMessageId("message-parent"),
             editedAt = FixedClock.now(),
             revision = 3,
@@ -292,6 +308,7 @@ class RoomRemoteChatCacheRepositoryTest {
                 idempotencyKey = cachedMessage.idempotencyKey,
                 senderUid = PETER_PROFILE,
                 body = cachedMessage.body,
+                attachments = cachedMessage.attachments,
                 replyToMessageId = null,
                 state = RemoteOutboxState.PENDING,
                 attemptCount = 0,

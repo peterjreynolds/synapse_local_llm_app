@@ -1,10 +1,13 @@
 package app.synapse.localllm.ui
 
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
+import app.synapse.localllm.domain.remote.RemoteAttachmentId
+import app.synapse.localllm.domain.remote.RemoteAttachmentSelection
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
+import app.synapse.localllm.domain.remote.RemoteCachedAttachment
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteProfileUid
@@ -17,6 +20,9 @@ data class RemoteChatUiState(
     val selectedRoomId: RemoteRoomId? = null,
     val messages: List<RemoteCachedMessage> = emptyList(),
     val composerText: String = "",
+    val pendingAttachments: List<RemotePendingAttachmentUi> = emptyList(),
+    val attachmentDownloads: Map<String, RemoteAttachmentDownloadUi> = emptyMap(),
+    val isRecordingVoiceNote: Boolean = false,
     val replyToMessageId: RemoteMessageId? = null,
     val ownReactions: Map<RemoteMessageId, Set<String>> = emptyMap(),
     val typingParticipantUids: List<RemoteProfileUid> = emptyList(),
@@ -26,3 +32,32 @@ data class RemoteChatUiState(
     val isActionRunning: Boolean = false,
     val notice: String? = null,
 )
+
+enum class RemoteAttachmentTransferState {
+    UPLOADING,
+    READY,
+    FAILED,
+}
+
+data class RemotePendingAttachmentUi(
+    val messageId: RemoteMessageId,
+    val selection: RemoteAttachmentSelection,
+    val state: RemoteAttachmentTransferState,
+    val transferredBytes: Long,
+    val uploadedAttachment: RemoteCachedAttachment?,
+    val failureReason: String?,
+)
+
+data class RemoteAttachmentDownloadUi(
+    val attachmentId: RemoteAttachmentId,
+    val thumbnail: Boolean,
+    val transferredBytes: Long,
+    val totalBytes: Long,
+    val localUri: String?,
+    val failureReason: String?,
+)
+
+internal fun remoteAttachmentDownloadKey(
+    attachmentId: RemoteAttachmentId,
+    thumbnail: Boolean,
+): String = "${attachmentId.raw}:${if (thumbnail) "thumbnail" else "content"}"

@@ -33,7 +33,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RemoteMessageDraftEntity::class,
         RemoteSyncCursorEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -856,6 +856,20 @@ val SYNAPSE_DATABASE_MIGRATION_11_12 =
             db.execSQL(
                 "CREATE INDEX IF NOT EXISTS index_remote_message_drafts_accountUid " +
                     "ON remote_message_drafts(accountUid)",
+            )
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_12_13 =
+    object : Migration(12, 13) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE remote_message_cache " +
+                    "ADD COLUMN attachmentsJson TEXT NOT NULL DEFAULT '[]'",
+            )
+            db.execSQL(
+                "ALTER TABLE remote_message_outbox " +
+                    "ADD COLUMN attachmentsJson TEXT NOT NULL DEFAULT '[]'",
             )
         }
     }

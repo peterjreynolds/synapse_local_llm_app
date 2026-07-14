@@ -15,8 +15,11 @@ import app.synapse.localllm.domain.remote.CacheRemoteRoomsCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAttachmentId
+import app.synapse.localllm.domain.remote.RemoteAttachmentKind
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
 import app.synapse.localllm.domain.remote.RemoteCacheMutationReceipt
+import app.synapse.localllm.domain.remote.RemoteCachedAttachment
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
@@ -43,6 +46,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import org.json.JSONArray
 import org.json.JSONObject
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -360,6 +364,7 @@ private fun RemoteCachedMessage.toEntity(cachedAt: Instant): RemoteMessageCacheE
         senderUid = senderUid.raw,
         authorKind = authorKind,
         body = body,
+        attachmentsJson = encodeAttachments(attachments),
         replyToMessageId = replyToMessageId?.raw,
         editedAtEpochMillis = editedAt?.toEpochMilli(),
         deletedAtEpochMillis = deletedAt?.toEpochMilli(),
@@ -383,6 +388,7 @@ private fun RemoteMessageCacheEntity.toDomain(): RemoteCachedMessage =
         senderUid = RemoteProfileUid(senderUid),
         authorKind = authorKind,
         body = body,
+        attachments = decodeAttachments(attachmentsJson),
         replyToMessageId = replyToMessageId?.let(::RemoteMessageId),
         editedAt = editedAtEpochMillis?.let(Instant::ofEpochMilli),
         deletedAt = deletedAtEpochMillis?.let(Instant::ofEpochMilli),
@@ -405,6 +411,7 @@ private fun RemoteMessageOutboxOperation.toEntity(): RemoteMessageOutboxEntity =
         idempotencyKey = idempotencyKey.raw,
         senderUid = senderUid.raw,
         body = body,
+        attachmentsJson = encodeAttachments(attachments),
         replyToMessageId = replyToMessageId?.raw,
         state = state.name,
         attemptCount = attemptCount,
@@ -432,6 +439,55 @@ private fun RemoteMessageDraftEntity.toDomain(): RemoteMessageDraft =
 private fun encodeReactionCounts(reactionCounts: Map<String, Int>): String =
     JSONObject(reactionCounts.toSortedMap()).toString()
 
+private fun encodeAttachments(attachments: List<RemoteCachedAttachment>): String =
+    JSONArray().apply {
+        attachments.forEach { attachment ->
+            put(
+                JSONObject()
+                    .put("attachmentId", attachment.attachmentId.raw)
+                    .put("byteCount", attachment.byteCount)
+                    .put("contentObjectPath", attachment.contentObjectPath)
+                    .put("displayName", attachment.displayName)
+                    .put("durationMillis", attachment.durationMillis ?: JSONObject.NULL)
+                    .put("kind", attachment.kind.name)
+                    .put("mimeType", attachment.mimeType)
+                    .put("thumbnailObjectPath", attachment.thumbnailObjectPath ?: JSONObject.NULL),
+            )
+        }
+    }.toString()
+
+private fun decodeAttachments(encodedAttachments: String): List<RemoteCachedAttachment> {
+    val json = JSONArray(encodedAttachments)
+    require(json.length() <= 8) { "Cached remote attachments are not bounded." }
+    return buildList {
+        repeat(json.length()) { index ->
+            val attachment = json.getJSONObject(index)
+            add(
+                RemoteCachedAttachment(
+                    attachmentId = RemoteAttachmentId(attachment.getString("attachmentId")),
+                    displayName = attachment.getString("displayName"),
+                    mimeType = attachment.getString("mimeType"),
+                    byteCount = attachment.getLong("byteCount"),
+                    kind = RemoteAttachmentKind.valueOf(attachment.getString("kind")),
+                    durationMillis = attachment.optionalLong("durationMillis"),
+                    contentObjectPath = attachment.getString("contentObjectPath"),
+                    thumbnailObjectPath = attachment.optionalString("thumbnailObjectPath"),
+                ),
+            )
+        }
+    }.also { attachments ->
+        require(attachments.distinctBy(RemoteCachedAttachment::attachmentId).size == attachments.size) {
+            "Cached remote attachments contain duplicate identifiers."
+        }
+    }
+}
+
+private fun JSONObject.optionalLong(fieldName: String): Long? =
+    if (isNull(fieldName)) null else getLong(fieldName)
+
+private fun JSONObject.optionalString(fieldName: String): String? =
+    if (isNull(fieldName)) null else getString(fieldName)
+
 private fun decodeReactionCounts(encodedCounts: String): Map<String, Int> {
     val json = JSONObject(encodedCounts)
     return buildMap {
@@ -454,6 +510,7 @@ private fun RemoteMessageOutboxEntity.toDomain(): RemoteMessageOutboxOperation =
         idempotencyKey = RemoteIdempotencyKey(idempotencyKey),
         senderUid = RemoteProfileUid(senderUid),
         body = body,
+        attachments = decodeAttachments(attachmentsJson),
         replyToMessageId = replyToMessageId?.let(::RemoteMessageId),
         state = RemoteOutboxState.valueOf(state),
         attemptCount = attemptCount,

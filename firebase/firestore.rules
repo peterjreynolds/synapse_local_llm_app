@@ -149,6 +149,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /attachmentUploads/{attachmentId} {
+      allow read, write: if false;
+    }
+
     match /devices/{deviceId} {
       allow read, write: if false;
     }

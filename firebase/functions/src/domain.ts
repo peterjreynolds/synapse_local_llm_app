@@ -44,21 +44,33 @@ export function parseHumanMessagePayload(input: unknown): HumanMessagePayload {
   if (typeof input !== "object" || input === null) {
     throw new Error("Message payload must be an object.");
   }
-  const candidate = input as {authorKind?: unknown; body?: unknown; senderUid?: unknown};
+  const candidate = input as {
+    attachmentIds?: unknown;
+    authorKind?: unknown;
+    body?: unknown;
+    senderUid?: unknown;
+  };
   if (candidate.authorKind !== "HUMAN") {
     throw new Error("Only human messages trigger remote notifications.");
   }
   if (typeof candidate.senderUid !== "string" || candidate.senderUid.length === 0) {
     throw new Error("Message sender is invalid.");
   }
-  if (
-    typeof candidate.body !== "string" ||
-    candidate.body.trim().length === 0 ||
-    candidate.body.length > MESSAGE_BODY_LIMIT
-  ) {
+  const attachmentIds = candidate.attachmentIds ?? [];
+  if (!Array.isArray(attachmentIds) || attachmentIds.length > 8 || attachmentIds.some((attachmentId) =>
+    typeof attachmentId !== "string" || !/^attachment-[a-f0-9-]{36}$/.test(attachmentId)
+  ) || new Set(attachmentIds).size !== attachmentIds.length) {
+    throw new Error("Message attachments are invalid.");
+  }
+  if (typeof candidate.body !== "string" || candidate.body.length > MESSAGE_BODY_LIMIT) {
     throw new Error("Message body is invalid.");
   }
-  return {body: candidate.body, senderUid: candidate.senderUid};
+  const body = candidate.body.trim();
+  if (body.length === 0 && attachmentIds.length === 0) throw new Error("Message body is invalid.");
+  return {
+    body: body || (attachmentIds.length === 1 ? "Attachment" : `${attachmentIds.length} attachments`),
+    senderUid: candidate.senderUid,
+  };
 }
 
 export function buildNotificationReceiptId(eventId: string): string {

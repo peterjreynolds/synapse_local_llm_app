@@ -14,6 +14,8 @@ import app.synapse.localllm.domain.remote.LoadRemoteMessagesPageCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAttachmentGateway
+import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
@@ -35,6 +37,7 @@ import app.synapse.localllm.domain.remote.RemotePasswordChangeCommand
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteSignInCommand
+import app.synapse.localllm.domain.remote.RemoteVoiceNoteRecorder
 import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
 import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteProfileCommand
@@ -62,12 +65,14 @@ import kotlinx.coroutines.withTimeout
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteChatViewModel(
     private val authenticationGateway: RemoteAuthenticationGateway,
+    private val attachmentGateway: RemoteAttachmentGateway,
     private val directoryGateway: RemoteDirectoryGateway,
     private val conversationGateway: RemoteConversationGateway,
     private val deviceRegistrationGateway: RemoteDeviceRegistrationGateway,
     private val cacheRepository: RemoteChatCacheRepository,
     private val sessionSynchronizer: RemoteChatSessionSynchronizer,
     private val roomVisibilityTracker: RemoteRoomVisibilityTracker,
+    private val voiceNoteRecorder: RemoteVoiceNoteRecorder,
     private val idFactory: SynapseIdFactory,
     private val clock: SynapseClock,
     private val remoteLogoutCleanupTimeoutMillis: Long = REMOTE_LOGOUT_CLEANUP_TIMEOUT_MILLIS,
@@ -80,12 +85,31 @@ class RemoteChatViewModel(
     private var readAcknowledgementJob: Job? = null
     private var typingHeartbeatJob: Job? = null
     private var typingRoomId: RemoteRoomId? = null
+    private val attachmentTransferController = RemoteAttachmentTransferController(
+        coroutineScope = viewModelScope,
+        attachmentGateway = attachmentGateway,
+        voiceNoteRecorder = voiceNoteRecorder,
+        idFactory = idFactory,
+        clearNotice = { mutableUiState.update { state -> state.copy(notice = null) } },
+        publishFailureMessage = ::publishFailureMessage,
+    )
 
     val uiState: StateFlow<RemoteChatUiState> = mutableUiState
 
     init {
         require(remoteLogoutCleanupTimeoutMillis > 0L) {
             "Remote logout cleanup timeout must be positive."
+        }
+        viewModelScope.launch {
+            attachmentTransferController.state.collect { attachmentState ->
+                mutableUiState.update { state ->
+                    state.copy(
+                        pendingAttachments = attachmentState.pendingAttachments,
+                        attachmentDownloads = attachmentState.downloads,
+                        isRecordingVoiceNote = attachmentState.isRecordingVoiceNote,
+                    )
+                }
+            }
         }
         observeAuthentication()
     }
@@ -189,6 +213,7 @@ class RemoteChatViewModel(
     fun selectRoom(roomId: RemoteRoomId?) {
         val previousRoomId = selectedRoomId.value
         if (previousRoomId != roomId) {
+            resetAttachmentTransfers()
             stopTyping(previousRoomId)
             draftSaveJob?.cancel()
             readAcknowledgementJob?.cancel()
@@ -199,6 +224,9 @@ class RemoteChatViewModel(
             state.copy(
                 selectedRoomId = roomId,
                 composerText = "",
+                pendingAttachments = emptyList(),
+                attachmentDownloads = emptyMap(),
+                isRecordingVoiceNote = false,
                 replyToMessageId = null,
                 typingParticipantUids = emptyList(),
                 hasReachedMessageStart = false,
@@ -217,12 +245,23 @@ class RemoteChatViewModel(
 
     fun sendMessage(body: String) = launchAction {
         val normalizedBody = body.trim()
-        require(normalizedBody.isNotEmpty() && normalizedBody.length <= MESSAGE_BODY_LIMIT) {
-            "Message must contain 1-$MESSAGE_BODY_LIMIT characters."
+        val pendingAttachments = attachmentTransferController.state.value.pendingAttachments
+        require(
+            normalizedBody.length <= MESSAGE_BODY_LIMIT &&
+                (normalizedBody.isNotEmpty() || pendingAttachments.isNotEmpty()),
+        ) {
+            "Message must contain text or an attachment."
+        }
+        require(pendingAttachments.all { attachment -> attachment.state == RemoteAttachmentTransferState.READY }) {
+            "Wait for every attachment upload to finish or remove failed uploads."
         }
         val account = requireSignedInAccount()
         val roomId = selectedRoomId.value ?: throw IllegalArgumentException("Open a conversation first.")
-        val messageId = RemoteMessageId(idFactory.createChatMessageId().raw)
+        val attachments = attachmentTransferController.readyAttachments()
+        require(attachments.size == pendingAttachments.size) { "A ready attachment is missing its upload receipt." }
+        val messageId = attachmentTransferController.messageIdForSend {
+            RemoteMessageId(idFactory.createChatMessageId().raw)
+        }
         val idempotencyKey = RemoteIdempotencyKey(messageId.raw)
         val createdAt = clock.now()
         val replyToMessageId = mutableUiState.value.replyToMessageId
@@ -236,6 +275,7 @@ class RemoteChatViewModel(
                     senderUid = RemoteProfileUid(account.accountUid.raw),
                     authorKind = HUMAN_AUTHOR_KIND,
                     body = normalizedBody,
+                    attachments = attachments,
                     replyToMessageId = replyToMessageId,
                     editedAt = null,
                     deletedAt = null,
@@ -256,6 +296,7 @@ class RemoteChatViewModel(
                     idempotencyKey = idempotencyKey,
                     senderUid = RemoteProfileUid(account.accountUid.raw),
                     body = normalizedBody,
+                    attachments = attachments,
                     replyToMessageId = replyToMessageId,
                     state = RemoteOutboxState.PENDING,
                     attemptCount = 0,
@@ -266,8 +307,80 @@ class RemoteChatViewModel(
             ),
         )
         cacheRepository.clearDraft(account.accountUid, roomId)
-        mutableUiState.update { state -> state.copy(composerText = "", replyToMessageId = null) }
+        attachmentTransferController.completeSend()
+        mutableUiState.update { state ->
+            state.copy(composerText = "", replyToMessageId = null)
+        }
         stopTyping(roomId)
+    }
+
+    fun addAttachment(
+        sourceUri: String,
+        audioDurationMillis: Long? = null,
+        isVoiceNote: Boolean = false,
+    ) {
+        attachmentTransferController.addAttachment(
+            accountUid = mutableUiState.value.account?.accountUid,
+            roomId = selectedRoomId.value,
+            sourceUri = sourceUri,
+            audioDurationMillis = audioDurationMillis,
+            isVoiceNote = isVoiceNote,
+        )
+    }
+
+    fun startVoiceNoteRecording() {
+        attachmentTransferController.startVoiceNoteRecording(selectedRoomId.value)
+    }
+
+    fun finishVoiceNoteRecording() {
+        attachmentTransferController.finishVoiceNoteRecording(
+            accountUid = mutableUiState.value.account?.accountUid,
+            roomId = selectedRoomId.value,
+        )
+    }
+
+    fun cancelVoiceNoteRecording() {
+        attachmentTransferController.cancelVoiceNoteRecording()
+    }
+
+    fun reportVoiceNotePermissionDenied() {
+        publishFailureMessage("Microphone permission was denied. Grant it to record voice notes.")
+    }
+
+    fun retryAttachment(attachmentId: RemoteAttachmentId) {
+        attachmentTransferController.retryAttachment(
+            accountUid = mutableUiState.value.account?.accountUid,
+            roomId = selectedRoomId.value,
+            attachmentId = attachmentId,
+        )
+    }
+
+    fun cancelAttachment(attachmentId: RemoteAttachmentId) {
+        attachmentTransferController.cancelAttachment(
+            accountUid = mutableUiState.value.account?.accountUid,
+            roomId = selectedRoomId.value,
+            attachmentId = attachmentId,
+        )
+    }
+
+    fun downloadAttachment(
+        message: RemoteCachedMessage,
+        attachmentId: RemoteAttachmentId,
+        thumbnail: Boolean,
+    ) {
+        attachmentTransferController.downloadAttachment(
+            accountUid = mutableUiState.value.account?.accountUid,
+            message = message,
+            attachmentId = attachmentId,
+            thumbnail = thumbnail,
+        )
+    }
+
+    fun cancelAttachmentDownload(
+        attachmentId: RemoteAttachmentId,
+        thumbnail: Boolean,
+    ) {
+        attachmentTransferController.cancelDownload(attachmentId, thumbnail)
     }
 
     fun updateComposerText(body: String) {
@@ -425,6 +538,7 @@ class RemoteChatViewModel(
     }
 
     private suspend fun handleResolvingAuthentication() {
+        clearAttachmentSession()
         cacheRepository.clearActiveAccount()
         mutableUiState.value = RemoteChatUiState(
             authenticationState = RemoteAuthenticationState.Resolving,
@@ -432,6 +546,7 @@ class RemoteChatViewModel(
     }
 
     private suspend fun handleInvalidSession(state: RemoteAuthenticationState.InvalidSession) {
+        clearAttachmentSession()
         cacheRepository.clearActiveAccount()
         mutableUiState.value = RemoteChatUiState(
             authenticationState = state,
@@ -440,6 +555,7 @@ class RemoteChatViewModel(
     }
 
     private suspend fun handleSignedOut() {
+        clearAttachmentSession()
         cacheRepository.clearActiveAccount()
         selectedRoomId.value = null
         roomVisibilityTracker.setSelectedRoom(null)
@@ -522,6 +638,8 @@ class RemoteChatViewModel(
                 awaitCancellation()
             }
         } finally {
+            resetAttachmentTransfers()
+            attachmentGateway.clearAccountCache(account.accountUid)
             stopTyping(selectedRoomId.value)
             draftSaveJob?.cancel()
             readAcknowledgementJob?.cancel()
@@ -536,6 +654,8 @@ class RemoteChatViewModel(
                     selectedRoomId = null,
                     messages = emptyList(),
                     composerText = "",
+                    pendingAttachments = emptyList(),
+                    attachmentDownloads = emptyMap(),
                     replyToMessageId = null,
                     ownReactions = emptyMap(),
                     typingParticipantUids = emptyList(),
@@ -632,6 +752,19 @@ class RemoteChatViewModel(
                 roomsBeingMarkedRead.remove(roomId)
             }
         }
+    }
+
+    private fun resetAttachmentTransfers() {
+        attachmentTransferController.reset(
+            accountUid = mutableUiState.value.account?.accountUid,
+            roomId = selectedRoomId.value,
+        )
+    }
+
+    private suspend fun clearAttachmentSession() {
+        val accountUid = mutableUiState.value.account?.accountUid
+        resetAttachmentTransfers()
+        if (accountUid != null) attachmentTransferController.clearAccountCache(accountUid)
     }
 
     private fun publishFailure(failure: Throwable) {
@@ -741,12 +874,14 @@ class RemoteChatViewModelFactory(
             return modelClass.cast(
                 RemoteChatViewModel(
                     authenticationGateway = graph.remoteAuthenticationGateway,
+                    attachmentGateway = graph.remoteAttachmentGateway,
                     directoryGateway = graph.remoteDirectoryGateway,
                     conversationGateway = graph.remoteConversationGateway,
                     deviceRegistrationGateway = graph.remoteDeviceRegistrationGateway,
                     cacheRepository = graph.remoteChatCacheRepository,
                     sessionSynchronizer = graph.remoteChatSessionSynchronizer,
                     roomVisibilityTracker = graph.remoteRoomVisibilityTracker,
+                    voiceNoteRecorder = graph.remoteVoiceNoteRecorder,
                     idFactory = graph.idFactory,
                     clock = graph.clock,
                 ),

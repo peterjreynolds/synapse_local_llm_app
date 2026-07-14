@@ -6,6 +6,9 @@ import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomReceipt
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAttachmentId
+import app.synapse.localllm.domain.remote.RemoteAttachmentKind
+import app.synapse.localllm.domain.remote.RemoteCachedAttachment
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteChatException
@@ -209,10 +212,14 @@ class FirebaseRemoteConversationGateway(
             "Remote message ID and idempotency key must match."
         }
         val normalizedBody = message.body.trim()
-        require(normalizedBody.isNotEmpty() && normalizedBody.length <= MESSAGE_BODY_LIMIT) {
-            "Message must contain 1-$MESSAGE_BODY_LIMIT characters."
+        require(
+            normalizedBody.length <= MESSAGE_BODY_LIMIT &&
+                (normalizedBody.isNotEmpty() || message.attachments.isNotEmpty()),
+        ) {
+            "Message must contain text or a ready attachment."
         }
         val payload = mapOf(
+            "attachmentIds" to message.attachments.map { attachment -> attachment.attachmentId.raw },
             "body" to normalizedBody,
             "clientCreatedAtMillis" to message.clientCreatedAt.toEpochMilli(),
             "messageId" to message.messageId.raw,
@@ -538,8 +545,9 @@ class FirebaseRemoteConversationGateway(
             if (contains("readByCount")) return null else 0
         }
         val reactionCounts = readReactionCounts(get("reactionCounts")) ?: return null
+        val attachments = readAttachments(get("attachments"), roomId, RemoteMessageId(id)) ?: return null
         if (
-            (deletedAt == null && body.isBlank()) ||
+            (deletedAt == null && body.isBlank() && attachments.isEmpty()) ||
             body.length > MESSAGE_BODY_LIMIT ||
             clientMessageId != id ||
             authorKind !in allowedAuthorKinds ||
@@ -561,6 +569,7 @@ class FirebaseRemoteConversationGateway(
             senderUid = RemoteProfileUid(senderUid),
             authorKind = authorKind,
             body = body,
+            attachments = attachments,
             replyToMessageId = replyToMessageId,
             editedAt = getTimestamp("editedAt")?.toInstant(),
             deletedAt = deletedAt,
@@ -664,5 +673,51 @@ private fun readReactionCounts(value: Any?): Map<String, Int>? {
             if (emoji.isBlank() || emoji.length > 16) return null
             put(emoji, count)
         }
+    }
+}
+
+private fun readAttachments(
+    value: Any?,
+    roomId: RemoteRoomId,
+    messageId: RemoteMessageId,
+): List<RemoteCachedAttachment>? {
+    if (value == null) return emptyList()
+    val rawAttachments = value as? List<*> ?: return null
+    if (rawAttachments.size > 8) return null
+    val attachments = rawAttachments.mapNotNull { rawAttachment ->
+        val attachment = rawAttachment as? Map<*, *> ?: return null
+        val attachmentId = (attachment["attachmentId"] as? String)?.let { rawId ->
+            runCatching { RemoteAttachmentId(rawId) }.getOrNull()
+        } ?: return null
+        val byteCount = (attachment["byteCount"] as? Number)?.toLong()?.takeIf { count -> count > 0L }
+            ?: return null
+        val displayName = (attachment["displayName"] as? String)?.takeIf(String::isNotBlank) ?: return null
+        val mimeType = (attachment["mimeType"] as? String)?.takeIf(String::isNotBlank) ?: return null
+        val kind = (attachment["kind"] as? String)?.let { rawKind ->
+            runCatching { RemoteAttachmentKind.valueOf(rawKind) }.getOrNull()
+        } ?: return null
+        val durationMillis = (attachment["durationMillis"] as? Number)?.toLong()
+        val prefix = "roomAttachments/${roomId.raw}/${messageId.raw}/${attachmentId.raw}"
+        val contentObjectPath = attachment["contentObjectPath"] as? String ?: return null
+        val thumbnailObjectPath = attachment["thumbnailObjectPath"] as? String
+        if (
+            contentObjectPath != "$prefix/content" ||
+            (kind == RemoteAttachmentKind.IMAGE && thumbnailObjectPath != "$prefix/thumbnail") ||
+            (kind != RemoteAttachmentKind.IMAGE && thumbnailObjectPath != null)
+        ) return null
+        RemoteCachedAttachment(
+            attachmentId = attachmentId,
+            displayName = displayName,
+            mimeType = mimeType,
+            byteCount = byteCount,
+            kind = kind,
+            durationMillis = durationMillis,
+            contentObjectPath = contentObjectPath,
+            thumbnailObjectPath = thumbnailObjectPath,
+        )
+    }
+    return attachments.takeIf { parsed ->
+        parsed.size == rawAttachments.size &&
+            parsed.distinctBy(RemoteCachedAttachment::attachmentId).size == parsed.size
     }
 }

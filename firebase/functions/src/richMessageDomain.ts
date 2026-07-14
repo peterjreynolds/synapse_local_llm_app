@@ -5,6 +5,7 @@ export const MAXIMUM_MESSAGE_BODY_LENGTH = 4_000;
 export const MAXIMUM_ACKNOWLEDGEMENT_MESSAGES = 50;
 
 export interface SendRemoteMessageCommand {
+  attachmentIds: string[];
   body: string;
   clientCreatedAtMillis: number;
   messageId: string;
@@ -35,6 +36,7 @@ export interface AcknowledgeRemoteMessagesCommand {
 
 export function parseSendRemoteMessageCommand(input: unknown): SendRemoteMessageCommand {
   const command = requireRecord(input);
+  const attachmentIds = parseAttachmentIds(command.attachmentIds ?? []);
   const replyToMessageId = command.replyToMessageId;
   if (replyToMessageId !== null && typeof replyToMessageId !== "string") invalidMessageCommand();
   const clientCreatedAtMillis = command.clientCreatedAtMillis;
@@ -47,7 +49,8 @@ export function parseSendRemoteMessageCommand(input: unknown): SendRemoteMessage
     invalidMessageCommand();
   }
   return {
-    body: normalizeMessageBody(command.body),
+    attachmentIds,
+    body: normalizeMessageBody(command.body, attachmentIds.length > 0),
     clientCreatedAtMillis,
     messageId: parseMessageId(command.messageId),
     replyToMessageId: replyToMessageId === null ? null : parseMessageId(replyToMessageId),
@@ -142,16 +145,36 @@ function parseRevisionCommand(input: unknown): ReviseRemoteMessageCommand {
   };
 }
 
-function normalizeMessageBody(body: string): string {
+function normalizeMessageBody(
+  body: string,
+  allowEmpty = false,
+): string {
   const normalized = body.normalize("NFKC").trim();
   if (
-    normalized.length === 0 ||
+    (!allowEmpty && normalized.length === 0) ||
     normalized.length > MAXIMUM_MESSAGE_BODY_LENGTH ||
     /[\u0000\u000b\u000c\u007f]/u.test(normalized)
   ) {
     invalidMessageCommand();
   }
   return normalized;
+}
+
+function parseAttachmentIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > MAXIMUM_MESSAGE_ATTACHMENTS) invalidMessageCommand();
+  const attachmentIds = value.map((attachmentId) => {
+    if (
+      typeof attachmentId !== "string" ||
+      !/^attachment-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+        attachmentId,
+      )
+    ) {
+      invalidMessageCommand();
+    }
+    return attachmentId;
+  });
+  if (new Set(attachmentIds).size !== attachmentIds.length) invalidMessageCommand();
+  return attachmentIds;
 }
 
 function parseMessageId(value: unknown): string {
@@ -182,3 +205,5 @@ function requireRecord(input: unknown): Record<string, unknown> {
 function invalidMessageCommand(): never {
   throw new HttpsError("invalid-argument", "Message command is invalid.");
 }
+
+const MAXIMUM_MESSAGE_ATTACHMENTS = 8;

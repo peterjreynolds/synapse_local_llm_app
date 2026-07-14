@@ -1,6 +1,7 @@
 import {DocumentReference, DocumentSnapshot, Timestamp, Transaction} from "firebase-admin/firestore";
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {requireActiveAccount} from "./accountAuthorization.js";
+import {requireAttachmentUpload} from "./attachmentMutation.js";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
 import {
   buildMessageMutationReceiptId,
@@ -40,6 +41,12 @@ export const sendRemoteMessage = onCall(
         requireIdempotentSend(messageSnapshot, command, actorUid);
         return;
       }
+      const attachmentReferences = command.attachmentIds.map((attachmentId) =>
+        firebaseAdminFirestore.doc(`attachmentUploads/${attachmentId}`)
+      );
+      const attachmentSnapshots = await Promise.all(
+        attachmentReferences.map((attachmentReference) => transaction.get(attachmentReference)),
+      );
       if (command.replyToMessageId !== null) {
         const replySnapshot = await transaction.get(
           roomReference.collection("messages").doc(command.replyToMessageId),
@@ -49,8 +56,39 @@ export const sendRemoteMessage = onCall(
           throw new HttpsError("failed-precondition", "The replied message is no longer available.");
         }
       }
+      const attachments = attachmentSnapshots.map((attachmentSnapshot) => {
+        const upload = requireAttachmentUpload(attachmentSnapshot.data());
+        if (
+          upload.actorUid !== actorUid ||
+          upload.roomId !== command.roomId ||
+          upload.messageId !== command.messageId ||
+          upload.status !== "READY"
+        ) {
+          throw new HttpsError("failed-precondition", "A message attachment is not ready.");
+        }
+        return {
+          attachmentId: upload.attachmentId,
+          byteCount: upload.byteCount,
+          contentObjectPath: upload.contentObjectPath,
+          displayName: upload.displayName,
+          durationMillis: upload.durationMillis,
+          kind: upload.kind,
+          mimeType: upload.mimeType,
+          thumbnailObjectPath: upload.thumbnailObjectPath,
+        };
+      });
       const createdAt = Timestamp.now();
+      attachmentReferences.forEach((attachmentReference) => {
+        transaction.update(attachmentReference, {
+          attachedAt: createdAt,
+          expiresAt: null,
+          status: "ATTACHED",
+          updatedAt: createdAt,
+        });
+      });
       transaction.create(messageReference, {
+        attachmentIds: command.attachmentIds,
+        attachments,
         authorKind: "HUMAN",
         body: command.body,
         clientCreatedAt: Timestamp.fromMillis(command.clientCreatedAtMillis),
@@ -67,7 +105,7 @@ export const sendRemoteMessage = onCall(
       });
       transaction.update(roomReference, {
         latestMessage: {
-          body: command.body,
+          body: messagePreview(command.body, attachments.length),
           createdAt,
           messageId: command.messageId,
           senderUid: actorUid,
@@ -102,7 +140,10 @@ export const editRemoteMessage = onCall(
         });
         if (latestMessageId === messageSnapshot.id) {
           transaction.update(roomReference, {
-            "latestMessage.body": command.body,
+            "latestMessage.body": messagePreview(
+              command.body,
+              Array.isArray(messageSnapshot.get("attachmentIds")) ? messageSnapshot.get("attachmentIds").length : 0,
+            ),
             updatedAt: editedAt,
           });
         }
@@ -337,6 +378,7 @@ function requireIdempotentSend(
   const message = requireActiveMessage(snapshot);
   if (
     snapshot.get("authorKind") !== "HUMAN" ||
+    !sameStringArray(snapshot.get("attachmentIds"), command.attachmentIds) ||
     snapshot.get("clientMessageId") !== command.messageId ||
     message.senderUid !== actorUid ||
     message.body !== command.body ||
@@ -345,6 +387,21 @@ function requireIdempotentSend(
   ) {
     throw new HttpsError("already-exists", "The message identifier was already used.");
   }
+}
+
+function messagePreview(
+  body: string,
+  attachmentCount: number,
+): string {
+  if (body.length > 0) return body;
+  return attachmentCount === 1 ? "Attachment" : `${attachmentCount} attachments`;
+}
+
+function sameStringArray(value: unknown, expected: string[]): boolean {
+  if (value === undefined && expected.length === 0) return true;
+  return Array.isArray(value) &&
+    value.length === expected.length &&
+    value.every((entry, index) => entry === expected[index]);
 }
 
 function requireActiveMessage(snapshot: DocumentSnapshot): ActiveMessageDocument {
