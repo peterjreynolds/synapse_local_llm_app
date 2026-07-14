@@ -1,11 +1,13 @@
 package app.synapse.localllm.application
 
 import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
+import app.synapse.localllm.domain.remote.AcknowledgeRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteProfilesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteRoomsCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomReceipt
+import app.synapse.localllm.domain.remote.LoadRemoteMessagesPageCommand
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
 import app.synapse.localllm.domain.remote.RemoteCacheMutationReceipt
@@ -17,15 +19,23 @@ import app.synapse.localllm.domain.remote.RemoteConversationGateway
 import app.synapse.localllm.domain.remote.RemoteDirectoryGateway
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
+import app.synapse.localllm.domain.remote.RemoteMessageAcknowledgementReceipt
+import app.synapse.localllm.domain.remote.RemoteMessageDraft
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
+import app.synapse.localllm.domain.remote.RemoteMessagePage
+import app.synapse.localllm.domain.remote.RemoteMessageRevisionReceipt
 import app.synapse.localllm.domain.remote.RemoteMessageSendReceipt
 import app.synapse.localllm.domain.remote.RemoteOutboxState
 import app.synapse.localllm.domain.remote.RemoteProfileMutationReceipt
 import app.synapse.localllm.domain.remote.RemoteProfileUid
+import app.synapse.localllm.domain.remote.RemoteReactionReceipt
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteSyncCursor
+import app.synapse.localllm.domain.remote.RemoteTypingParticipant
+import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
 import app.synapse.localllm.domain.remote.SendRemoteMessageCommand
+import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteProfileCommand
 import app.synapse.localllm.domain.remote.UploadRemoteAvatarCommand
 import app.synapse.localllm.domain.time.SynapseClock
@@ -84,6 +94,7 @@ class RemoteChatSessionSynchronizerTest {
             idempotencyKey = RemoteIdempotencyKey("message-1"),
             senderUid = RemoteProfileUid(PETER_ACCOUNT.raw),
             body = "Hello Trish",
+            replyToMessageId = null,
             state = RemoteOutboxState.PENDING,
             attemptCount = 0,
             createdAt = NOW,
@@ -116,6 +127,39 @@ class RemoteChatSessionSynchronizerTest {
             )
         }
 
+        override suspend fun editMessage(command: ReviseRemoteMessageCommand): RemoteMessageRevisionReceipt =
+            error("Not used by this test.")
+
+        override suspend fun deleteMessage(command: ReviseRemoteMessageCommand): RemoteMessageRevisionReceipt =
+            error("Not used by this test.")
+
+        override suspend fun toggleReaction(command: ToggleRemoteReactionCommand): RemoteReactionReceipt =
+            error("Not used by this test.")
+
+        override suspend fun acknowledgeMessages(
+            command: AcknowledgeRemoteMessagesCommand,
+        ): RemoteMessageAcknowledgementReceipt = error("Not used by this test.")
+
+        override suspend fun loadMessagesBefore(command: LoadRemoteMessagesPageCommand): RemoteMessagePage =
+            error("Not used by this test.")
+
+        override suspend fun loadMessage(
+            accountUid: RemoteAccountUid,
+            roomId: RemoteRoomId,
+            messageId: RemoteMessageId,
+        ): RemoteCachedMessage? = error("Not used by this test.")
+
+        override fun observeTypingParticipants(
+            accountUid: RemoteAccountUid,
+            roomId: RemoteRoomId,
+        ): Flow<List<RemoteTypingParticipant>> = emptyFlow()
+
+        override suspend fun setTyping(
+            accountUid: RemoteAccountUid,
+            roomId: RemoteRoomId,
+            isTyping: Boolean,
+        ) = Unit
+
         override suspend fun markRoomRead(
             accountUid: RemoteAccountUid,
             roomId: RemoteRoomId,
@@ -139,6 +183,8 @@ class RemoteChatSessionSynchronizerTest {
         override fun observeMessages(roomId: RemoteRoomId): Flow<List<RemoteCachedMessage>> = emptyFlow()
 
         override fun observePendingOutbox(): Flow<List<RemoteMessageOutboxOperation>> = outboxOperations
+
+        override fun observeDraft(roomId: RemoteRoomId): Flow<RemoteMessageDraft?> = emptyFlow()
 
         override suspend fun cacheProfiles(
             command: CacheRemoteProfilesCommand,
@@ -172,6 +218,14 @@ class RemoteChatSessionSynchronizerTest {
 
         override suspend fun saveSyncCursor(cursor: RemoteSyncCursor): RemoteCacheMutationReceipt =
             receipt(RemoteCacheMutation.CURSOR_SAVED)
+
+        override suspend fun saveDraft(draft: RemoteMessageDraft): RemoteCacheMutationReceipt =
+            receipt(RemoteCacheMutation.DRAFT_SAVED)
+
+        override suspend fun clearDraft(
+            accountUid: RemoteAccountUid,
+            roomId: RemoteRoomId,
+        ): RemoteCacheMutationReceipt = receipt(RemoteCacheMutation.DRAFT_CLEARED)
 
         override suspend fun findSyncCursor(
             collectionName: String,

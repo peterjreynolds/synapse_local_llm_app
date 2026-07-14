@@ -66,6 +66,13 @@ export {
   updateGroupPreferences,
 } from "./groupRoomMutation.js";
 export {getGroupRoomDetails} from "./groupRoomQuery.js";
+export {
+  acknowledgeRemoteMessages,
+  deleteRemoteMessage,
+  editRemoteMessage,
+  sendRemoteMessage,
+  toggleRemoteReaction,
+} from "./richMessageMutation.js";
 
 const firestore = firebaseAdminFirestore;
 const messaging = firebaseAdminMessaging;
@@ -267,29 +274,24 @@ export const notifyRemoteMessage = onDocumentCreated(
         ),
       ),
     ];
-    if (candidateRecipientUids.length === 0) {
-      return;
-    }
-    const authorizationSnapshots = await firestore.getAll(
+    const authorizationSnapshots = candidateRecipientUids.length === 0 ? [] : await firestore.getAll(
       ...candidateRecipientUids.flatMap((recipientUid) => [
         firestore.doc(`profiles/${recipientUid}`),
         roomReference.collection("members").doc(recipientUid),
       ]),
     );
-    const recipientUids = selectAuthorizedMessageRecipientUids(
-      candidateRecipientUids,
-      candidateRecipientUids.map((recipientUid, recipientIndex) => ({
+    const authorizationStates = candidateRecipientUids.map((recipientUid, recipientIndex) => ({
         membershipActive: authorizationSnapshots[recipientIndex * 2 + 1]?.get("active") === true,
         notificationsEnabled: authorizationSnapshots[recipientIndex * 2 + 1]?.get("muted") !== true,
         profileAllowed:
           authorizationSnapshots[recipientIndex * 2]?.get("allowed") === true &&
           authorizationSnapshots[recipientIndex * 2]?.get("accountState") === "ACTIVE",
         uid: recipientUid,
-      })),
+      }));
+    const notificationRecipientUids = selectAuthorizedMessageRecipientUids(
+      candidateRecipientUids,
+      authorizationStates,
     );
-    if (recipientUids.length === 0) {
-      return;
-    }
 
     const receiptReference = firestore.doc(
       `notificationDeliveries/${buildNotificationReceiptId(event.id)}`,
@@ -310,12 +312,12 @@ export const notifyRemoteMessage = onDocumentCreated(
     }
 
     try {
-      const deviceSnapshots = await firestore
+      const deviceSnapshots = notificationRecipientUids.length === 0 ? null : await firestore
         .collection("devices")
-        .where("ownerUid", "in", recipientUids)
+        .where("ownerUid", "in", notificationRecipientUids)
         .where("active", "==", true)
         .get();
-      const deviceRecords = deviceSnapshots.docs
+      const deviceRecords = deviceSnapshots?.docs
         .map((snapshot) => ({
           reference: snapshot.ref,
           value: snapshot.data() as DeviceDocument,
@@ -323,8 +325,8 @@ export const notifyRemoteMessage = onDocumentCreated(
         .filter(
           (device): device is typeof device & {value: DeviceDocument & {installationId: string}} =>
             typeof device.value.installationId === "string" &&
-            recipientUids.includes(String(device.value.ownerUid)),
-        );
+            notificationRecipientUids.includes(String(device.value.ownerUid)),
+        ) ?? [];
 
       let successCount = 0;
       let failureCount = 0;
@@ -366,16 +368,46 @@ export const notifyRemoteMessage = onDocumentCreated(
       }
 
       const updatedAt = Timestamp.now();
-      const summaryWrites = firestore.batch();
-      summaryWrites.update(roomReference, {
-        latestMessage: {
-          body: message.body,
+      await firestore.runTransaction(async (transaction) => {
+        const [currentRoomSnapshot, currentMessageSnapshot] = await Promise.all([
+          transaction.get(roomReference),
+          transaction.get(messageSnapshot.ref),
+        ]);
+        if (!currentRoomSnapshot.exists || !currentMessageSnapshot.exists) return;
+        const createdAt = currentMessageSnapshot.get("createdAt");
+        if (!(createdAt instanceof Timestamp)) return;
+        const currentBody = currentMessageSnapshot.get("body");
+        const summaryBody = currentMessageSnapshot.get("deletedAt") instanceof Timestamp ?
+          "Message deleted" :
+          typeof currentBody === "string" && currentBody.length > 0 ? currentBody : message.body;
+        const latestMessage = currentRoomSnapshot.get("latestMessage");
+        const latestMessageId = typeof latestMessage?.messageId === "string" ? latestMessage.messageId : null;
+        const latestCreatedAt = latestMessage?.createdAt;
+        if (
+          latestMessageId !== messageId &&
+          latestCreatedAt instanceof Timestamp &&
+          (
+            latestCreatedAt.toMillis() > createdAt.toMillis() ||
+            (latestCreatedAt.isEqual(createdAt) && latestMessageId > messageId)
+          )
+        ) {
+          return;
+        }
+        const latestMessageSummary = {
+          body: summaryBody,
+          createdAt,
           messageId,
           senderUid: message.senderUid,
-        },
-        updatedAt,
+        };
+        transaction.update(
+          roomReference,
+          latestMessageId === messageId ?
+            {latestMessage: latestMessageSummary} :
+            {latestMessage: latestMessageSummary, updatedAt: createdAt},
+        );
       });
-      for (const recipientUid of recipientUids) {
+      const summaryWrites = firestore.batch();
+      for (const recipientUid of notificationRecipientUids) {
         summaryWrites.update(roomReference.collection("members").doc(recipientUid), {
           unreadCount: FieldValue.increment(1),
         });

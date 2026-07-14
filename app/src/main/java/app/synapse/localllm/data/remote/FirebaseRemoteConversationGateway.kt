@@ -1,5 +1,7 @@
 package app.synapse.localllm.data.remote
 
+import app.synapse.localllm.domain.remote.AcknowledgeRemoteMessagesCommand
+import app.synapse.localllm.domain.remote.LoadRemoteMessagesPageCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomReceipt
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
@@ -9,26 +11,36 @@ import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteConversationGateway
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
+import app.synapse.localllm.domain.remote.RemoteMessageAcknowledgementReceipt
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
+import app.synapse.localllm.domain.remote.RemoteMessagePage
+import app.synapse.localllm.domain.remote.RemoteMessageRevisionReceipt
 import app.synapse.localllm.domain.remote.RemoteMessageSendReceipt
 import app.synapse.localllm.domain.remote.RemoteProfileUid
+import app.synapse.localllm.domain.remote.RemoteReactionReceipt
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
+import app.synapse.localllm.domain.remote.RemoteTypingParticipant
+import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
 import app.synapse.localllm.domain.remote.SendRemoteMessageCommand
+import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.isValidRemoteDirectRoomId
 import app.synapse.localllm.domain.remote.isValidRemoteGroupRoomId
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.functions.FirebaseFunctions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
@@ -146,6 +158,7 @@ class FirebaseRemoteConversationGateway(
                 .document(roomId.raw)
                 .collection(MESSAGES_COLLECTION)
                 .orderBy("createdAt", Query.Direction.DESCENDING)
+                .orderBy(FieldPath.documentId(), Query.Direction.DESCENDING)
                 .limit(MESSAGE_PAGE_LIMIT)
                 .addSnapshotListener { snapshot, exception ->
                     if (exception != null) {
@@ -199,33 +212,218 @@ class FirebaseRemoteConversationGateway(
         require(normalizedBody.isNotEmpty() && normalizedBody.length <= MESSAGE_BODY_LIMIT) {
             "Message must contain 1-$MESSAGE_BODY_LIMIT characters."
         }
-        val messageReference = firestore.collection(ROOMS_COLLECTION)
-            .document(message.roomId.raw)
-            .collection(MESSAGES_COLLECTION)
-            .document(message.messageId.raw)
         val payload = mapOf(
-            "authorKind" to HUMAN_AUTHOR_KIND,
             "body" to normalizedBody,
-            "clientCreatedAt" to Timestamp(
-                message.clientCreatedAt.epochSecond,
-                message.clientCreatedAt.nano,
-            ),
-            "clientMessageId" to message.messageId.raw,
-            "createdAt" to FieldValue.serverTimestamp(),
-            "deletedAt" to null,
-            "editedAt" to null,
-            "replyToMessageId" to null,
-            "senderUid" to message.senderUid.raw,
+            "clientCreatedAtMillis" to message.clientCreatedAt.toEpochMilli(),
+            "messageId" to message.messageId.raw,
+            "replyToMessageId" to message.replyToMessageId?.raw,
+            "roomId" to message.roomId.raw,
         )
         try {
-            messageReference.set(payload).await()
+            functions.getHttpsCallable("sendRemoteMessage").call(payload).await()
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: Exception) {
-            val existingMessage = runCatching { messageReference.get().await() }.getOrNull()
-            if (!existingMessage.matchesIdempotentMessage(message)) {
-                throw exception.toRemoteChatFailure("send the message")
-            }
+            throw exception.toRemoteChatFailure("send the message")
         }
         return RemoteMessageSendReceipt(message.accountUid, message.roomId, message.messageId)
+    }
+
+    override suspend fun editMessage(command: ReviseRemoteMessageCommand): RemoteMessageRevisionReceipt {
+        val body = command.body?.trim()
+        require(!body.isNullOrEmpty() && body.length <= MESSAGE_BODY_LIMIT) {
+            "Message must contain 1-$MESSAGE_BODY_LIMIT characters."
+        }
+        return reviseMessage("editRemoteMessage", "edit the message", command, body)
+    }
+
+    override suspend fun deleteMessage(command: ReviseRemoteMessageCommand): RemoteMessageRevisionReceipt =
+        reviseMessage("deleteRemoteMessage", "delete the message", command, null)
+
+    override suspend fun toggleReaction(command: ToggleRemoteReactionCommand): RemoteReactionReceipt {
+        requireAuthenticatedUid(command.accountUid)
+        require(command.emoji.isNotBlank() && command.emoji.length <= MAXIMUM_EMOJI_LENGTH) {
+            "Choose a valid reaction."
+        }
+        try {
+            val result = functions.getHttpsCallable("toggleRemoteReaction").call(
+                mapOf(
+                    "emoji" to command.emoji,
+                    "messageId" to command.messageId.raw,
+                    "reacted" to command.reacted,
+                    "roomId" to command.roomId.raw,
+                ),
+            ).await().data.requireCallableMap("reaction")
+            return RemoteReactionReceipt(
+                roomId = RemoteRoomId(result.requireString("roomId")),
+                messageId = RemoteMessageId(result.requireString("messageId")),
+                emoji = result.requireString("emoji"),
+                reacted = result["reacted"] as? Boolean
+                    ?: throw RemoteChatException("Firebase returned an invalid reaction receipt."),
+                reactionCount = result.requireNonNegativeInt("reactionCount"),
+            )
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: RemoteChatException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("update the reaction")
+        }
+    }
+
+    override suspend fun acknowledgeMessages(
+        command: AcknowledgeRemoteMessagesCommand,
+    ): RemoteMessageAcknowledgementReceipt {
+        requireAuthenticatedUid(command.accountUid)
+        require(command.messageIds.isNotEmpty() && command.messageIds.size <= MAXIMUM_ACKNOWLEDGEMENT_SIZE) {
+            "A message acknowledgement must contain 1-$MAXIMUM_ACKNOWLEDGEMENT_SIZE messages."
+        }
+        try {
+            val result = functions.getHttpsCallable("acknowledgeRemoteMessages").call(
+                mapOf(
+                    "messageIds" to command.messageIds.map { messageId -> messageId.raw },
+                    "read" to command.read,
+                    "roomId" to command.roomId.raw,
+                ),
+            ).await().data.requireCallableMap("message acknowledgement")
+            return RemoteMessageAcknowledgementReceipt(
+                roomId = RemoteRoomId(result.requireString("roomId")),
+                acknowledgedCount = result.requireNonNegativeInt("acknowledgedCount"),
+                read = result["read"] as? Boolean
+                    ?: throw RemoteChatException("Firebase returned an invalid acknowledgement receipt."),
+            )
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: RemoteChatException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("acknowledge the messages")
+        }
+    }
+
+    override suspend fun loadMessagesBefore(command: LoadRemoteMessagesPageCommand): RemoteMessagePage {
+        requireAuthenticatedUid(command.accountUid)
+        require(command.limit in 1..MAXIMUM_MESSAGE_PAGE_SIZE) { "Message page size is invalid." }
+        try {
+            val snapshot = firestore.collection(ROOMS_COLLECTION)
+                .document(command.roomId.raw)
+                .collection(MESSAGES_COLLECTION)
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .orderBy(FieldPath.documentId(), Query.Direction.DESCENDING)
+                .startAfter(
+                    Timestamp(command.beforeCreatedAt.epochSecond, command.beforeCreatedAt.nano),
+                    command.beforeMessageId.raw,
+                )
+                .limit(command.limit.toLong())
+                .get()
+                .await()
+            val messages = snapshot.documents.mapNotNull { document ->
+                document.toRemoteCachedMessage(command.accountUid, command.roomId)
+            }.reversed()
+            return RemoteMessagePage(messages, snapshot.size() < command.limit)
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("load earlier messages")
+        }
+    }
+
+    override suspend fun loadMessage(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        messageId: RemoteMessageId,
+    ): RemoteCachedMessage? {
+        requireAuthenticatedUid(accountUid)
+        try {
+            return firestore.collection(ROOMS_COLLECTION)
+                .document(roomId.raw)
+                .collection(MESSAGES_COLLECTION)
+                .document(messageId.raw)
+                .get()
+                .await()
+                .takeIf(DocumentSnapshot::exists)
+                ?.toRemoteCachedMessage(accountUid, roomId)
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("load the replied message")
+        }
+    }
+
+    override fun observeTypingParticipants(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): Flow<List<RemoteTypingParticipant>> = callbackFlow {
+        val token = sessionController.requireActiveToken(accountUid)
+        requireAuthenticatedUid(accountUid)
+        val lock = Any()
+        var documents = emptyList<DocumentSnapshot>()
+        fun emitActiveParticipants() {
+            val now = Timestamp.now().toInstant()
+            val participants = synchronized(lock) { documents }.mapNotNull { document ->
+                val uid = document.getString("uid") ?: return@mapNotNull null
+                val expiresAt = document.getTimestamp("expiresAt")?.toInstant() ?: return@mapNotNull null
+                if (uid == accountUid.raw || !expiresAt.isAfter(now)) null else {
+                    RemoteTypingParticipant(RemoteProfileUid(uid), expiresAt)
+                }
+            }
+            trySend(participants)
+        }
+        val registration = firestore.collection(ROOMS_COLLECTION)
+            .document(roomId.raw)
+            .collection(TYPING_COLLECTION)
+            .addSnapshotListener { snapshot, exception ->
+                if (exception != null) {
+                    close(exception.toRemoteChatFailure("load typing activity"))
+                    return@addSnapshotListener
+                }
+                synchronized(lock) { documents = snapshot?.documents.orEmpty() }
+                emitActiveParticipants()
+            }
+        val registrationJob = launch {
+            runCatching { sessionController.registerListener(token, registration) }.onFailure(::close)
+        }
+        val expiryJob = launch {
+            while (true) {
+                delay(TYPING_REFRESH_MILLIS)
+                emitActiveParticipants()
+            }
+        }
+        awaitClose {
+            registrationJob.cancel()
+            expiryJob.cancel()
+            registration.remove()
+        }
+    }
+
+    override suspend fun setTyping(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        isTyping: Boolean,
+    ) {
+        requireAuthenticatedUid(accountUid)
+        val reference = firestore.collection(ROOMS_COLLECTION)
+            .document(roomId.raw)
+            .collection(TYPING_COLLECTION)
+            .document(accountUid.raw)
+        try {
+            if (isTyping) {
+                val now = Timestamp.now()
+                reference.set(
+                    mapOf(
+                        "expiresAt" to Timestamp(now.seconds + TYPING_EXPIRY_SECONDS, now.nanoseconds),
+                        "uid" to accountUid.raw,
+                        "updatedAt" to FieldValue.serverTimestamp(),
+                    ),
+                ).await()
+            } else {
+                reference.delete().await()
+            }
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("update typing activity")
+        }
     }
 
     override suspend fun markRoomRead(
@@ -318,46 +516,97 @@ class FirebaseRemoteConversationGateway(
         roomId: RemoteRoomId,
     ): List<RemoteCachedMessage> =
         this?.documents.orEmpty().mapNotNull { document ->
-            val body = document.getString("body") ?: return@mapNotNull null
-            val senderUid = document.getString("senderUid") ?: return@mapNotNull null
-            val authorKind = document.getString("authorKind") ?: return@mapNotNull null
-            val clientMessageId = document.getString("clientMessageId") ?: return@mapNotNull null
-            val clientCreatedAt = document.getTimestamp("clientCreatedAt") ?: return@mapNotNull null
-            if (
-                body.isBlank() ||
-                body.length > MESSAGE_BODY_LIMIT ||
-                clientMessageId != document.id ||
-                authorKind !in allowedAuthorKinds
-            ) {
-                return@mapNotNull null
-            }
-            val serverCreatedAt = document.getTimestamp("createdAt")?.toInstant()
-            RemoteCachedMessage(
-                accountUid = accountUid,
-                roomId = roomId,
-                messageId = RemoteMessageId(document.id),
-                idempotencyKey = RemoteIdempotencyKey(clientMessageId),
-                senderUid = RemoteProfileUid(senderUid),
-                authorKind = authorKind,
-                body = body,
-                deliveryState = if (document.metadata.hasPendingWrites() || serverCreatedAt == null) {
-                    RemoteMessageDeliveryState.PENDING
-                } else {
-                    RemoteMessageDeliveryState.SENT
-                },
-                clientCreatedAt = clientCreatedAt.toInstant(),
-                serverCreatedAt = serverCreatedAt,
-                failureReason = null,
-            )
+            document.toRemoteCachedMessage(accountUid, roomId)
         }.reversed()
 
-    private fun DocumentSnapshot?.matchesIdempotentMessage(message: RemoteCachedMessage): Boolean {
-        val snapshot = this ?: return false
-        return snapshot.exists() &&
-            snapshot.getString("clientMessageId") == message.messageId.raw &&
-            snapshot.getString("senderUid") == message.senderUid.raw &&
-            snapshot.getString("authorKind") == message.authorKind &&
-            snapshot.getString("body") == message.body.trim()
+    private fun DocumentSnapshot.toRemoteCachedMessage(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCachedMessage? {
+        val body = getString("body") ?: return null
+        val senderUid = getString("senderUid") ?: return null
+        val authorKind = getString("authorKind") ?: return null
+        val clientMessageId = getString("clientMessageId") ?: return null
+        val clientCreatedAt = getTimestamp("clientCreatedAt") ?: return null
+        val deletedAt = getTimestamp("deletedAt")?.toInstant()
+        val replyToMessageId = getString("replyToMessageId")?.let(::RemoteMessageId)
+        val revision = getLong("revision") ?: 1L
+        val deliveredToCount = getLong("deliveredToCount")?.toSafeCountOrNull() ?: run {
+            if (contains("deliveredToCount")) return null else 0
+        }
+        val readByCount = getLong("readByCount")?.toSafeCountOrNull() ?: run {
+            if (contains("readByCount")) return null else 0
+        }
+        val reactionCounts = readReactionCounts(get("reactionCounts")) ?: return null
+        if (
+            (deletedAt == null && body.isBlank()) ||
+            body.length > MESSAGE_BODY_LIMIT ||
+            clientMessageId != id ||
+            authorKind !in allowedAuthorKinds ||
+            revision < 1L
+        ) return null
+        val serverCreatedAt = getTimestamp("createdAt")?.toInstant()
+        val deliveryState = when {
+            metadata.hasPendingWrites() || serverCreatedAt == null -> RemoteMessageDeliveryState.PENDING
+            senderUid != accountUid.raw -> RemoteMessageDeliveryState.SENT
+            readByCount > 0 -> RemoteMessageDeliveryState.READ
+            deliveredToCount > 0 -> RemoteMessageDeliveryState.DELIVERED
+            else -> RemoteMessageDeliveryState.SENT
+        }
+        return RemoteCachedMessage(
+            accountUid = accountUid,
+            roomId = roomId,
+            messageId = RemoteMessageId(id),
+            idempotencyKey = RemoteIdempotencyKey(clientMessageId),
+            senderUid = RemoteProfileUid(senderUid),
+            authorKind = authorKind,
+            body = body,
+            replyToMessageId = replyToMessageId,
+            editedAt = getTimestamp("editedAt")?.toInstant(),
+            deletedAt = deletedAt,
+            revision = revision,
+            reactionCounts = reactionCounts,
+            deliveredToCount = deliveredToCount,
+            readByCount = readByCount,
+            deliveryState = deliveryState,
+            clientCreatedAt = clientCreatedAt.toInstant(),
+            serverCreatedAt = serverCreatedAt,
+            failureReason = null,
+        )
+    }
+
+    private suspend fun reviseMessage(
+        callableName: String,
+        operation: String,
+        command: ReviseRemoteMessageCommand,
+        body: String?,
+    ): RemoteMessageRevisionReceipt {
+        requireAuthenticatedUid(command.accountUid)
+        require(command.mutationId.isNotBlank() && command.expectedRevision >= 1L) {
+            "Message revision command is invalid."
+        }
+        val payload = buildMap<String, Any> {
+            put("expectedRevision", command.expectedRevision)
+            put("messageId", command.messageId.raw)
+            put("mutationId", command.mutationId)
+            put("roomId", command.roomId.raw)
+            if (body != null) put("body", body)
+        }
+        try {
+            val result = functions.getHttpsCallable(callableName).call(payload).await().data
+                .requireCallableMap("message revision")
+            return RemoteMessageRevisionReceipt(
+                roomId = RemoteRoomId(result.requireString("roomId")),
+                messageId = RemoteMessageId(result.requireString("messageId")),
+                revision = result.requirePositiveLong("revision"),
+            )
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: RemoteChatException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure(operation)
+        }
     }
 
     private fun requireAuthenticatedUid(accountUid: RemoteAccountUid) {
@@ -370,10 +619,50 @@ class FirebaseRemoteConversationGateway(
     private companion object {
         const val HUMAN_AUTHOR_KIND = "HUMAN"
         const val MEMBERS_COLLECTION = "members"
+        const val MAXIMUM_ACKNOWLEDGEMENT_SIZE = 50
+        const val MAXIMUM_EMOJI_LENGTH = 16
+        const val MAXIMUM_MESSAGE_PAGE_SIZE = 100
         const val MESSAGES_COLLECTION = "messages"
         const val MESSAGE_BODY_LIMIT = 4_000
         const val MESSAGE_PAGE_LIMIT = 100L
         const val ROOMS_COLLECTION = "rooms"
+        const val TYPING_COLLECTION = "typing"
+        const val TYPING_EXPIRY_SECONDS = 10L
+        const val TYPING_REFRESH_MILLIS = 1_000L
         val allowedAuthorKinds = setOf(HUMAN_AUTHOR_KIND, "SYNAPSE_AI")
+    }
+}
+
+private fun Any?.requireCallableMap(receiptName: String): Map<*, *> =
+    this as? Map<*, *> ?: throw RemoteChatException("Firebase returned an invalid $receiptName receipt.")
+
+private fun Map<*, *>.requireString(fieldName: String): String =
+    (this[fieldName] as? String)?.takeIf(String::isNotBlank)
+        ?: throw RemoteChatException("Firebase returned an invalid $fieldName receipt field.")
+
+private fun Map<*, *>.requirePositiveLong(fieldName: String): Long =
+    (this[fieldName] as? Number)?.toLong()?.takeIf { value -> value >= 1L }
+        ?: throw RemoteChatException("Firebase returned an invalid $fieldName receipt field.")
+
+private fun Map<*, *>.requireNonNegativeInt(fieldName: String): Int =
+    (this[fieldName] as? Number)?.toLong()
+        ?.takeIf { value -> value in 0..Int.MAX_VALUE.toLong() }
+        ?.toInt()
+        ?: throw RemoteChatException("Firebase returned an invalid $fieldName receipt field.")
+
+private fun Long.toSafeCountOrNull(): Int? =
+    takeIf { value -> value in 0..Int.MAX_VALUE.toLong() }?.toInt()
+
+private fun readReactionCounts(value: Any?): Map<String, Int>? {
+    if (value == null) return emptyMap()
+    val rawCounts = value as? Map<*, *> ?: return null
+    if (rawCounts.size > 32) return null
+    return buildMap {
+        rawCounts.forEach { (rawEmoji, rawCount) ->
+            val emoji = rawEmoji as? String ?: return null
+            val count = (rawCount as? Number)?.toLong()?.toSafeCountOrNull()?.takeIf { it > 0 } ?: return null
+            if (emoji.isBlank() || emoji.length > 16) return null
+            put(emoji, count)
+        }
     }
 }

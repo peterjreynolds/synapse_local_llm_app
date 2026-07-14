@@ -30,9 +30,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RemoteRoomCacheEntity::class,
         RemoteMessageCacheEntity::class,
         RemoteMessageOutboxEntity::class,
+        RemoteMessageDraftEntity::class,
         RemoteSyncCursorEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -814,6 +815,47 @@ val SYNAPSE_DATABASE_MIGRATION_10_11 =
             db.execSQL(
                 "CREATE INDEX IF NOT EXISTS index_remote_message_outbox_accountUid_state " +
                     "ON remote_message_outbox(accountUid, state)",
+            )
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_11_12 =
+    object : Migration(11, 12) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE remote_message_cache ADD COLUMN replyToMessageId TEXT")
+            db.execSQL("ALTER TABLE remote_message_cache ADD COLUMN editedAtEpochMillis INTEGER")
+            db.execSQL("ALTER TABLE remote_message_cache ADD COLUMN deletedAtEpochMillis INTEGER")
+            db.execSQL("ALTER TABLE remote_message_cache ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+            db.execSQL(
+                "ALTER TABLE remote_message_cache " +
+                    "ADD COLUMN reactionCountsJson TEXT NOT NULL DEFAULT '{}'",
+            )
+            db.execSQL(
+                "ALTER TABLE remote_message_cache " +
+                    "ADD COLUMN deliveredToCount INTEGER NOT NULL DEFAULT 0",
+            )
+            db.execSQL(
+                "ALTER TABLE remote_message_cache " +
+                    "ADD COLUMN readByCount INTEGER NOT NULL DEFAULT 0",
+            )
+            db.execSQL("ALTER TABLE remote_message_outbox ADD COLUMN replyToMessageId TEXT")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS remote_message_drafts (
+                    accountUid TEXT NOT NULL,
+                    remoteRoomId TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    updatedAtEpochMillis INTEGER NOT NULL,
+                    PRIMARY KEY(accountUid, remoteRoomId),
+                    FOREIGN KEY(accountUid, remoteRoomId)
+                    REFERENCES remote_room_cache(accountUid, remoteRoomId)
+                    ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_remote_message_drafts_accountUid " +
+                    "ON remote_message_drafts(accountUid)",
             )
         }
     }

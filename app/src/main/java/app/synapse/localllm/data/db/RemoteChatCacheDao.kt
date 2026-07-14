@@ -100,6 +100,32 @@ interface RemoteChatCacheDao {
 
     @Query(
         """
+        SELECT * FROM remote_message_drafts
+        WHERE accountUid = :accountUid AND remoteRoomId = :remoteRoomId
+        LIMIT 1
+        """,
+    )
+    fun observeDraft(
+        accountUid: String,
+        remoteRoomId: String,
+    ): Flow<RemoteMessageDraftEntity?>
+
+    @Upsert
+    suspend fun upsertDraft(draft: RemoteMessageDraftEntity)
+
+    @Query(
+        """
+        DELETE FROM remote_message_drafts
+        WHERE accountUid = :accountUid AND remoteRoomId = :remoteRoomId
+        """,
+    )
+    suspend fun deleteDraft(
+        accountUid: String,
+        remoteRoomId: String,
+    ): Int
+
+    @Query(
+        """
         UPDATE remote_message_outbox
         SET state = :state,
             attemptCount = attemptCount + 1,

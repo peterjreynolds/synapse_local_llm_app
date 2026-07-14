@@ -5,9 +5,11 @@
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/firestore.rules.test.mjs tests/storage.rules.test.mjs",
     "test:registration": "node --test --test-concurrency=1 tests/registration.test.mjs",
-    "test:emulators": "npm --prefix functions run build && npm run test:rules:emulator && npm run test:registration:emulator && npm run test:owner:emulator && npm run test:privacy:emulator && npm run test:groups:emulator",
+    "test:emulators": "npm --prefix functions run build && npm run test:rules:emulator && npm run test:registration:emulator && npm run test:owner:emulator && npm run test:privacy:emulator && npm run test:groups:emulator && npm run test:messages:emulator",
     "test:groups": "node --test --test-concurrency=1 tests/groupRooms.test.mjs",
     "test:groups:emulator": "GOOGLE_CLOUD_PROJECT=demo-synapse-chat firebase emulators:exec --project demo-synapse-chat --only auth,firestore,functions 'npm run test:groups'",
+    "test:messages": "node --test --test-concurrency=1 tests/richMessages.test.mjs",
+    "test:messages:emulator": "GOOGLE_CLOUD_PROJECT=demo-synapse-chat firebase emulators:exec --project demo-synapse-chat --only auth,firestore,functions 'npm run test:messages'",
     "test:owner": "node --test --test-concurrency=1 tests/ownerAdmin.test.mjs",
     "test:owner:emulator": "GOOGLE_CLOUD_PROJECT=demo-synapse-chat firebase emulators:exec --project demo-synapse-chat --only auth,firestore,functions 'npm run test:owner'",
     "test:privacy": "node --test --test-concurrency=1 tests/privacyAdmin.test.mjs",

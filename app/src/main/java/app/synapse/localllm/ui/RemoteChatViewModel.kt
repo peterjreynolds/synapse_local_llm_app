@@ -7,15 +7,18 @@ import app.synapse.localllm.application.RemoteChatSessionSynchronizer
 import app.synapse.localllm.application.RemoteRoomVisibilityTracker
 import app.synapse.localllm.di.SynapseApplicationGraph
 import app.synapse.localllm.domain.ids.SynapseIdFactory
+import app.synapse.localllm.domain.remote.AcknowledgeRemoteMessagesCommand
+import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
+import app.synapse.localllm.domain.remote.LoadRemoteMessagesPageCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
-import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAccountState
+import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
-import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteConversationGateway
@@ -24,6 +27,7 @@ import app.synapse.localllm.domain.remote.RemoteDirectoryGateway
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
+import app.synapse.localllm.domain.remote.RemoteMessageDraft
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
 import app.synapse.localllm.domain.remote.RemoteOutboxState
@@ -31,16 +35,21 @@ import app.synapse.localllm.domain.remote.RemotePasswordChangeCommand
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteSignInCommand
+import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
+import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteProfileCommand
 import app.synapse.localllm.domain.remote.UploadRemoteAvatarCommand
 import app.synapse.localllm.domain.time.SynapseClock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -67,6 +76,10 @@ class RemoteChatViewModel(
     private val selectedRoomId = MutableStateFlow<RemoteRoomId?>(null)
     private val roomsBeingMarkedRead = mutableSetOf<RemoteRoomId>()
     private var pendingNotificationRoomId: RemoteRoomId? = null
+    private var draftSaveJob: Job? = null
+    private var readAcknowledgementJob: Job? = null
+    private var typingHeartbeatJob: Job? = null
+    private var typingRoomId: RemoteRoomId? = null
 
     val uiState: StateFlow<RemoteChatUiState> = mutableUiState
 
@@ -174,9 +187,25 @@ class RemoteChatViewModel(
     }
 
     fun selectRoom(roomId: RemoteRoomId?) {
+        val previousRoomId = selectedRoomId.value
+        if (previousRoomId != roomId) {
+            stopTyping(previousRoomId)
+            draftSaveJob?.cancel()
+            readAcknowledgementJob?.cancel()
+        }
         selectedRoomId.value = roomId
         roomVisibilityTracker.setSelectedRoom(roomId)
-        mutableUiState.update { state -> state.copy(selectedRoomId = roomId, notice = null) }
+        mutableUiState.update { state ->
+            state.copy(
+                selectedRoomId = roomId,
+                composerText = "",
+                replyToMessageId = null,
+                typingParticipantUids = emptyList(),
+                hasReachedMessageStart = false,
+                messageToRevealId = null,
+                notice = null,
+            )
+        }
         roomId?.let(::markSelectedRoomRead)
     }
 
@@ -196,6 +225,7 @@ class RemoteChatViewModel(
         val messageId = RemoteMessageId(idFactory.createChatMessageId().raw)
         val idempotencyKey = RemoteIdempotencyKey(messageId.raw)
         val createdAt = clock.now()
+        val replyToMessageId = mutableUiState.value.replyToMessageId
         cacheRepository.enqueueMessage(
             EnqueueRemoteMessageCommand(
                 message = RemoteCachedMessage(
@@ -206,6 +236,13 @@ class RemoteChatViewModel(
                     senderUid = RemoteProfileUid(account.accountUid.raw),
                     authorKind = HUMAN_AUTHOR_KIND,
                     body = normalizedBody,
+                    replyToMessageId = replyToMessageId,
+                    editedAt = null,
+                    deletedAt = null,
+                    revision = 1,
+                    reactionCounts = emptyMap(),
+                    deliveredToCount = 0,
+                    readByCount = 0,
                     deliveryState = RemoteMessageDeliveryState.PENDING,
                     clientCreatedAt = createdAt,
                     serverCreatedAt = null,
@@ -219,6 +256,7 @@ class RemoteChatViewModel(
                     idempotencyKey = idempotencyKey,
                     senderUid = RemoteProfileUid(account.accountUid.raw),
                     body = normalizedBody,
+                    replyToMessageId = replyToMessageId,
                     state = RemoteOutboxState.PENDING,
                     attemptCount = 0,
                     createdAt = createdAt,
@@ -227,6 +265,136 @@ class RemoteChatViewModel(
                 ),
             ),
         )
+        cacheRepository.clearDraft(account.accountUid, roomId)
+        mutableUiState.update { state -> state.copy(composerText = "", replyToMessageId = null) }
+        stopTyping(roomId)
+    }
+
+    fun updateComposerText(body: String) {
+        val normalizedBody = body.take(MESSAGE_BODY_LIMIT)
+        mutableUiState.update { state -> state.copy(composerText = normalizedBody) }
+        val accountUid = mutableUiState.value.account?.accountUid ?: return
+        val roomId = selectedRoomId.value ?: return
+        draftSaveJob?.cancel()
+        draftSaveJob = viewModelScope.launch {
+            delay(DRAFT_SAVE_DEBOUNCE_MILLIS)
+            try {
+                if (normalizedBody.isBlank()) {
+                    cacheRepository.clearDraft(accountUid, roomId)
+                } else {
+                    cacheRepository.saveDraft(RemoteMessageDraft(accountUid, roomId, normalizedBody, clock.now()))
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                publishFailure(exception)
+            }
+        }
+        if (normalizedBody.isBlank()) stopTyping(roomId) else startTypingHeartbeat(accountUid, roomId)
+    }
+
+    fun replyToMessage(messageId: RemoteMessageId) {
+        mutableUiState.update { state -> state.copy(replyToMessageId = messageId) }
+    }
+
+    fun cancelReply() {
+        mutableUiState.update { state -> state.copy(replyToMessageId = null) }
+    }
+
+    fun editMessage(
+        message: RemoteCachedMessage,
+        body: String,
+    ) = launchAction {
+        val normalizedBody = body.trim()
+        require(normalizedBody.isNotEmpty() && normalizedBody.length <= MESSAGE_BODY_LIMIT) {
+            "Message must contain 1-$MESSAGE_BODY_LIMIT characters."
+        }
+        conversationGateway.editMessage(
+            ReviseRemoteMessageCommand(
+                accountUid = requireSignedInAccount().accountUid,
+                roomId = message.roomId,
+                messageId = message.messageId,
+                mutationId = "edit-${idFactory.createChatMessageId().raw}",
+                expectedRevision = message.revision,
+                body = normalizedBody,
+            ),
+        )
+    }
+
+    fun deleteMessage(message: RemoteCachedMessage) = launchAction {
+        conversationGateway.deleteMessage(
+            ReviseRemoteMessageCommand(
+                accountUid = requireSignedInAccount().accountUid,
+                roomId = message.roomId,
+                messageId = message.messageId,
+                mutationId = "delete-${idFactory.createChatMessageId().raw}",
+                expectedRevision = message.revision,
+            ),
+        )
+    }
+
+    fun toggleReaction(
+        message: RemoteCachedMessage,
+        emoji: String,
+    ) = launchAction {
+        val reacted = emoji !in mutableUiState.value.ownReactions[message.messageId].orEmpty()
+        conversationGateway.toggleReaction(
+            ToggleRemoteReactionCommand(
+                accountUid = requireSignedInAccount().accountUid,
+                roomId = message.roomId,
+                messageId = message.messageId,
+                emoji = emoji,
+                reacted = reacted,
+            ),
+        )
+        mutableUiState.update { state ->
+            val reactions = state.ownReactions[message.messageId].orEmpty().toMutableSet()
+            if (reacted) reactions += emoji else reactions -= emoji
+            state.copy(ownReactions = state.ownReactions + (message.messageId to reactions))
+        }
+    }
+
+    fun loadOlderMessages() = launchAction {
+        val state = mutableUiState.value
+        if (state.hasReachedMessageStart || state.isLoadingOlderMessages) return@launchAction
+        val accountUid = requireSignedInAccount().accountUid
+        val roomId = selectedRoomId.value ?: return@launchAction
+        val oldestMessage = state.messages.firstOrNull { message -> message.serverCreatedAt != null }
+            ?: return@launchAction
+        mutableUiState.update { current -> current.copy(isLoadingOlderMessages = true) }
+        try {
+            val page = conversationGateway.loadMessagesBefore(
+                LoadRemoteMessagesPageCommand(
+                    accountUid = accountUid,
+                    roomId = roomId,
+                    beforeCreatedAt = requireNotNull(oldestMessage.serverCreatedAt),
+                    beforeMessageId = oldestMessage.messageId,
+                    limit = MESSAGE_PAGE_LIMIT,
+                ),
+            )
+            cacheRepository.cacheMessages(CacheRemoteMessagesCommand(accountUid, page.messages))
+            mutableUiState.update { current -> current.copy(hasReachedMessageStart = page.reachedStart) }
+        } finally {
+            mutableUiState.update { current -> current.copy(isLoadingOlderMessages = false) }
+        }
+    }
+
+    fun jumpToMessage(messageId: RemoteMessageId) = launchAction {
+        val state = mutableUiState.value
+        if (state.messages.any { message -> message.messageId == messageId }) {
+            mutableUiState.update { current -> current.copy(messageToRevealId = messageId) }
+            return@launchAction
+        }
+        val accountUid = requireSignedInAccount().accountUid
+        val roomId = selectedRoomId.value ?: return@launchAction
+        val message = conversationGateway.loadMessage(accountUid, roomId, messageId)
+            ?: throw RemoteChatException("The replied message is no longer available.")
+        cacheRepository.cacheMessages(CacheRemoteMessagesCommand(accountUid, listOf(message)))
+        mutableUiState.update { current -> current.copy(messageToRevealId = messageId) }
+    }
+
+    fun consumeMessageReveal() {
+        mutableUiState.update { state -> state.copy(messageToRevealId = null) }
     }
 
     fun clearNotice() {
@@ -311,6 +479,31 @@ class RemoteChatViewModel(
                         roomId?.let(cacheRepository::observeMessages) ?: flowOf(emptyList())
                     }.collect { messages ->
                         mutableUiState.update { state -> state.copy(messages = messages) }
+                        selectedRoomId.value?.let { roomId ->
+                            scheduleReadAcknowledgement(account.accountUid, roomId, messages)
+                        }
+                    }
+                }
+                launch {
+                    selectedRoomId.flatMapLatest { roomId ->
+                        roomId?.let(cacheRepository::observeDraft) ?: flowOf(null)
+                    }.collect { draft ->
+                        mutableUiState.update { state -> state.copy(composerText = draft?.body.orEmpty()) }
+                    }
+                }
+                launch {
+                    selectedRoomId.flatMapLatest { roomId ->
+                        if (roomId == null) flowOf(emptyList()) else {
+                            conversationGateway.observeTypingParticipants(account.accountUid, roomId)
+                        }
+                    }.catch { failure ->
+                        if (failure is CancellationException) throw failure
+                        publishFailure(failure)
+                        emit(emptyList())
+                    }.collect { participants ->
+                        mutableUiState.update { state ->
+                            state.copy(typingParticipantUids = participants.map { participant -> participant.profileUid })
+                        }
                     }
                 }
                 launch {
@@ -329,6 +522,9 @@ class RemoteChatViewModel(
                 awaitCancellation()
             }
         } finally {
+            stopTyping(selectedRoomId.value)
+            draftSaveJob?.cancel()
+            readAcknowledgementJob?.cancel()
             cacheRepository.clearActiveAccount()
             selectedRoomId.value = null
             roomVisibilityTracker.setSelectedRoom(null)
@@ -339,6 +535,10 @@ class RemoteChatViewModel(
                     rooms = emptyList(),
                     selectedRoomId = null,
                     messages = emptyList(),
+                    composerText = "",
+                    replyToMessageId = null,
+                    ownReactions = emptyMap(),
+                    typingParticipantUids = emptyList(),
                     isActionRunning = false,
                 )
             }
@@ -423,6 +623,7 @@ class RemoteChatViewModel(
         viewModelScope.launch {
             try {
                 conversationGateway.markRoomRead(accountUid, roomId)
+                acknowledgeMessagesAsRead(accountUid, roomId, mutableUiState.value.messages)
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
@@ -443,9 +644,86 @@ class RemoteChatViewModel(
         mutableUiState.update { state -> state.copy(notice = userMessage) }
     }
 
+    private fun startTypingHeartbeat(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ) {
+        if (typingRoomId == roomId && typingHeartbeatJob?.isActive == true) return
+        typingHeartbeatJob?.cancel()
+        typingRoomId = roomId
+        typingHeartbeatJob = viewModelScope.launch {
+            while (selectedRoomId.value == roomId && mutableUiState.value.composerText.isNotBlank()) {
+                try {
+                    conversationGateway.setTyping(accountUid, roomId, isTyping = true)
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    publishFailure(exception)
+                    return@launch
+                }
+                delay(TYPING_HEARTBEAT_MILLIS)
+            }
+        }
+    }
+
+    private fun scheduleReadAcknowledgement(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        messages: List<RemoteCachedMessage>,
+    ) {
+        readAcknowledgementJob?.cancel()
+        readAcknowledgementJob = viewModelScope.launch {
+            try {
+                acknowledgeMessagesAsRead(accountUid, roomId, messages)
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                publishFailure(exception)
+            }
+        }
+    }
+
+    private suspend fun acknowledgeMessagesAsRead(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        messages: List<RemoteCachedMessage>,
+    ) {
+        messages
+            .filter { message -> message.senderUid.raw != accountUid.raw }
+            .map { message -> message.messageId }
+            .chunked(MAXIMUM_ACKNOWLEDGEMENT_SIZE)
+            .filter { messageIds -> messageIds.isNotEmpty() }
+            .forEach { messageIds ->
+                conversationGateway.acknowledgeMessages(
+                    AcknowledgeRemoteMessagesCommand(accountUid, roomId, messageIds, read = true),
+                )
+            }
+    }
+
+    private fun stopTyping(roomId: RemoteRoomId?) {
+        typingHeartbeatJob?.cancel()
+        typingHeartbeatJob = null
+        typingRoomId = null
+        val accountUid = mutableUiState.value.account?.accountUid ?: return
+        roomId ?: return
+        viewModelScope.launch {
+            try {
+                conversationGateway.setTyping(accountUid, roomId, isTyping = false)
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                // Typing documents expire server-side; cleanup is best effort during navigation.
+            }
+        }
+    }
+
     private companion object {
         const val HUMAN_AUTHOR_KIND = "HUMAN"
         const val MESSAGE_BODY_LIMIT = 4_000
+        const val MESSAGE_PAGE_LIMIT = 50
+        const val MAXIMUM_ACKNOWLEDGEMENT_SIZE = 50
+        const val DRAFT_SAVE_DEBOUNCE_MILLIS = 300L
+        const val TYPING_HEARTBEAT_MILLIS = 5_000L
         const val REMOTE_LOGOUT_CLEANUP_TIMEOUT_MILLIS = 10_000L
     }
 }

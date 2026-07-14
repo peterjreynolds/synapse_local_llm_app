@@ -1,5 +1,6 @@
 package app.synapse.localllm.application
 
+import app.synapse.localllm.domain.remote.AcknowledgeRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteProfilesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteRoomsCommand
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 
@@ -58,9 +60,21 @@ class RemoteChatSessionSynchronizer(
             selectedRoomId
                 .filterNotNull()
                 .distinctUntilChanged()
-                .flatMapLatest { roomId -> conversationGateway.observeMessages(accountUid, roomId) }
-                .collect { messages ->
+                .flatMapLatest { roomId ->
+                    conversationGateway.observeMessages(accountUid, roomId).map { messages -> roomId to messages }
+                }
+                .collect { (roomId, messages) ->
                     cacheRepository.cacheMessages(CacheRemoteMessagesCommand(accountUid, messages))
+                    messages
+                        .filter { message -> message.senderUid.raw != accountUid.raw }
+                        .map { message -> message.messageId }
+                        .chunked(MAXIMUM_ACKNOWLEDGEMENT_SIZE)
+                        .filter { messageIds -> messageIds.isNotEmpty() }
+                        .forEach { messageIds ->
+                            conversationGateway.acknowledgeMessages(
+                                AcknowledgeRemoteMessagesCommand(accountUid, roomId, messageIds, read = false),
+                            )
+                        }
                 }
         }
         launchBoundary("reconcile pending remote messages", reportFailure) {
@@ -106,6 +120,13 @@ class RemoteChatSessionSynchronizer(
                         senderUid = operation.senderUid,
                         authorKind = HUMAN_AUTHOR_KIND,
                         body = operation.body,
+                        replyToMessageId = operation.replyToMessageId,
+                        editedAt = null,
+                        deletedAt = null,
+                        revision = 1,
+                        reactionCounts = emptyMap(),
+                        deliveredToCount = 0,
+                        readByCount = 0,
                         deliveryState = RemoteMessageDeliveryState.PENDING,
                         clientCreatedAt = operation.createdAt,
                         serverCreatedAt = null,
@@ -142,5 +163,6 @@ class RemoteChatSessionSynchronizer(
 
     private companion object {
         const val HUMAN_AUTHOR_KIND = "HUMAN"
+        const val MAXIMUM_ACKNOWLEDGEMENT_SIZE = 50
     }
 }

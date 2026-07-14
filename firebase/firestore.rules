@@ -121,7 +121,32 @@ service cloud.firestore {
         allow read: if isActiveRoomMember(roomId);
         allow create: if isActiveRoomMember(roomId) && validHumanMessage(messageId);
         allow update, delete: if false;
+
+        match /reactions/{reactionId} {
+          allow read, write: if false;
+        }
+
+        match /receipts/{uid} {
+          allow read, write: if false;
+        }
       }
+
+      match /typing/{uid} {
+        allow read: if isActiveRoomMember(roomId);
+        allow create, update: if isActiveRoomMember(roomId)
+          && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['expiresAt', 'uid', 'updatedAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt > request.time
+          && request.resource.data.expiresAt <= request.time + duration.value(15, 's');
+        allow delete: if isActiveRoomMember(roomId) && request.auth.uid == uid;
+      }
+    }
+
+    match /messageMutationReceipts/{receiptId} {
+      allow read, write: if false;
     }
 
     match /devices/{deviceId} {

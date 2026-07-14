@@ -5,28 +5,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,13 +37,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
-import app.synapse.localllm.domain.remote.RemoteCachedRoom
-import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
-import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import coil3.compose.AsyncImage
@@ -95,6 +80,15 @@ internal fun RemoteChatsPane(
             room = room,
             onBack = { viewModel.selectRoom(null) },
             onSend = viewModel::sendMessage,
+            onComposerChanged = viewModel::updateComposerText,
+            onReply = viewModel::replyToMessage,
+            onCancelReply = viewModel::cancelReply,
+            onEdit = viewModel::editMessage,
+            onDelete = viewModel::deleteMessage,
+            onReaction = viewModel::toggleReaction,
+            onLoadOlder = viewModel::loadOlderMessages,
+            onJumpToMessage = viewModel::jumpToMessage,
+            onMessageRevealed = viewModel::consumeMessageReveal,
             accountState = accountState,
             groupState = groupState,
             groupViewModel = groupViewModel,
@@ -175,204 +169,6 @@ private fun RemoteRoomList(
     }
 }
 
-@Composable
-private fun RemoteMessageThread(
-    state: RemoteChatUiState,
-    room: RemoteCachedRoom?,
-    onBack: () -> Unit,
-    onSend: (String) -> Unit,
-    accountState: RemoteAccountUiState,
-    groupState: RemoteGroupUiState,
-    groupViewModel: RemoteGroupViewModel,
-) {
-    var composerText by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf("") }
-    var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
-    val listState = rememberLazyListState()
-    val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room?.peerUid }
-    val currentProfile = state.profiles.firstOrNull { profile ->
-        profile.profileUid.raw == state.account?.accountUid?.raw
-    }
-    val title = if (room?.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room?.title ?: "Private conversation"
-
-    LaunchedEffect(showRoomMembers, room?.roomId) {
-        if (showRoomMembers && room?.kind == RemoteRoomKind.GROUP) {
-            groupViewModel.loadGroupDetails(room.roomId)
-        }
-    }
-
-    fun submit() {
-        if (composerText.isNotBlank() && !state.isActionRunning) {
-            onSend(composerText)
-            composerText = ""
-        }
-    }
-
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to conversations")
-            }
-            RemoteProfileAvatar(profile = peer, displayName = title)
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(title, fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = if (room?.kind == RemoteRoomKind.GROUP) "Group conversation" else remotePresenceLabel(peer),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { showRoomMembers = !showRoomMembers }) {
-                Icon(
-                    Icons.Default.Info,
-                    contentDescription = if (showRoomMembers) "Show messages" else "Show room members",
-                )
-            }
-        }
-        HorizontalDivider()
-        if (showRoomMembers) {
-            if (room?.kind == RemoteRoomKind.GROUP) {
-                RemoteGroupDetailsPane(
-                    details = groupState.details?.takeIf { details -> details.roomId == room.roomId },
-                    profiles = state.profiles,
-                    blockedProfileUids = accountState.blockedProfileUids,
-                    isLoading = groupState.isLoading,
-                    isActionRunning = groupState.isActionRunning,
-                    viewModel = groupViewModel,
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                RemoteRoomMembers(
-                    profiles = listOfNotNull(currentProfile, peer).distinctBy { profile -> profile.profileUid },
-                    currentAccountUid = state.account?.accountUid?.raw,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        } else if (state.messages.isEmpty()) {
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "Messages will synchronize here.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-            ) {
-                items(state.messages, key = { message -> message.messageId.raw }) { message ->
-                    RemoteMessageBubble(
-                        message = message,
-                        isCurrentAccount = message.senderUid.raw == state.account?.accountUid?.raw,
-                        senderDisplayName = if (room?.kind == RemoteRoomKind.GROUP) {
-                            state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
-                                ?.displayName
-                                ?: "Group member"
-                        } else {
-                            null
-                        },
-                    )
-                }
-            }
-        }
-        if (!showRoomMembers) {
-            HorizontalDivider()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = composerText,
-                    onValueChange = { value -> composerText = value.take(MAXIMUM_MESSAGE_LENGTH) },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message") },
-                    maxLines = 5,
-                    enabled = !state.isActionRunning,
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Sentences,
-                        imeAction = ImeAction.Send,
-                    ),
-                    keyboardActions = KeyboardActions(onSend = { submit() }),
-                )
-                FilledIconButton(
-                    onClick = ::submit,
-                    enabled = composerText.isNotBlank() && !state.isActionRunning,
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RemoteMessageBubble(
-    message: RemoteCachedMessage,
-    isCurrentAccount: Boolean,
-    senderDisplayName: String?,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isCurrentAccount) Arrangement.End else Arrangement.Start,
-    ) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = if (isCurrentAccount) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
-            modifier = Modifier.fillMaxWidth(0.82f),
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                if (!isCurrentAccount && senderDisplayName != null) {
-                    Text(
-                        senderDisplayName,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                }
-                Text(message.body)
-                if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = when (message.deliveryState) {
-                            RemoteMessageDeliveryState.PENDING -> "Sending…"
-                            RemoteMessageDeliveryState.SENT -> "Sent"
-                            RemoteMessageDeliveryState.FAILED -> message.failureReason ?: "Send failed"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 internal fun RemotePeoplePane(
@@ -596,7 +392,7 @@ private fun RemotePeopleListItem(
 }
 
 @Composable
-private fun RemoteRoomMembers(
+internal fun RemoteRoomMembers(
     profiles: List<RemoteCachedProfile>,
     currentAccountUid: String?,
     modifier: Modifier = Modifier,
@@ -706,7 +502,6 @@ internal fun EmptyRemotePane(
     }
 }
 
-private const val MAXIMUM_MESSAGE_LENGTH = 4_000
 private val REMOTE_PRESENCE_FORMATTER: DateTimeFormatter =
     DateTimeFormatter
         .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)

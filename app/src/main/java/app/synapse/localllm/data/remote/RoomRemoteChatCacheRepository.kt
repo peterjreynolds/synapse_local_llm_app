@@ -3,6 +3,7 @@ package app.synapse.localllm.data.remote
 import androidx.room.withTransaction
 import app.synapse.localllm.data.db.RemoteChatCacheDao
 import app.synapse.localllm.data.db.RemoteMessageCacheEntity
+import app.synapse.localllm.data.db.RemoteMessageDraftEntity
 import app.synapse.localllm.data.db.RemoteMessageOutboxEntity
 import app.synapse.localllm.data.db.RemoteProfileCacheEntity
 import app.synapse.localllm.data.db.RemoteRoomCacheEntity
@@ -22,6 +23,7 @@ import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
+import app.synapse.localllm.domain.remote.RemoteMessageDraft
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
 import app.synapse.localllm.domain.remote.RemoteOutboxState
@@ -41,6 +43,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import org.json.JSONObject
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RoomRemoteChatCacheRepository(
@@ -103,6 +106,17 @@ class RoomRemoteChatCacheRepository(
             } else {
                 remoteChatCacheDao.observePendingOutbox(session.accountUid.raw).map { operations ->
                     operations.map(RemoteMessageOutboxEntity::toDomain)
+                }
+            }
+        }
+
+    override fun observeDraft(roomId: RemoteRoomId): Flow<RemoteMessageDraft?> =
+        sessionController.activeSession.flatMapLatest { session ->
+            if (session == null) {
+                flowOf(null)
+            } else {
+                remoteChatCacheDao.observeDraft(session.accountUid.raw, roomId.raw).map { draft ->
+                    draft?.toDomain()
                 }
             }
         }
@@ -210,6 +224,24 @@ class RoomRemoteChatCacheRepository(
         return receipt(cursor.accountUid, RemoteCacheMutation.CURSOR_SAVED, 1)
     }
 
+    override suspend fun saveDraft(draft: RemoteMessageDraft): RemoteCacheMutationReceipt {
+        requireActiveAccount(draft.accountUid)
+        require(draft.body.isNotEmpty() && draft.body.length <= MAXIMUM_MESSAGE_BODY_LENGTH) {
+            "Drafts must contain 1-$MAXIMUM_MESSAGE_BODY_LENGTH characters."
+        }
+        remoteChatCacheDao.upsertDraft(draft.toEntity())
+        return receipt(draft.accountUid, RemoteCacheMutation.DRAFT_SAVED, 1)
+    }
+
+    override suspend fun clearDraft(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCacheMutationReceipt {
+        requireActiveAccount(accountUid)
+        val affectedRows = remoteChatCacheDao.deleteDraft(accountUid.raw, roomId.raw)
+        return receipt(accountUid, RemoteCacheMutation.DRAFT_CLEARED, affectedRows)
+    }
+
     override suspend fun findSyncCursor(
         collectionName: String,
         scopeId: String,
@@ -240,6 +272,7 @@ class RoomRemoteChatCacheRepository(
 
     private companion object {
         const val INSERT_IGNORED = -1L
+        const val MAXIMUM_MESSAGE_BODY_LENGTH = 4_000
     }
 }
 
@@ -327,6 +360,13 @@ private fun RemoteCachedMessage.toEntity(cachedAt: Instant): RemoteMessageCacheE
         senderUid = senderUid.raw,
         authorKind = authorKind,
         body = body,
+        replyToMessageId = replyToMessageId?.raw,
+        editedAtEpochMillis = editedAt?.toEpochMilli(),
+        deletedAtEpochMillis = deletedAt?.toEpochMilli(),
+        revision = revision,
+        reactionCountsJson = encodeReactionCounts(reactionCounts),
+        deliveredToCount = deliveredToCount,
+        readByCount = readByCount,
         deliveryState = deliveryState.name,
         clientCreatedAtEpochMillis = clientCreatedAt.toEpochMilli(),
         serverCreatedAtEpochMillis = serverCreatedAt?.toEpochMilli(),
@@ -343,6 +383,13 @@ private fun RemoteMessageCacheEntity.toDomain(): RemoteCachedMessage =
         senderUid = RemoteProfileUid(senderUid),
         authorKind = authorKind,
         body = body,
+        replyToMessageId = replyToMessageId?.let(::RemoteMessageId),
+        editedAt = editedAtEpochMillis?.let(Instant::ofEpochMilli),
+        deletedAt = deletedAtEpochMillis?.let(Instant::ofEpochMilli),
+        revision = revision,
+        reactionCounts = decodeReactionCounts(reactionCountsJson),
+        deliveredToCount = deliveredToCount,
+        readByCount = readByCount,
         deliveryState = RemoteMessageDeliveryState.valueOf(deliveryState),
         clientCreatedAt = Instant.ofEpochMilli(clientCreatedAtEpochMillis),
         serverCreatedAt = serverCreatedAtEpochMillis?.let(Instant::ofEpochMilli),
@@ -358,12 +405,45 @@ private fun RemoteMessageOutboxOperation.toEntity(): RemoteMessageOutboxEntity =
         idempotencyKey = idempotencyKey.raw,
         senderUid = senderUid.raw,
         body = body,
+        replyToMessageId = replyToMessageId?.raw,
         state = state.name,
         attemptCount = attemptCount,
         createdAtEpochMillis = createdAt.toEpochMilli(),
         lastAttemptAtEpochMillis = lastAttemptAt?.toEpochMilli(),
         failureReason = failureReason,
     )
+
+private fun RemoteMessageDraft.toEntity(): RemoteMessageDraftEntity =
+    RemoteMessageDraftEntity(
+        accountUid = accountUid.raw,
+        remoteRoomId = roomId.raw,
+        body = body,
+        updatedAtEpochMillis = updatedAt.toEpochMilli(),
+    )
+
+private fun RemoteMessageDraftEntity.toDomain(): RemoteMessageDraft =
+    RemoteMessageDraft(
+        accountUid = RemoteAccountUid(accountUid),
+        roomId = RemoteRoomId(remoteRoomId),
+        body = body,
+        updatedAt = Instant.ofEpochMilli(updatedAtEpochMillis),
+    )
+
+private fun encodeReactionCounts(reactionCounts: Map<String, Int>): String =
+    JSONObject(reactionCounts.toSortedMap()).toString()
+
+private fun decodeReactionCounts(encodedCounts: String): Map<String, Int> {
+    val json = JSONObject(encodedCounts)
+    return buildMap {
+        json.keys().forEach { emoji ->
+            val count = json.optInt(emoji, 0)
+            require(emoji.isNotBlank() && emoji.length <= 16 && count > 0) {
+                "Cached remote reaction state is malformed."
+            }
+            put(emoji, count)
+        }
+    }
+}
 
 private fun RemoteMessageOutboxEntity.toDomain(): RemoteMessageOutboxOperation =
     RemoteMessageOutboxOperation(
@@ -374,6 +454,7 @@ private fun RemoteMessageOutboxEntity.toDomain(): RemoteMessageOutboxOperation =
         idempotencyKey = RemoteIdempotencyKey(idempotencyKey),
         senderUid = RemoteProfileUid(senderUid),
         body = body,
+        replyToMessageId = replyToMessageId?.let(::RemoteMessageId),
         state = RemoteOutboxState.valueOf(state),
         attemptCount = attemptCount,
         createdAt = Instant.ofEpochMilli(createdAtEpochMillis),

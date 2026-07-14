@@ -48,6 +48,21 @@ depend on OpenClaw, Wingman, a Synapse governance runtime, or an external
 sidecar. The product name “Synapse” does not activate historical Synapse
 governance infrastructure.
 
+## Remote Chat Security Boundary
+
+Remote people, direct rooms, groups, and rich messages use Firebase
+Authentication, callable Cloud Functions, Firestore, Cloud Storage, and FCM.
+Membership and message mutations are authorized server-side, while an
+account-scoped Room cache supports offline display and an idempotent send
+outbox. Removed room access is reconciled into the local cache when the
+authoritative room list next synchronizes.
+
+Remote chat is not end-to-end encrypted. Firebase and authorized project
+operators remain inside the data trust boundary, even though transport and
+provider-managed storage encryption are used. Push payloads carry routing
+identifiers rather than plaintext message bodies. The phone-local AI rooms and
+memory system remain app-local and are a separate boundary from remote chat.
+
 ## Embedded Runtime
 
 The APK includes native `llama.cpp` libraries for `arm64-v8a`, but it does not

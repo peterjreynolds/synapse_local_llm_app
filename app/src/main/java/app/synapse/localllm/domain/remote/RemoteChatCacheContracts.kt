@@ -51,6 +51,8 @@ value class RemoteIdempotencyKey(val raw: String) {
 enum class RemoteMessageDeliveryState {
     PENDING,
     SENT,
+    DELIVERED,
+    READ,
     FAILED,
 }
 
@@ -130,11 +132,28 @@ data class RemoteCachedMessage(
     val senderUid: RemoteProfileUid,
     val authorKind: String,
     val body: String,
+    val replyToMessageId: RemoteMessageId?,
+    val editedAt: Instant?,
+    val deletedAt: Instant?,
+    val revision: Long,
+    val reactionCounts: Map<String, Int>,
+    val deliveredToCount: Int,
+    val readByCount: Int,
     val deliveryState: RemoteMessageDeliveryState,
     val clientCreatedAt: Instant,
     val serverCreatedAt: Instant?,
     val failureReason: String?,
-)
+) {
+    init {
+        require(revision >= 1L) { "Remote message revision must be positive." }
+        require(deliveredToCount >= 0 && readByCount >= 0) { "Remote message receipt counts cannot be negative." }
+        require(reactionCounts.keys.all { emoji -> emoji.isNotBlank() && emoji.length <= 16 }) {
+            "Remote reaction identifiers are invalid."
+        }
+        require(reactionCounts.values.all { count -> count > 0 }) { "Remote reaction counts must be positive." }
+        require(deletedAt != null || body.isNotBlank()) { "Active remote messages require a body." }
+    }
+}
 
 data class RemoteMessageOutboxOperation(
     val accountUid: RemoteAccountUid,
@@ -144,6 +163,7 @@ data class RemoteMessageOutboxOperation(
     val idempotencyKey: RemoteIdempotencyKey,
     val senderUid: RemoteProfileUid,
     val body: String,
+    val replyToMessageId: RemoteMessageId?,
     val state: RemoteOutboxState,
     val attemptCount: Int,
     val createdAt: Instant,
@@ -180,6 +200,13 @@ data class EnqueueRemoteMessageCommand(
     val outboxOperation: RemoteMessageOutboxOperation,
 )
 
+data class RemoteMessageDraft(
+    val accountUid: RemoteAccountUid,
+    val roomId: RemoteRoomId,
+    val body: String,
+    val updatedAt: Instant,
+)
+
 enum class RemoteCacheMutation {
     PROFILES_CACHED,
     ROOMS_CACHED,
@@ -188,6 +215,8 @@ enum class RemoteCacheMutation {
     MESSAGE_ALREADY_ENQUEUED,
     DELIVERY_UPDATED,
     CURSOR_SAVED,
+    DRAFT_SAVED,
+    DRAFT_CLEARED,
 }
 
 data class RemoteCacheMutationReceipt(
@@ -211,6 +240,8 @@ interface RemoteChatCacheRepository {
 
     fun observePendingOutbox(): Flow<List<RemoteMessageOutboxOperation>>
 
+    fun observeDraft(roomId: RemoteRoomId): Flow<RemoteMessageDraft?>
+
     suspend fun cacheProfiles(command: CacheRemoteProfilesCommand): RemoteCacheMutationReceipt
 
     suspend fun cacheRooms(command: CacheRemoteRoomsCommand): RemoteCacheMutationReceipt
@@ -230,6 +261,13 @@ interface RemoteChatCacheRepository {
     ): RemoteCacheMutationReceipt
 
     suspend fun saveSyncCursor(cursor: RemoteSyncCursor): RemoteCacheMutationReceipt
+
+    suspend fun saveDraft(draft: RemoteMessageDraft): RemoteCacheMutationReceipt
+
+    suspend fun clearDraft(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCacheMutationReceipt
 
     suspend fun findSyncCursor(
         collectionName: String,

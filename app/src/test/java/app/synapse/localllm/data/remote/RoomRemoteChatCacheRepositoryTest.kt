@@ -16,6 +16,7 @@ import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
+import app.synapse.localllm.domain.remote.RemoteMessageDraft
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
 import app.synapse.localllm.domain.remote.RemoteOutboxState
@@ -151,6 +152,7 @@ class RoomRemoteChatCacheRepositoryTest {
         repository.activateAccount(PETER_ACCOUNT)
         cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
         repository.enqueueMessage(enqueueMessageCommand(PETER_ACCOUNT, "message-1", "idempotency-1"))
+        repository.saveDraft(RemoteMessageDraft(PETER_ACCOUNT, ROOM_ID, "Unsent thought", FixedClock.now()))
 
         val receipt = repository.cacheRooms(CacheRemoteRoomsCommand(PETER_ACCOUNT, emptyList()))
 
@@ -158,6 +160,46 @@ class RoomRemoteChatCacheRepositoryTest {
         assertTrue(repository.observeRooms().first().isEmpty())
         assertTrue(repository.observeMessages(ROOM_ID).first().isEmpty())
         assertTrue(repository.observePendingOutbox().first().isEmpty())
+        assertNull(repository.observeDraft(ROOM_ID).first())
+    }
+
+    @Test
+    fun draftsRemainAccountScopedAcrossSwitches() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
+        repository.saveDraft(RemoteMessageDraft(PETER_ACCOUNT, ROOM_ID, "Peter draft", FixedClock.now()))
+
+        repository.activateAccount(TRISH_ACCOUNT)
+        cacheRoom(TRISH_ACCOUNT, PETER_PROFILE)
+        assertNull(repository.observeDraft(ROOM_ID).first())
+        repository.saveDraft(RemoteMessageDraft(TRISH_ACCOUNT, ROOM_ID, "Trish draft", FixedClock.now()))
+
+        repository.activateAccount(PETER_ACCOUNT)
+        assertEquals("Peter draft", repository.observeDraft(ROOM_ID).first()?.body)
+        repository.clearDraft(PETER_ACCOUNT, ROOM_ID)
+        assertNull(repository.observeDraft(ROOM_ID).first())
+
+        repository.activateAccount(TRISH_ACCOUNT)
+        assertEquals("Trish draft", repository.observeDraft(ROOM_ID).first()?.body)
+    }
+
+    @Test
+    fun richMessageFieldsRoundTripThroughTheAccountCache() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
+        val richMessage = remoteMessage(PETER_ACCOUNT, "message-rich", "key-rich", FixedClock.now()).copy(
+            replyToMessageId = RemoteMessageId("message-parent"),
+            editedAt = FixedClock.now(),
+            revision = 3,
+            reactionCounts = mapOf("👍" to 2, "❤️" to 1),
+            deliveredToCount = 2,
+            readByCount = 1,
+            deliveryState = RemoteMessageDeliveryState.READ,
+        )
+
+        repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(richMessage)))
+
+        assertEquals(richMessage, repository.observeMessages(ROOM_ID).first().single())
     }
 
     @Test
@@ -250,6 +292,7 @@ class RoomRemoteChatCacheRepositoryTest {
                 idempotencyKey = cachedMessage.idempotencyKey,
                 senderUid = PETER_PROFILE,
                 body = cachedMessage.body,
+                replyToMessageId = null,
                 state = RemoteOutboxState.PENDING,
                 attemptCount = 0,
                 createdAt = cachedMessage.clientCreatedAt,
@@ -273,6 +316,13 @@ class RoomRemoteChatCacheRepositoryTest {
             senderUid = PETER_PROFILE,
             authorKind = "HUMAN",
             body = "Hello",
+            replyToMessageId = null,
+            editedAt = null,
+            deletedAt = null,
+            revision = 1,
+            reactionCounts = emptyMap(),
+            deliveredToCount = 0,
+            readByCount = 0,
             deliveryState = if (serverCreatedAt == null) {
                 RemoteMessageDeliveryState.PENDING
             } else {

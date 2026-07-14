@@ -2,8 +2,12 @@ package app.synapse.localllm.ui
 
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
+import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteProfileUid
+import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
+import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
+import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
@@ -89,6 +93,22 @@ class RemoteChatPresentationTest {
         )
     }
 
+    @Test
+    fun richMessagePresentationUsesServerTimeAndExplicitDeliveryLabels() {
+        val serverTime = NOW.plusSeconds(10)
+        assertEquals(serverTime, remoteMessage(RemoteMessageDeliveryState.SENT, serverTime).displayInstant())
+        assertEquals("Sending…", remoteMessageDeliveryLabel(remoteMessage(RemoteMessageDeliveryState.PENDING)))
+        assertEquals("Sent", remoteMessageDeliveryLabel(remoteMessage(RemoteMessageDeliveryState.SENT)))
+        assertEquals("Delivered", remoteMessageDeliveryLabel(remoteMessage(RemoteMessageDeliveryState.DELIVERED)))
+        assertEquals("Read", remoteMessageDeliveryLabel(remoteMessage(RemoteMessageDeliveryState.READ)))
+        assertEquals(
+            "Network unavailable",
+            remoteMessageDeliveryLabel(
+                remoteMessage(RemoteMessageDeliveryState.FAILED).copy(failureReason = "Network unavailable"),
+            ),
+        )
+    }
+
     private fun profile(
         isOnline: Boolean,
         lastSeenAt: Instant?,
@@ -163,6 +183,30 @@ class RemoteChatPresentationTest {
         joinedAt = NOW,
         lastReadAt = null,
         remoteUpdatedAt = NOW,
+    )
+
+    private fun remoteMessage(
+        deliveryState: RemoteMessageDeliveryState,
+        serverCreatedAt: Instant? = null,
+    ) = RemoteCachedMessage(
+        accountUid = RemoteAccountUid("peter-uid"),
+        roomId = RemoteRoomId("direct_${"a".repeat(64)}"),
+        messageId = RemoteMessageId("message-1"),
+        idempotencyKey = RemoteIdempotencyKey("message-1"),
+        senderUid = RemoteProfileUid("peter-uid"),
+        authorKind = "HUMAN",
+        body = "Hello",
+        replyToMessageId = null,
+        editedAt = null,
+        deletedAt = null,
+        revision = 1,
+        reactionCounts = emptyMap(),
+        deliveredToCount = 0,
+        readByCount = 0,
+        deliveryState = deliveryState,
+        clientCreatedAt = NOW,
+        serverCreatedAt = serverCreatedAt,
+        failureReason = null,
     )
 
     private companion object {

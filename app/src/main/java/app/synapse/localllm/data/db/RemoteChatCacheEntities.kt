@@ -83,6 +83,13 @@ data class RemoteMessageCacheEntity(
     val senderUid: String,
     val authorKind: String,
     val body: String,
+    val replyToMessageId: String?,
+    val editedAtEpochMillis: Long?,
+    val deletedAtEpochMillis: Long?,
+    val revision: Long,
+    val reactionCountsJson: String,
+    val deliveredToCount: Int,
+    val readByCount: Int,
     val deliveryState: String,
     val clientCreatedAtEpochMillis: Long,
     val serverCreatedAtEpochMillis: Long?,
@@ -115,11 +122,32 @@ data class RemoteMessageOutboxEntity(
     val idempotencyKey: String,
     val senderUid: String,
     val body: String,
+    val replyToMessageId: String?,
     val state: String,
     val attemptCount: Int,
     val createdAtEpochMillis: Long,
     val lastAttemptAtEpochMillis: Long?,
     val failureReason: String?,
+)
+
+@Entity(
+    tableName = "remote_message_drafts",
+    primaryKeys = ["accountUid", "remoteRoomId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RemoteRoomCacheEntity::class,
+            parentColumns = ["accountUid", "remoteRoomId"],
+            childColumns = ["accountUid", "remoteRoomId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("accountUid")],
+)
+data class RemoteMessageDraftEntity(
+    val accountUid: String,
+    val remoteRoomId: String,
+    val body: String,
+    val updatedAtEpochMillis: Long,
 )
 
 @Entity(
