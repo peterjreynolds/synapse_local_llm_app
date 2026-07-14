@@ -261,6 +261,13 @@ test("membership removal serializes against send and revokes typing access", asy
     }),
   );
   await assertFails(
+    setDoc(joshTypingReference, {
+      expiresAt: Timestamp.fromMillis(Date.now() + 10_000),
+      uid: josh.uid,
+      updatedAt: serverTimestamp(),
+    }),
+  );
+  await assertFails(
     setDoc(doc(joshClient.firestore, "rooms", roomId, "typing", trish.uid), {
       expiresAt: Timestamp.fromMillis(Date.now() + 10_000),
       uid: trish.uid,

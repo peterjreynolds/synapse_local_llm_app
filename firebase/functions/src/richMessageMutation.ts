@@ -2,6 +2,7 @@ import {DocumentReference, DocumentSnapshot, Timestamp, Transaction} from "fireb
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {requireActiveAccount} from "./accountAuthorization.js";
 import {requireAttachmentUpload} from "./attachmentMutation.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
 import {
   buildMessageMutationReceiptId,
@@ -31,6 +32,7 @@ export const sendRemoteMessage = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{messageId: string; revision: number; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "conversationMutation");
     const command = parseSendRemoteMessageCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     const messageReference = roomReference.collection("messages").doc(command.messageId);
@@ -121,6 +123,7 @@ export const editRemoteMessage = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{messageId: string; revision: number; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "conversationMutation");
     const command = parseEditRemoteMessageCommand(request.data);
     return reviseOwnMessage(
       actorUid,
@@ -158,6 +161,7 @@ export const deleteRemoteMessage = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{messageId: string; revision: number; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "conversationMutation");
     const command = parseDeleteRemoteMessageCommand(request.data);
     return reviseOwnMessage(
       actorUid,
@@ -198,6 +202,7 @@ export const toggleRemoteReaction = onCall(
     roomId: string;
   }> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "conversationMutation");
     const command = parseToggleRemoteReactionCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     const messageReference = roomReference.collection("messages").doc(command.messageId);
@@ -255,6 +260,7 @@ export const acknowledgeRemoteMessages = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{acknowledgedCount: number; read: boolean; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "conversationMutation");
     const command = parseAcknowledgeRemoteMessagesCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     let acknowledgedCount = 0;

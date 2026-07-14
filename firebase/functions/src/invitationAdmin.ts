@@ -7,6 +7,7 @@ import {
 } from "./firebaseAdmin.js";
 import {digestInvitationCode} from "./identity.js";
 import {requireActiveOwner} from "./ownerAuthorization.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 
 const MAXIMUM_INVITATION_USES = 100;
 const MAXIMUM_INVITATION_LIFETIME_HOURS = 24 * 30;
@@ -85,6 +86,7 @@ export const createInvitation = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<CreateInvitationReceipt> => {
     const ownerUid = await requireActiveOwner(request.auth);
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const command = parseCreateInvitationCommand(request.data);
     const invitationCode = randomBytes(32).toString("base64url");
     const invitationId = digestInvitationCode(invitationCode);
@@ -125,6 +127,7 @@ export const revokeInvitation = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{invitationId: string; state: "REVOKED"}> => {
     const ownerUid = await requireActiveOwner(request.auth);
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const invitationId = parseInvitationId(request.data);
     const invitationReference = firebaseAdminFirestore.doc(`invitations/${invitationId}`);
     const revokedAt = Timestamp.now();
@@ -156,6 +159,7 @@ export const setRegistrationApprovalRequired = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{approvalRequired: boolean}> => {
     const ownerUid = await requireActiveOwner(request.auth);
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const approvalRequired = parseApprovalRequired(request.data);
     const updatedAt = Timestamp.now();
     const writes = firebaseAdminFirestore.batch();

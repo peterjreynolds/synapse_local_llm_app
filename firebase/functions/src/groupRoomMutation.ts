@@ -6,6 +6,7 @@ import {
   requireActiveAccount,
   requireRecentActiveAccount,
 } from "./accountAuthorization.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
 import {
   requireActiveGroupActor,
@@ -33,6 +34,7 @@ export const createGroupRoom = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{memberCount: number; revision: 1; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseCreateGroupRoomCommand(request.data);
     if (command.memberUids.includes(actorUid)) {
       throw new HttpsError("invalid-argument", "Do not include the creator in the member list.");
@@ -95,6 +97,7 @@ export const addGroupMembers = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{activeMemberCount: number; revision: number; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseGroupMemberListCommand(request.data);
     if (command.memberUids.includes(actorUid)) {
       throw new HttpsError("invalid-argument", "The actor is already a group member.");
@@ -169,6 +172,7 @@ export const removeGroupMember = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{revision: number; roomId: string; targetUid: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseGroupMemberCommand(request.data);
     if (command.targetUid === actorUid) {
       throw new HttpsError("invalid-argument", "Use leave group for the current account.");
@@ -217,6 +221,7 @@ export const setGroupMemberRole = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{revision: number; role: "ADMIN" | "MEMBER"; roomId: string; targetUid: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseSetGroupMemberRoleCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     let revision = 0;
@@ -258,6 +263,7 @@ export const transferGroupOwnership = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{ownerUid: string; revision: number; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseGroupMemberCommand(request.data);
     if (command.targetUid === actorUid) {
       throw new HttpsError("invalid-argument", "Select another active group member.");
@@ -294,6 +300,7 @@ export const leaveGroupRoom = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{left: true; revision: number; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseGroupRoomCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     let revision = 0;
@@ -327,6 +334,7 @@ export const renameGroupRoom = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{revision: number; roomId: string; title: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseRenameGroupRoomCommand(request.data);
     const revision = await updateGroupPresentation(
       actorUid,
@@ -346,6 +354,7 @@ export const setGroupAvatar = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{avatarObjectPath: string | null; revision: number; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseSetGroupAvatarCommand(request.data);
     const revision = await updateGroupPresentation(
       actorUid,
@@ -365,6 +374,7 @@ export const updateGroupPreferences = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{archived: boolean; muted: boolean; pinned: boolean; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseUpdateGroupPreferencesCommand(request.data);
     await persistRoomPreferences(actorUid, {
       archived: command.archived,
@@ -383,6 +393,7 @@ export const deleteGroupRoom = onCall(
       request.auth,
       RECENT_GROUP_DELETION_AUTHENTICATION_SECONDS,
     );
+    await enforceCallableRateLimit(actorUid, "groupMutation");
     const command = parseDeleteGroupRoomCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     await firebaseAdminFirestore.runTransaction(async (transaction) => {

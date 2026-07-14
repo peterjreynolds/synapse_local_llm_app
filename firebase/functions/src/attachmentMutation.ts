@@ -1,6 +1,7 @@
 import {Timestamp} from "firebase-admin/firestore";
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {requireActiveAccount} from "./accountAuthorization.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {
   buildAttachmentCommandDigest,
   buildAttachmentObjectPath,
@@ -27,6 +28,7 @@ export const prepareRemoteAttachment = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<AttachmentUploadReceipt> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "attachmentMutation");
     const command = parsePrepareRemoteAttachmentCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     const messageReference = roomReference.collection("messages").doc(command.messageId);
@@ -96,6 +98,7 @@ export const finalizeRemoteAttachment = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<AttachmentUploadReceipt> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "attachmentMutation");
     const command = parseFinalizeRemoteAttachmentCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     const uploadReference = firebaseAdminFirestore.doc(`attachmentUploads/${command.attachmentId}`);
@@ -144,6 +147,7 @@ export const cancelRemoteAttachment = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{attachmentId: string; status: "CANCELLED" | "CLEANED"}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "attachmentMutation");
     const command = parseFinalizeRemoteAttachmentCommand(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     const uploadReference = firebaseAdminFirestore.doc(`attachmentUploads/${command.attachmentId}`);

@@ -2,6 +2,7 @@ import {createHash, randomBytes} from "node:crypto";
 import {DocumentReference, DocumentSnapshot, Timestamp, Transaction} from "firebase-admin/firestore";
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {requireActiveAccount} from "./accountAuthorization.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
 import {
   readRoomAiConfigurationSnapshot,
@@ -51,6 +52,7 @@ export const claimNextLocalAiResponse = onCall(
   {region: FIREBASE_FUNCTIONS_REGION, timeoutSeconds: 30},
   async (request): Promise<{claim: RemoteAiClaim | null}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "aiHostPolling");
     const {deviceId} = parseLocalAiHostCommand(request.data);
     const queueReference = firebaseAdminFirestore.collection(`localAiHostQueues/${deviceId}/jobs`);
     const candidateSnapshots = await queueReference.orderBy("createdAt", "asc")
@@ -87,6 +89,7 @@ export const completeLocalAiResponse = onCall(
   {region: FIREBASE_FUNCTIONS_REGION, timeoutSeconds: 30},
   async (request): Promise<{messageId: string; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "aiMutation");
     const command = parseCompleteLocalAiResponseCommand(request.data);
     const jobReference = localAiJobReference(command.deviceId, command.jobId);
     const auditReference = firebaseAdminFirestore.doc(`remoteAiResponseAudits/${command.jobId}`);
@@ -189,6 +192,7 @@ export const failLocalAiResponse = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{retryScheduled: boolean}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "aiMutation");
     const command = parseFailLocalAiResponseCommand(request.data);
     const jobReference = localAiJobReference(command.deviceId, command.jobId);
     const auditReference = firebaseAdminFirestore.doc(`remoteAiResponseAudits/${command.jobId}`);
@@ -242,6 +246,7 @@ export const skipLocalAiResponse = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{skipped: true}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "aiMutation");
     const command = parseSkipLocalAiResponseCommand(request.data);
     const jobReference = localAiJobReference(command.deviceId, command.jobId);
     const auditReference = firebaseAdminFirestore.doc(`remoteAiResponseAudits/${command.jobId}`);

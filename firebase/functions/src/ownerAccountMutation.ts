@@ -18,6 +18,7 @@ import {
   validateNewAccountPassword,
   type AccountRole,
 } from "./identity.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {requireActiveOwner, requireRecentActiveOwner} from "./ownerAuthorization.js";
 
 const RECENT_OWNER_AUTHENTICATION_SECONDS = 5 * 60;
@@ -36,6 +37,7 @@ export const createAccountForUser = onCall(
       request.auth,
       RECENT_OWNER_AUTHENTICATION_SECONDS,
     );
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const command = parseCreateOwnerAccountCommand(request.data);
     const reservationId = randomUUID();
     const usernameReference = firebaseAdminFirestore.doc(`usernames/${command.usernameNormalized}`);
@@ -105,6 +107,7 @@ export const setOwnerAccountEnabled = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{accountState: "ACTIVE" | "DISABLED"; targetUid: string}> => {
     const ownerUid = await requireActiveOwner(request.auth);
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const command = parseTargetEnabledCommand(request.data);
     if (command.targetUid === ownerUid) {
       throw new HttpsError("failed-precondition", "The owner account cannot disable itself.");
@@ -152,6 +155,7 @@ export const revokeOwnerAccountSessions = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{targetUid: string}> => {
     const ownerUid = await requireActiveOwner(request.auth);
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const targetUid = parseTargetUid(request.data);
     if (targetUid === ownerUid) {
       throw new HttpsError("failed-precondition", "Use local sign-out for the current owner session.");
@@ -175,6 +179,7 @@ export const deleteOwnerAccount = onCall(
       request.auth,
       RECENT_OWNER_AUTHENTICATION_SECONDS,
     );
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const command = parseDeleteAccountCommand(request.data);
     if (command.targetUid === ownerUid) {
       throw new HttpsError("failed-precondition", "The owner account cannot delete itself.");

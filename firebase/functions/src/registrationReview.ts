@@ -7,6 +7,7 @@ import {
   firebaseAdminFirestore,
 } from "./firebaseAdmin.js";
 import {buildAccountClaims, type AccountState} from "./identity.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {requireActiveOwner} from "./ownerAuthorization.js";
 
 type RegistrationDecision = "APPROVE" | "REJECT";
@@ -25,6 +26,7 @@ export const reviewRegistration = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<ReviewRegistrationReceipt> => {
     const ownerUid = await requireActiveOwner(request.auth);
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const command = parseReviewRegistrationCommand(request.data);
     if (command.targetUid === ownerUid) {
       throw new HttpsError("failed-precondition", "The owner account cannot review itself.");

@@ -7,6 +7,7 @@ import {
   firebaseAdminMessaging,
 } from "./firebaseAdmin.js";
 import {requireActiveOwner} from "./ownerAuthorization.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 
 interface OwnerDeviceSummary {
   active: boolean;
@@ -39,6 +40,7 @@ export const removeOwnerDevice = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{deviceId: string; targetUid: string}> => {
     const ownerUid = await requireActiveOwner(request.auth);
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const command = parseDeviceCommand(request.data);
     const deviceReference = firebaseAdminFirestore.doc(`devices/${command.deviceId}`);
     const device = await deviceReference.get();
@@ -63,6 +65,7 @@ export const sendOwnerTestPush = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{deviceId: string; messageId: string; targetUid: string}> => {
     const ownerUid = await requireActiveOwner(request.auth);
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const command = parseDeviceCommand(request.data);
     const device = await firebaseAdminFirestore.doc(`devices/${command.deviceId}`).get();
     const installationId = device.get("installationId");

@@ -7,6 +7,7 @@ import {
   firebaseAdminFirestore,
 } from "./firebaseAdmin.js";
 import {buildAccountClaims, validateNewAccountPassword, type AccountRole} from "./identity.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {isRecentAuthentication, requireRecentActiveOwner} from "./ownerAuthorization.js";
 
 const RECENT_AUTHENTICATION_SECONDS = 5 * 60;
@@ -18,6 +19,7 @@ export const resetOwnerAccountPassword = onCall(
       request.auth,
       RECENT_AUTHENTICATION_SECONDS,
     );
+    await enforceCallableRateLimit(ownerUid, "ownerMutation");
     const command = parseOwnerPasswordResetCommand(request.data);
     if (command.targetUid === ownerUid) {
       throw new HttpsError("failed-precondition", "Change the owner password from the profile screen.");

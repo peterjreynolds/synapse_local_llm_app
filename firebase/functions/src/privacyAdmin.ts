@@ -10,6 +10,7 @@ import {
   firebaseAdminFirestore,
 } from "./firebaseAdmin.js";
 import {parseTargetUid} from "./domain.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 
 const RECENT_ACCOUNT_AUTHENTICATION_SECONDS = 5 * 60;
 const MAXIMUM_BLOCK_RESULTS = 500;
@@ -67,6 +68,7 @@ export const registerOwnDevice = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{deviceId: string; registered: true}> => {
     const {uid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(uid, "conversationMutation");
     const installationId = parseInstallationId(request.data);
     const deviceId = createHash("sha256").update(installationId, "utf8").digest("hex");
     const deviceReference = firebaseAdminFirestore.doc(`devices/${deviceId}`);
@@ -93,6 +95,7 @@ export const removeOwnDevice = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{deviceId: string; removed: boolean}> => {
     const {uid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(uid, "conversationMutation");
     const deviceId = parseDeviceId(request.data);
     const deviceReference = firebaseAdminFirestore.doc(`devices/${deviceId}`);
     const device = await deviceReference.get();
@@ -119,6 +122,7 @@ export const setUserBlocked = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{blocked: boolean; targetUid: string}> => {
     const {uid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(uid, "conversationMutation");
     const command = parseBlockCommand(request.data);
     if (command.targetUid === uid) {
       throw new HttpsError("invalid-argument", "An account cannot block itself.");
@@ -173,6 +177,7 @@ export const requestAccountDeletion = onCall(
       request.auth,
       RECENT_ACCOUNT_AUTHENTICATION_SECONDS,
     );
+    await enforceCallableRateLimit(uid, "conversationMutation");
     const requestedAt = Timestamp.now();
     const requestReference = firebaseAdminFirestore.doc(`accountDeletionRequests/${uid}`);
     await firebaseAdminFirestore.runTransaction(async (transaction) => {
@@ -198,6 +203,7 @@ export const cancelAccountDeletionRequest = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{deletionRequestPending: false}> => {
     const {uid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(uid, "conversationMutation");
     const requestReference = firebaseAdminFirestore.doc(`accountDeletionRequests/${uid}`);
     const cancelledAt = Timestamp.now();
     await firebaseAdminFirestore.runTransaction(async (transaction) => {

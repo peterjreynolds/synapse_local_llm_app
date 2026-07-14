@@ -23,6 +23,7 @@ import {requireActiveAccount} from "./accountAuthorization.js";
 import {
   buildReciprocalBlockReferences,
 } from "./privacyAdmin.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 
 export {registerWithInvite} from "./registration.js";
 export {
@@ -151,6 +152,7 @@ export const openDirectRoom = onCall(
   {region: REGION},
   async (request): Promise<{roomId: string}> => {
     const callerUid = (await requireActiveAccount(request.auth)).uid;
+    await enforceCallableRateLimit(callerUid, "conversationMutation");
 
     let targetUid: string;
     try {
@@ -232,10 +234,8 @@ export const openDirectRoom = onCall(
 export const markRoomRead = onCall(
   {region: REGION},
   async (request): Promise<{roomId: string}> => {
-    const callerUid = request.auth?.uid;
-    if (!callerUid) {
-      throw new HttpsError("unauthenticated", "Sign in before marking a room read.");
-    }
+    const {uid: callerUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(callerUid, "conversationMutation");
     const roomId =
       typeof request.data === "object" && request.data !== null && "roomId" in request.data
         ? (request.data as {roomId?: unknown}).roomId

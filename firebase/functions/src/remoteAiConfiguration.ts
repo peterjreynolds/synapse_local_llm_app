@@ -2,6 +2,7 @@ import {randomUUID} from "node:crypto";
 import {DocumentReference, DocumentSnapshot, Timestamp, Transaction} from "firebase-admin/firestore";
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {requireActiveAccount} from "./accountAuthorization.js";
+import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
 import {
   LOCAL_AI_PARTICIPANT_ID,
@@ -18,6 +19,7 @@ export const getRoomAiConfiguration = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<RemoteRoomAiConfiguration> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "aiHostPolling");
     const {roomId} = parseRoomAiQuery(request.data);
     const roomReference = firebaseAdminFirestore.doc(`rooms/${roomId}`);
     const configurationReference = firebaseAdminFirestore.doc(`roomAiConfigurations/${roomId}`);
@@ -33,6 +35,7 @@ export const updateRoomAiConfiguration = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<RemoteRoomAiConfiguration> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "aiMutation");
     const command = parseUpdateRemoteAiConfigurationCommand(request.data);
     if (command.hostedAiEnabled) {
       throw new HttpsError(
@@ -108,6 +111,7 @@ export const heartbeatLocalAiHost = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{hostedRoomCount: number; updatedAtMillis: number}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "aiHostPolling");
     const {deviceId} = parseLocalAiHostCommand(request.data);
     const deviceReference = firebaseAdminFirestore.doc(`devices/${deviceId}`);
     const deviceSnapshot = await deviceReference.get();
