@@ -99,6 +99,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /blocks/{blockId} {
+      allow read, write: if false;
+    }
+
+    match /accountDeletionRequests/{uid} {
+      allow read, write: if false;
+    }
+
     match /rooms/{roomId} {
       allow get, list: if isActiveUser()
         && request.auth.uid in resource.data.activeMemberIds;

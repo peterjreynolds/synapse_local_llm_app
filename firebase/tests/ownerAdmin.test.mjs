@@ -272,10 +272,23 @@ test("owner completes account, password, device, session, and deletion operation
   assert.equal(audit.data.events.some((event) => event.eventType === "ACCOUNT_PASSWORD_RESET"), true);
   assert.equal(JSON.stringify(audit.data).includes(RESET_PASSWORD), false);
 
+  await adminFirestore.doc("blocks/owner-cleanup-block").create({
+    blockedUid: ownerAuth.currentUser.uid,
+    blockerUid: targetUid,
+    createdAt: AdminTimestamp.now(),
+  });
+  await adminFirestore.doc(`accountDeletionRequests/${targetUid}`).create({
+    requestedAt: AdminTimestamp.now(),
+    requestedBy: targetUid,
+    state: "PENDING",
+  });
+
   await ownerCallable("deleteOwnerAccount")({confirmUsername: "josh", targetUid});
   await assert.rejects(adminAuth.getUser(targetUid));
   assert.equal((await adminFirestore.doc(`profiles/${targetUid}`).get()).exists, false);
   assert.equal((await adminFirestore.doc("usernames/josh").get()).exists, false);
+  assert.equal((await adminFirestore.doc("blocks/owner-cleanup-block").get()).exists, false);
+  assert.equal((await adminFirestore.doc(`accountDeletionRequests/${targetUid}`).get()).exists, false);
 });
 
 test("normal, pending, disabled, and claim-only owners cannot call owner functions", async () => {

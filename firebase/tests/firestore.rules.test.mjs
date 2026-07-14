@@ -299,3 +299,23 @@ test("binds FCM installation IDs to the authenticated owner", async () => {
   const trish = activeContext(TRISH_UID).firestore();
   await assertFails(getDoc(doc(trish, "devices", "peter-device")));
 });
+
+test("keeps block and account deletion state server-owned", async () => {
+  const peter = activeContext(PETER_UID).firestore();
+  await assertFails(getDoc(doc(peter, "blocks", "private-block")));
+  await assertFails(
+    setDoc(doc(peter, "blocks", "private-block"), {
+      blockedUid: TRISH_UID,
+      blockerUid: PETER_UID,
+      createdAt: serverTimestamp(),
+    }),
+  );
+  await assertFails(getDoc(doc(peter, "accountDeletionRequests", PETER_UID)));
+  await assertFails(
+    setDoc(doc(peter, "accountDeletionRequests", PETER_UID), {
+      requestedAt: serverTimestamp(),
+      requestedBy: PETER_UID,
+      state: "PENDING",
+    }),
+  );
+});

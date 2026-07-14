@@ -13,6 +13,10 @@ import {
   firebaseAdminMessaging,
 } from "./firebaseAdmin.js";
 import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js";
+import {requireActiveAccount} from "./accountAuthorization.js";
+import {
+  buildReciprocalBlockReferences,
+} from "./privacyAdmin.js";
 
 export {registerWithInvite} from "./registration.js";
 export {
@@ -40,6 +44,12 @@ export {
   completeRequiredPasswordChange,
   resetOwnerAccountPassword,
 } from "./passwordAdmin.js";
+export {
+  cancelAccountDeletionRequest,
+  getOwnPrivacyState,
+  requestAccountDeletion,
+  setUserBlocked,
+} from "./privacyAdmin.js";
 
 const firestore = firebaseAdminFirestore;
 const messaging = firebaseAdminMessaging;
@@ -49,6 +59,7 @@ interface ProfileDocument {
   accountState?: unknown;
   allowed?: unknown;
   displayName?: unknown;
+  mustChangePassword?: unknown;
   role?: unknown;
   username?: unknown;
 }
@@ -73,6 +84,7 @@ function requireActiveProfile(
     profile?.accountState !== "ACTIVE" ||
     profile?.allowed !== true ||
     typeof profile.displayName !== "string" ||
+    profile.mustChangePassword !== false ||
     (profile.role !== "OWNER" && profile.role !== "ADMIN" && profile.role !== "USER") ||
     typeof profile.username !== "string"
   ) {
@@ -83,10 +95,7 @@ function requireActiveProfile(
 export const openDirectRoom = onCall(
   {region: REGION},
   async (request): Promise<{roomId: string}> => {
-    const callerUid = request.auth?.uid;
-    if (!callerUid) {
-      throw new HttpsError("unauthenticated", "Sign in before opening a direct room.");
-    }
+    const callerUid = (await requireActiveAccount(request.auth)).uid;
 
     let targetUid: string;
     try {
@@ -109,9 +118,17 @@ export const openDirectRoom = onCall(
 
     const identity = buildDirectRoomIdentity(callerUid, targetUid);
     const roomReference = firestore.doc(`rooms/${identity.roomId}`);
+    const blockReferences = buildReciprocalBlockReferences(callerUid, targetUid);
 
     await firestore.runTransaction(async (transaction) => {
-      const roomSnapshot = await transaction.get(roomReference);
+      const [roomSnapshot, callerBlock, targetBlock] = await Promise.all([
+        transaction.get(roomReference),
+        transaction.get(blockReferences[0]),
+        transaction.get(blockReferences[1]),
+      ]);
+      if (callerBlock.exists || targetBlock.exists) {
+        throw new HttpsError("permission-denied", "A direct room is unavailable.");
+      }
       if (roomSnapshot.exists) {
         const existingDirectKey = roomSnapshot.get("directKey");
         const existingKind = roomSnapshot.get("kind");

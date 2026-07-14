@@ -201,14 +201,17 @@ export const deleteOwnerAccount = onCall(
     await firebaseAdminAuth.updateUser(command.targetUid, {disabled: true});
     await firebaseAdminAuth.deleteUser(command.targetUid);
 
-    const [devices, rooms] = await Promise.all([
+    const [devices, rooms, outgoingBlocks, incomingBlocks] = await Promise.all([
       firebaseAdminFirestore.collection("devices").where("ownerUid", "==", command.targetUid).get(),
       firebaseAdminFirestore.collection("rooms")
         .where("memberIds", "array-contains", command.targetUid)
         .get(),
+      firebaseAdminFirestore.collection("blocks").where("blockerUid", "==", command.targetUid).get(),
+      firebaseAdminFirestore.collection("blocks").where("blockedUid", "==", command.targetUid).get(),
     ]);
     const writer = firebaseAdminFirestore.bulkWriter();
     for (const device of devices.docs) writer.delete(device.ref);
+    for (const block of [...outgoingBlocks.docs, ...incomingBlocks.docs]) writer.delete(block.ref);
     for (const room of rooms.docs) {
       writer.set(
         room.ref,
@@ -222,6 +225,7 @@ export const deleteOwnerAccount = onCall(
       );
     }
     writer.delete(firebaseAdminFirestore.doc(`usernames/${usernameNormalized}`));
+    writer.delete(firebaseAdminFirestore.doc(`accountDeletionRequests/${command.targetUid}`));
     writer.delete(profileReference);
     await writer.close();
     await firebaseAdminFirestore.doc(`securityAuditEvents/${randomUUID()}`).create({
