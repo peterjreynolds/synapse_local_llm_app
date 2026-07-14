@@ -81,12 +81,17 @@ async function seedChat() {
 }
 
 function activeContext(uid, role = "USER") {
-  return testEnvironment.authenticatedContext(uid, {accountState: "ACTIVE", role});
+  return testEnvironment.authenticatedContext(uid, {
+    accountState: "ACTIVE",
+    mustChangePassword: false,
+    role,
+  });
 }
 
 function pendingContext(uid) {
   return testEnvironment.authenticatedContext(uid, {
     accountState: "PENDING_APPROVAL",
+    mustChangePassword: false,
     role: "USER",
   });
 }
@@ -164,6 +169,22 @@ test("denies active-looking tokens when profile state is disabled", async () => 
   await assertSucceeds(getDoc(doc(mallory, "profiles", MALLORY_UID)));
   await assertFails(getDocs(collection(mallory, "profiles")));
   await assertFails(getDoc(doc(mallory, "rooms", ROOM_ID)));
+});
+
+test("limits forced-password-change accounts to their own profile", async () => {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), "profiles", PETER_UID), {
+      mustChangePassword: true,
+    });
+  });
+  const peter = testEnvironment.authenticatedContext(PETER_UID, {
+    accountState: "ACTIVE",
+    mustChangePassword: true,
+    role: "USER",
+  }).firestore();
+  await assertSucceeds(getDoc(doc(peter, "profiles", PETER_UID)));
+  await assertFails(getDocs(collection(peter, "profiles")));
+  await assertFails(getDoc(doc(peter, "rooms", ROOM_ID)));
 });
 
 test("permits presentation-only self profile updates and rejects identity changes", async () => {

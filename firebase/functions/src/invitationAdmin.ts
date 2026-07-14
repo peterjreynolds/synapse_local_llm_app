@@ -25,6 +25,53 @@ interface CreateInvitationReceipt {
   maximumUses: number;
 }
 
+interface OwnerInvitationSummary {
+  expiresAtMillis: number;
+  intendedLabel: string | null;
+  invitationId: string;
+  maximumUses: number;
+  remainingUses: number;
+  state: string;
+}
+
+export const listOwnerInvitations = onCall(
+  {region: FIREBASE_FUNCTIONS_REGION},
+  async (request): Promise<{invitations: OwnerInvitationSummary[]}> => {
+    await requireActiveOwner(request.auth);
+    const invitations = await firebaseAdminFirestore.collection("invitations")
+      .orderBy("createdAt", "desc")
+      .limit(100)
+      .get();
+    return {
+      invitations: invitations.docs.map((invitation) => {
+        const expiresAt = invitation.get("expiresAt");
+        const maximumUses = invitation.get("maximumUses");
+        const remainingUses = invitation.get("remainingUses");
+        const state = invitation.get("state");
+        const intendedLabel = invitation.get("intendedLabel");
+        if (
+          !(expiresAt instanceof Timestamp) ||
+          typeof maximumUses !== "number" ||
+          !Number.isSafeInteger(maximumUses) ||
+          typeof remainingUses !== "number" ||
+          !Number.isSafeInteger(remainingUses) ||
+          typeof state !== "string"
+        ) {
+          throw new HttpsError("data-loss", "An invitation record is malformed.");
+        }
+        return {
+          expiresAtMillis: expiresAt.toMillis(),
+          intendedLabel: typeof intendedLabel === "string" ? intendedLabel : null,
+          invitationId: invitation.id,
+          maximumUses,
+          remainingUses,
+          state,
+        };
+      }),
+    };
+  },
+);
+
 export const createInvitation = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<CreateInvitationReceipt> => {

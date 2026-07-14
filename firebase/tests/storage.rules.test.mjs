@@ -48,6 +48,7 @@ async function seedProfiles() {
 function activeContext(uid) {
   return testEnvironment.authenticatedContext(uid, {
     accountState: "ACTIVE",
+    mustChangePassword: false,
     role: "USER",
   });
 }
@@ -100,4 +101,27 @@ test("allows allowlisted profile-avatar reads but denies non-allowlisted access"
 
   const malloryStorage = activeContext(MALLORY_UID).storage(BUCKET);
   await assertFails(getMetadata(ref(malloryStorage, `avatars/${PETER_UID}/avatar.png`)));
+});
+
+test("denies avatar access while a password change is required", async () => {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    const firestore = context.firestore();
+    await setDoc(
+      doc(firestore, "profiles", PETER_UID),
+      {mustChangePassword: true},
+      {merge: true},
+    );
+  });
+  const peterStorage = testEnvironment.authenticatedContext(PETER_UID, {
+    accountState: "ACTIVE",
+    mustChangePassword: true,
+    role: "USER",
+  }).storage(BUCKET);
+  await assertFails(
+    uploadBytes(
+      ref(peterStorage, `avatars/${PETER_UID}/avatar.jpg`),
+      new Uint8Array([1, 2, 3]),
+      {contentType: "image/jpeg"},
+    ),
+  );
 });

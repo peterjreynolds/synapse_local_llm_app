@@ -2,14 +2,16 @@ import {randomUUID} from "node:crypto";
 import {Timestamp, type DocumentSnapshot} from "firebase-admin/firestore";
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {
+  buildAccountProfileDocument,
+  createFirebaseAccountIdentity,
+  deleteOrDisableFirebaseAccount,
+} from "./accountCreation.js";
+import {
   FIREBASE_FUNCTIONS_REGION,
-  firebaseAdminAuth,
   firebaseAdminFirestore,
 } from "./firebaseAdmin.js";
 import {
-  buildAccountClaims,
   buildRegistrationRateLimitId,
-  buildSyntheticAccountEmail,
   digestInvitationCode,
   parseInviteRegistrationCommand,
   resolveInitialAccountState,
@@ -66,19 +68,12 @@ export const registerWithInvite = onCall(
 
     let createdAccountUid: string | null = null;
     try {
-      const account = await firebaseAdminAuth.createUser({
-        disabled: false,
-        displayName: command.displayName,
-        email: buildSyntheticAccountEmail(command.usernameNormalized),
-        emailVerified: true,
-        password: command.password,
-      });
-      createdAccountUid = account.uid;
-      await firebaseAdminAuth.setCustomUserClaims(
-        account.uid,
-        buildAccountClaims("USER", reservation.accountState),
+      createdAccountUid = await createFirebaseAccountIdentity(
+        command,
+        "USER",
+        reservation.accountState,
       );
-      await completeRegistration(command, reservation, account.uid);
+      await completeRegistration(command, reservation, createdAccountUid);
       return {
         accountState: reservation.accountState,
         usernameNormalized: command.usernameNormalized,
@@ -226,24 +221,11 @@ async function completeRegistration(
   accountUid: string,
 ): Promise<void> {
   const completedAt = Timestamp.now();
-  const allowed = reservation.accountState === "ACTIVE";
   const writes = firebaseAdminFirestore.batch();
-  writes.create(firebaseAdminFirestore.doc(`profiles/${accountUid}`), {
-    accountState: reservation.accountState,
-    allowed,
-    avatarUrl: null,
-    bio: "",
-    createdAt: completedAt,
-    directoryVisible: allowed,
-    displayName: command.displayName,
-    lastSeenAt: null,
-    mustChangePassword: false,
-    online: false,
-    role: "USER",
-    updatedAt: completedAt,
-    username: command.usernameNormalized,
-    usernameNormalized: command.usernameNormalized,
-  });
+  writes.create(
+    firebaseAdminFirestore.doc(`profiles/${accountUid}`),
+    buildAccountProfileDocument(command, "USER", reservation.accountState, completedAt),
+  );
   writes.update(firebaseAdminFirestore.doc(`usernames/${command.usernameNormalized}`), {
     claimedAt: completedAt,
     state: "CLAIMED",
@@ -282,16 +264,8 @@ async function cleanupFailedRegistration(
 ): Promise<void> {
   const failedStages: string[] = [];
   if (accountUid) {
-    try {
-      await firebaseAdminAuth.deleteUser(accountUid);
-    } catch {
-      try {
-        await firebaseAdminAuth.updateUser(accountUid, {disabled: true});
-        failedStages.push("AUTH_DELETE_ACCOUNT_DISABLED");
-      } catch {
-        failedStages.push("AUTH_ACCOUNT_DISABLE_FAILED");
-      }
-    }
+    const authCleanupFailure = await deleteOrDisableFirebaseAccount(accountUid);
+    if (authCleanupFailure) failedStages.push(authCleanupFailure);
   }
 
   try {

@@ -17,10 +17,28 @@ import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js"
 export {registerWithInvite} from "./registration.js";
 export {
   createInvitation,
+  listOwnerInvitations,
   revokeInvitation,
   setRegistrationApprovalRequired,
 } from "./invitationAdmin.js";
 export {reviewRegistration} from "./registrationReview.js";
+export {listOwnerAccounts} from "./ownerAccountDirectory.js";
+export {
+  createAccountForUser,
+  deleteOwnerAccount,
+  revokeOwnerAccountSessions,
+  setOwnerAccountEnabled,
+} from "./ownerAccountMutation.js";
+export {
+  listOwnerDevices,
+  removeOwnerDevice,
+  sendOwnerTestPush,
+} from "./ownerDeviceAdmin.js";
+export {listOwnerAuditEvents} from "./ownerAuditAdmin.js";
+export {
+  completeRequiredPasswordChange,
+  resetOwnerAccountPassword,
+} from "./passwordAdmin.js";
 
 const firestore = firebaseAdminFirestore;
 const messaging = firebaseAdminMessaging;

@@ -13,6 +13,7 @@ service cloud.firestore {
     function hasActiveAccountClaims() {
       return signedIn()
         && request.auth.token.accountState == 'ACTIVE'
+        && request.auth.token.mustChangePassword == false
         && request.auth.token.role in ['OWNER', 'ADMIN', 'USER'];
     }
 
@@ -21,6 +22,7 @@ service cloud.firestore {
         && exists(profilePath(request.auth.uid))
         && get(profilePath(request.auth.uid)).data.allowed == true
         && get(profilePath(request.auth.uid)).data.accountState == 'ACTIVE'
+        && get(profilePath(request.auth.uid)).data.mustChangePassword == false
         && get(profilePath(request.auth.uid)).data.role == request.auth.token.role;
     }
 

@@ -5,10 +5,12 @@ service firebase.storage {
     function isActiveUser() {
       return request.auth != null
         && request.auth.token.accountState == 'ACTIVE'
+        && request.auth.token.mustChangePassword == false
         && request.auth.token.role in ['OWNER', 'ADMIN', 'USER']
         && firestore.exists(/databases/(default)/documents/profiles/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/profiles/$(request.auth.uid)).data.allowed == true
         && firestore.get(/databases/(default)/documents/profiles/$(request.auth.uid)).data.accountState == 'ACTIVE'
+        && firestore.get(/databases/(default)/documents/profiles/$(request.auth.uid)).data.mustChangePassword == false
         && firestore.get(/databases/(default)/documents/profiles/$(request.auth.uid)).data.role == request.auth.token.role;
     }
 
