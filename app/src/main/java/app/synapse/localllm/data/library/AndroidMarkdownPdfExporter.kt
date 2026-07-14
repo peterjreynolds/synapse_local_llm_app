@@ -18,21 +18,29 @@ class AndroidMarkdownPdfExporter {
     private val applicationContext: Context
     private val clock: SynapseClock
     private val pdfWriter: MarkdownPdfWriter
+    private val pdfUriFactory: MarkdownPdfUriFactory
     private val workspacePaths: LibraryWorkspacePaths
 
     constructor(
         context: Context,
         clock: SynapseClock,
-    ) : this(context, clock, AndroidPdfDocumentWriter())
+    ) : this(
+        context = context,
+        clock = clock,
+        pdfWriter = AndroidPdfDocumentWriter(),
+        pdfUriFactory = AndroidMarkdownPdfUriFactory(context.applicationContext),
+    )
 
     internal constructor(
         context: Context,
         clock: SynapseClock,
         pdfWriter: MarkdownPdfWriter,
+        pdfUriFactory: MarkdownPdfUriFactory = AndroidMarkdownPdfUriFactory(context.applicationContext),
     ) {
         this.applicationContext = context.applicationContext
         this.clock = clock
         this.pdfWriter = pdfWriter
+        this.pdfUriFactory = pdfUriFactory
         this.workspacePaths = LibraryWorkspacePaths(
             filesDirectory = applicationContext.filesDir,
             cacheDirectory = applicationContext.cacheDir,
@@ -49,11 +57,7 @@ class AndroidMarkdownPdfExporter {
         filePlan.file.parentFile?.mkdirs()
         pdfWriter.writePdf(filePlan.file, title, body)
 
-        val fileUri = FileProvider.getUriForFile(
-            applicationContext,
-            "${BuildConfig.APPLICATION_ID}.fileprovider",
-            filePlan.file,
-        )
+        val fileUri = pdfUriFactory.createUri(filePlan.file)
         return MarkdownPdfExportReceipt(
             uri = fileUri,
             displayName = filePlan.displayName,
@@ -71,6 +75,21 @@ internal fun interface MarkdownPdfWriter {
         title: String,
         body: String,
     )
+}
+
+internal fun interface MarkdownPdfUriFactory {
+    fun createUri(targetFile: File): Uri
+}
+
+private class AndroidMarkdownPdfUriFactory(
+    private val applicationContext: Context,
+) : MarkdownPdfUriFactory {
+    override fun createUri(targetFile: File): Uri =
+        FileProvider.getUriForFile(
+            applicationContext,
+            "${BuildConfig.APPLICATION_ID}.fileprovider",
+            targetFile,
+        )
 }
 
 private class AndroidPdfDocumentWriter : MarkdownPdfWriter {
