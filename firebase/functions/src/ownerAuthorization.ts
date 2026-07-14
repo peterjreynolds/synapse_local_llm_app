@@ -12,6 +12,7 @@ export async function requireActiveOwner(authContext: unknown): Promise<string> 
     uid.length === 0 ||
     !isRecord(token) ||
     token.accountState !== "ACTIVE" ||
+    token.mustChangePassword !== false ||
     token.role !== "OWNER"
   ) {
     throw new HttpsError("permission-denied", "Owner access is required.");
@@ -21,6 +22,7 @@ export async function requireActiveOwner(authContext: unknown): Promise<string> 
     !profile.exists ||
     profile.get("allowed") !== true ||
     profile.get("accountState") !== "ACTIVE" ||
+    profile.get("mustChangePassword") !== false ||
     profile.get("role") !== "OWNER"
   ) {
     throw new HttpsError("permission-denied", "Owner access is required.");

@@ -72,6 +72,15 @@ export const listOwnerInvitations = onCall(
   },
 );
 
+export const getOwnerRegistrationConfiguration = onCall(
+  {region: FIREBASE_FUNCTIONS_REGION},
+  async (request): Promise<{approvalRequired: boolean}> => {
+    await requireActiveOwner(request.auth);
+    const configuration = await firebaseAdminFirestore.doc("systemSettings/registration").get();
+    return {approvalRequired: configuration.get("approvalRequired") !== false};
+  },
+);
+
 export const createInvitation = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<CreateInvitationReceipt> => {

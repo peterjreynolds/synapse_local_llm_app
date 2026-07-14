@@ -259,6 +259,15 @@ test("owner completes account, password, device, session, and deletion operation
 
   const accounts = await ownerCallable("listOwnerAccounts")({searchPrefix: "josh"});
   assert.equal(accounts.data.accounts.some((account) => account.uid === targetUid), true);
+  assert.equal(
+    (await ownerCallable("getOwnerRegistrationConfiguration")({})).data.approvalRequired,
+    true,
+  );
+  await ownerCallable("setRegistrationApprovalRequired")({approvalRequired: false});
+  assert.equal(
+    (await ownerCallable("getOwnerRegistrationConfiguration")({})).data.approvalRequired,
+    false,
+  );
   const audit = await ownerCallable("listOwnerAuditEvents")({limit: 100});
   assert.equal(audit.data.events.some((event) => event.eventType === "ACCOUNT_PASSWORD_RESET"), true);
   assert.equal(JSON.stringify(audit.data).includes(RESET_PASSWORD), false);
@@ -320,6 +329,26 @@ test("normal, pending, disabled, and claim-only owners cannot call owner functio
     userCallable("listOwnerDevices")({targetUid: normal.uid}),
     (error) => error.code === "functions/permission-denied",
   );
+  await signOut(userAuth);
+
+  const forcedPasswordOwner = await seedIdentity({
+    email: "forced-owner@accounts.synapse.invalid",
+    password: "forced owner password",
+    profileRole: "OWNER",
+    username: "ForcedOwner",
+  });
+  await adminAuth.setCustomUserClaims(forcedPasswordOwner.uid, {
+    accountState: "ACTIVE",
+    claimsVersion: 1,
+    mustChangePassword: true,
+    role: "OWNER",
+  });
+  await adminFirestore.doc(`profiles/${forcedPasswordOwner.uid}`).update({mustChangePassword: true});
+  await signInWithEmailAndPassword(userAuth, forcedPasswordOwner.email, "forced owner password");
+  await assert.rejects(
+    userCallable("listOwnerAccounts")({}),
+    (error) => error.code === "functions/permission-denied",
+  );
 });
 
 test("a stale owner session cannot call a recent-auth owner function", async () => {
@@ -330,6 +359,7 @@ test("a stale owner session cannot call a recent-auth owner function", async () 
         token: {
           accountState: "ACTIVE",
           auth_time: Math.floor(Date.now() / 1_000) - (5 * 60 + 1),
+          mustChangePassword: false,
           role: "OWNER",
         },
         uid: owner.uid,

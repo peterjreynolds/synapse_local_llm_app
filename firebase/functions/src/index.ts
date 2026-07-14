@@ -17,6 +17,7 @@ import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js"
 export {registerWithInvite} from "./registration.js";
 export {
   createInvitation,
+  getOwnerRegistrationConfiguration,
   listOwnerInvitations,
   revokeInvitation,
   setRegistrationApprovalRequired,
