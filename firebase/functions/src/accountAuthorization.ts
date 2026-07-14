@@ -1,6 +1,7 @@
 import {HttpsError} from "firebase-functions/v2/https";
 import {firebaseAdminFirestore} from "./firebaseAdmin.js";
 import {isRecentAuthentication} from "./ownerAuthorization.js";
+import {assertSessionNotRevoked} from "./sessionAuthorization.js";
 
 export interface ActiveAccountProfile {
   accountState: "ACTIVE";
@@ -8,6 +9,7 @@ export interface ActiveAccountProfile {
   displayName: string;
   mustChangePassword: false;
   role: "OWNER" | "ADMIN" | "USER";
+  sessionsRevokedAt?: unknown;
   username: string;
 }
 
@@ -29,6 +31,7 @@ export async function requireActiveAccount(authContext: unknown): Promise<{
   const profileSnapshot = await firebaseAdminFirestore.doc(`profiles/${authContext.uid}`).get();
   const profile = profileSnapshot.data();
   assertActiveAccountProfile(profile);
+  assertSessionNotRevoked(token.auth_time, profile.sessionsRevokedAt);
   if (profile.role !== token.role) {
     throw new HttpsError("permission-denied", "An active account is required.");
   }

@@ -20,6 +20,7 @@ import {
 } from "./identity.js";
 import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {requireActiveOwner, requireRecentActiveOwner} from "./ownerAuthorization.js";
+import {revokeAccountSessions} from "./sessionAuthorization.js";
 
 const RECENT_OWNER_AUTHENTICATION_SECONDS = 5 * 60;
 
@@ -131,7 +132,7 @@ export const setOwnerAccountEnabled = onCall(
         command.targetUid,
         buildAccountClaims(role, accountState, mustChangePassword),
       );
-      await firebaseAdminAuth.revokeRefreshTokens(command.targetUid);
+      await revokeAccountSessions(command.targetUid);
       await firebaseAdminAuth.updateUser(command.targetUid, {disabled: true});
     } else {
       await firebaseAdminAuth.updateUser(command.targetUid, {disabled: false});
@@ -161,10 +162,10 @@ export const revokeOwnerAccountSessions = onCall(
       throw new HttpsError("failed-precondition", "Use local sign-out for the current owner session.");
     }
     await firebaseAdminAuth.getUser(targetUid);
-    await firebaseAdminAuth.revokeRefreshTokens(targetUid);
+    const revokedAt = await revokeAccountSessions(targetUid);
     await firebaseAdminFirestore.doc(`securityAuditEvents/${randomUUID()}`).create({
       actorUid: ownerUid,
-      createdAt: Timestamp.now(),
+      createdAt: revokedAt,
       eventType: "ACCOUNT_SESSIONS_REVOKED",
       targetUid,
     });
@@ -212,7 +213,7 @@ export const deleteOwnerAccount = onCall(
       online: false,
       updatedAt: Timestamp.now(),
     });
-    await firebaseAdminAuth.revokeRefreshTokens(command.targetUid);
+    await revokeAccountSessions(command.targetUid);
     await firebaseAdminAuth.updateUser(command.targetUid, {disabled: true});
     await firebaseAdminAuth.deleteUser(command.targetUid);
 

@@ -364,6 +364,29 @@ test("normal, pending, disabled, and claim-only owners cannot call owner functio
   );
 });
 
+test("persisted revocation state rejects an already-issued account token", async () => {
+  await seedOwner();
+  const account = await seedIdentity({
+    email: "revoked@accounts.synapse.invalid",
+    password: "revoked family password",
+    profileRole: "USER",
+    username: "Revoked",
+  });
+  await signInWithEmailAndPassword(userAuth, account.email, "revoked family password");
+  assert.deepEqual((await userCallable("getOwnPrivacyState")({})).data, {
+    blockedUids: [],
+    deletionRequestPending: false,
+  });
+
+  await ownerCallable("revokeOwnerAccountSessions")({targetUid: account.uid});
+  const profile = await adminFirestore.doc(`profiles/${account.uid}`).get();
+  assert.equal(profile.get("sessionsRevokedAt") instanceof AdminTimestamp, true);
+  await assert.rejects(
+    userCallable("getOwnPrivacyState")({}),
+    (error) => error.code === "functions/permission-denied",
+  );
+});
+
 test("a stale owner session cannot call a recent-auth owner function", async () => {
   const owner = await seedOwner();
   await assert.rejects(

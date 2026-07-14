@@ -9,6 +9,7 @@ import {
 import {buildAccountClaims, validateNewAccountPassword, type AccountRole} from "./identity.js";
 import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {isRecentAuthentication, requireRecentActiveOwner} from "./ownerAuthorization.js";
+import {assertSessionNotRevoked, revokeAccountSessions} from "./sessionAuthorization.js";
 
 const RECENT_AUTHENTICATION_SECONDS = 5 * 60;
 
@@ -38,12 +39,12 @@ export const resetOwnerAccountPassword = onCall(
       mustChangePassword: command.requirePasswordChange,
       updatedAt: changedAt,
     });
+    await revokeAccountSessions(command.targetUid);
     await firebaseAdminAuth.updateUser(command.targetUid, {password: command.password});
     await firebaseAdminAuth.setCustomUserClaims(
       command.targetUid,
       buildAccountClaims(role, "ACTIVE", command.requirePasswordChange),
     );
-    await firebaseAdminAuth.revokeRefreshTokens(command.targetUid);
     await firebaseAdminFirestore.doc(`securityAuditEvents/${randomUUID()}`).create({
       actorUid: ownerUid,
       createdAt: changedAt,
@@ -62,6 +63,7 @@ export const completeRequiredPasswordChange = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{mustChangePassword: false}> => {
     const auth = parseRecentAccountAuth(request.auth);
+    await enforceCallableRateLimit(auth.uid, "conversationMutation");
     const profileReference = firebaseAdminFirestore.doc(`profiles/${auth.uid}`);
     const profile = await profileReference.get();
     if (
@@ -72,6 +74,7 @@ export const completeRequiredPasswordChange = onCall(
       throw new HttpsError("permission-denied", "The account is not active.");
     }
     const role = readAccountRole(profile.get("role"));
+    assertSessionNotRevoked(auth.authenticationTime, profile.get("sessionsRevokedAt"));
     await firebaseAdminAuth.setCustomUserClaims(
       auth.uid,
       buildAccountClaims(role, "ACTIVE", false),
@@ -118,16 +121,20 @@ export function parseOwnerPasswordResetCommand(input: unknown): {
   }
 }
 
-function parseRecentAccountAuth(authContext: unknown): {uid: string} {
+function parseRecentAccountAuth(authContext: unknown): {authenticationTime: number; uid: string} {
   if (!isRecord(authContext) || typeof authContext.uid !== "string" || !isRecord(authContext.token)) {
     throw new HttpsError("unauthenticated", "Sign in before completing the password change.");
   }
   const authenticationTime = authContext.token.auth_time;
   const nowSeconds = Math.floor(Date.now() / 1_000);
-  if (!isRecentAuthentication(authenticationTime, nowSeconds, RECENT_AUTHENTICATION_SECONDS)) {
+  if (
+    typeof authenticationTime !== "number" ||
+    !Number.isSafeInteger(authenticationTime) ||
+    !isRecentAuthentication(authenticationTime, nowSeconds, RECENT_AUTHENTICATION_SECONDS)
+  ) {
     throw new HttpsError("failed-precondition", "Recent sign-in is required.");
   }
-  return {uid: authContext.uid};
+  return {authenticationTime, uid: authContext.uid};
 }
 
 function readAssignableRole(value: unknown): "USER" | "ADMIN" {

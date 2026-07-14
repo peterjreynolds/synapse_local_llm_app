@@ -1,5 +1,6 @@
 import {HttpsError} from "firebase-functions/v2/https";
 import {firebaseAdminFirestore} from "./firebaseAdmin.js";
+import {assertSessionNotRevoked} from "./sessionAuthorization.js";
 
 export async function requireActiveOwner(authContext: unknown): Promise<string> {
   if (!isRecord(authContext)) {
@@ -27,6 +28,7 @@ export async function requireActiveOwner(authContext: unknown): Promise<string> 
   ) {
     throw new HttpsError("permission-denied", "Owner access is required.");
   }
+  assertSessionNotRevoked(token.auth_time, profile.get("sessionsRevokedAt"));
   return uid;
 }
 
