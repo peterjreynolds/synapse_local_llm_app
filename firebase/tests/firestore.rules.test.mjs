@@ -299,6 +299,7 @@ test("keeps FCM installation IDs server-owned", async () => {
 test("keeps AI participant, configuration, queue, and audit state server-owned", async () => {
   const peterDb = activeContext(PETER_UID).firestore();
   await assertFails(setDoc(doc(peterDb, "callableRateLimits", "forged"), {requestCount: 1}));
+  await assertFails(setDoc(doc(peterDb, "operationsJobStatus", "forged"), {state: "SUCCEEDED"}));
   await assertFails(setDoc(doc(peterDb, "roomAiConfigurations", ROOM_ID), {localAiEnabled: true}));
   await assertFails(setDoc(doc(peterDb, "localAiHostQueues", "device", "jobs", "job"), {state: "PENDING"}));
   await assertFails(setDoc(doc(peterDb, "remoteAiAuditEvents", "event"), {eventType: "forged"}));

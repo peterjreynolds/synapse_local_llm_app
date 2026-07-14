@@ -11,15 +11,20 @@ import app.synapse.localllm.domain.remote.OwnerAdminGateway
 import app.synapse.localllm.domain.remote.OwnerAuditEventSummary
 import app.synapse.localllm.domain.remote.OwnerDeviceSummary
 import app.synapse.localllm.domain.remote.OwnerInvitationSummary
+import app.synapse.localllm.domain.remote.OwnerOperationsSummary
 import app.synapse.localllm.domain.remote.RemoteAccountRole
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
+import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteDeviceId
+import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
+import app.synapse.localllm.domain.remote.RemoteOutboxState
 import app.synapse.localllm.domain.remote.ResetOwnerAccountPasswordCommand
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,17 +39,27 @@ data class OwnerAdminUiState(
     val selectedAccountUid: RemoteAccountUid? = null,
     val selectedAccountDevices: List<OwnerDeviceSummary> = emptyList(),
     val auditEvents: List<OwnerAuditEventSummary> = emptyList(),
+    val operationsSummary: OwnerOperationsSummary? = null,
+    val localOutbox: OwnerLocalOutboxSummary = OwnerLocalOutboxSummary(),
     val registrationApprovalRequired: Boolean = true,
     val isActionRunning: Boolean = false,
     val notice: String? = null,
 )
 
+data class OwnerLocalOutboxSummary(
+    val pendingCount: Int = 0,
+    val inFlightCount: Int = 0,
+    val failedCount: Int = 0,
+)
+
 class OwnerAdminViewModel(
     private val authenticationGateway: RemoteAuthenticationGateway,
     private val ownerAdminGateway: OwnerAdminGateway,
+    private val remoteChatCacheRepository: RemoteChatCacheRepository,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(OwnerAdminUiState())
     private var activeOwnerUid: RemoteAccountUid? = null
+    private var outboxObservationJob: Job? = null
 
     val uiState: StateFlow<OwnerAdminUiState> = mutableUiState
 
@@ -62,6 +77,7 @@ class OwnerAdminViewModel(
                             if (activeOwnerUid != account.accountUid) {
                                 activeOwnerUid = account.accountUid
                                 mutableUiState.value = OwnerAdminUiState()
+                                observeOwnerOutbox(account.accountUid)
                                 refresh()
                             }
                         } else {
@@ -86,11 +102,13 @@ class OwnerAdminViewModel(
             val registrationApprovalRequired = async {
                 ownerAdminGateway.getRegistrationApprovalRequired()
             }
+            val operationsSummary = async { ownerAdminGateway.getOperationsSummary() }
             OwnerAdminSnapshot(
                 accounts = accounts.await(),
                 invitations = invitations.await(),
                 auditEvents = auditEvents.await(),
                 registrationApprovalRequired = registrationApprovalRequired.await(),
+                operationsSummary = operationsSummary.await(),
             )
         }
         requireOwnerSession(ownerUid)
@@ -100,6 +118,7 @@ class OwnerAdminViewModel(
                 invitations = snapshot.invitations,
                 auditEvents = snapshot.auditEvents,
                 registrationApprovalRequired = snapshot.registrationApprovalRequired,
+                operationsSummary = snapshot.operationsSummary,
             )
         }
     }
@@ -248,6 +267,7 @@ class OwnerAdminViewModel(
         val invitations = ownerAdminGateway.listInvitations()
         val auditEvents = ownerAdminGateway.listAuditEvents()
         val registrationApprovalRequired = ownerAdminGateway.getRegistrationApprovalRequired()
+        val operationsSummary = ownerAdminGateway.getOperationsSummary()
         val selectedUid = mutableUiState.value.selectedAccountUid
         val selectedDevices = selectedUid?.let { ownerAdminGateway.listDevices(it) }.orEmpty()
         requireOwnerSession(ownerUid)
@@ -258,6 +278,7 @@ class OwnerAdminViewModel(
                 auditEvents = auditEvents,
                 selectedAccountDevices = selectedDevices,
                 registrationApprovalRequired = registrationApprovalRequired,
+                operationsSummary = operationsSummary,
                 notice = successNotice,
             )
         }
@@ -291,10 +312,36 @@ class OwnerAdminViewModel(
         if (activeOwnerUid != expectedOwnerUid) throw OwnerSessionChangedException()
     }
 
+    private fun observeOwnerOutbox(ownerUid: RemoteAccountUid) {
+        outboxObservationJob?.cancel()
+        outboxObservationJob = viewModelScope.launch {
+            remoteChatCacheRepository.observePendingOutbox().collect { operations ->
+                if (activeOwnerUid != ownerUid) return@collect
+                mutableUiState.update { state ->
+                    state.copy(localOutbox = summarizeOwnerOutbox(ownerUid, operations))
+                }
+            }
+        }
+    }
+
     private fun clearOwnerState() {
+        outboxObservationJob?.cancel()
+        outboxObservationJob = null
         activeOwnerUid = null
         mutableUiState.value = OwnerAdminUiState()
     }
+}
+
+internal fun summarizeOwnerOutbox(
+    ownerUid: RemoteAccountUid,
+    operations: List<RemoteMessageOutboxOperation>,
+): OwnerLocalOutboxSummary {
+    val ownerOperations = operations.filter { operation -> operation.accountUid == ownerUid }
+    return OwnerLocalOutboxSummary(
+        pendingCount = ownerOperations.count { it.state == RemoteOutboxState.PENDING },
+        inFlightCount = ownerOperations.count { it.state == RemoteOutboxState.IN_FLIGHT },
+        failedCount = ownerOperations.count { it.state == RemoteOutboxState.FAILED },
+    )
 }
 
 private class OwnerSessionChangedException : CancellationException("Owner session changed.")
@@ -304,6 +351,7 @@ private data class OwnerAdminSnapshot(
     val invitations: List<OwnerInvitationSummary>,
     val auditEvents: List<OwnerAuditEventSummary>,
     val registrationApprovalRequired: Boolean,
+    val operationsSummary: OwnerOperationsSummary,
 )
 
 class OwnerAdminViewModelFactory(
@@ -315,6 +363,7 @@ class OwnerAdminViewModelFactory(
                 OwnerAdminViewModel(
                     authenticationGateway = graph.remoteAuthenticationGateway,
                     ownerAdminGateway = graph.ownerAdminGateway,
+                    remoteChatCacheRepository = graph.remoteChatCacheRepository,
                 ),
             ) ?: throw IllegalArgumentException("Unable to create OwnerAdminViewModel.")
         }

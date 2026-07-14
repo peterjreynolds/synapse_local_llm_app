@@ -82,6 +82,8 @@ export {
   cleanupDeletedMessageAttachments,
   cleanupExpiredAttachmentUploads,
 } from "./attachmentCleanup.js";
+export {cleanupExpiredOperationalData} from "./operationalDataCleanup.js";
+export {getOwnerOperationsSummary} from "./ownerOperations.js";
 export {
   cancelRemoteAttachment,
   finalizeRemoteAttachment,

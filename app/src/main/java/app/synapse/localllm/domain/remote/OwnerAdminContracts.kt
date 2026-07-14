@@ -34,6 +34,41 @@ data class OwnerAuditEventSummary(
     val createdAtMillis: Long,
 )
 
+enum class OwnerCleanupState {
+    FAILED,
+    NEVER_RUN,
+    RUNNING,
+    SUCCEEDED,
+}
+
+data class OwnerCleanupJobSummary(
+    val state: OwnerCleanupState,
+    val affectedDocumentCount: Int?,
+    val lastStartedAtMillis: Long?,
+    val lastCompletedAtMillis: Long?,
+)
+
+data class OwnerRoomIntegritySummary(
+    val checkedRoomCount: Int,
+    val issueCount: Int,
+    val issueCodes: List<String>,
+    val sampleLimit: Int,
+    val sampleLimitReached: Boolean,
+)
+
+data class OwnerOperationsSummary(
+    val backendRevision: String,
+    val generatedAtMillis: Long,
+    val totalDeviceCount: Int,
+    val activeDeviceCount: Int,
+    val activeRoomCount: Int,
+    val pendingNotificationDeliveryCount: Int,
+    val failedNotificationDeliveryCount: Int,
+    val integrity: OwnerRoomIntegritySummary,
+    val attachmentCleanup: OwnerCleanupJobSummary,
+    val operationalDataCleanup: OwnerCleanupJobSummary,
+)
+
 data class CreateOwnerAccountCommand(
     val username: String,
     val displayName: String,
@@ -65,6 +100,8 @@ data class OwnerInvitationCreatedReceipt(
 )
 
 interface OwnerAdminGateway {
+    suspend fun getOperationsSummary(): OwnerOperationsSummary
+
     suspend fun listAccounts(searchPrefix: String? = null): List<OwnerAccountSummary>
 
     suspend fun createAccount(command: CreateOwnerAccountCommand): OwnerAccountMutationReceipt

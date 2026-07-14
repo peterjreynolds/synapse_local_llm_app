@@ -387,6 +387,73 @@ test("persisted revocation state rejects an already-issued account token", async
   );
 });
 
+test("owner operations summary reports bounded backend, delivery, and integrity state", async () => {
+  const owner = await seedOwner();
+  const account = await seedIdentity({
+    email: "operations@accounts.synapse.invalid",
+    password: "operations family password",
+    profileRole: "USER",
+    username: "Operations",
+  });
+  await adminFirestore.doc(`devices/${"a".repeat(64)}`).create({
+    active: true,
+    installationId: "active-installation-id",
+    ownerUid: owner.uid,
+    platform: "ANDROID",
+    updatedAt: AdminTimestamp.now(),
+  });
+  await adminFirestore.doc(`devices/${"b".repeat(64)}`).create({
+    active: false,
+    installationId: "inactive-installation-id",
+    ownerUid: account.uid,
+    platform: "ANDROID",
+    updatedAt: AdminTimestamp.now(),
+  });
+  await adminFirestore.doc("notificationDeliveries/pending").create({
+    startedAt: AdminTimestamp.now(),
+    state: "PROCESSING",
+  });
+  await adminFirestore.doc("notificationDeliveries/failed").create({
+    completedAt: AdminTimestamp.now(),
+    failureCount: 1,
+    startedAt: AdminTimestamp.now(),
+    state: "COMPLETE",
+  });
+  await adminFirestore.doc("rooms/direct_operations").create({
+    activeMemberIds: [owner.uid, account.uid],
+    deletedAt: null,
+    kind: "DIRECT",
+    memberIds: [owner.uid, account.uid],
+  });
+  await Promise.all([owner.uid, account.uid].map((uid) =>
+    adminFirestore.doc(`rooms/direct_operations/members/${uid}`).create({
+      active: true,
+      role: "MEMBER",
+      uid,
+    }),
+  ));
+  await adminFirestore.doc("operationsJobStatus/operationalDataCleanup").create({
+    affectedDocumentCount: 7,
+    lastCompletedAt: AdminTimestamp.now(),
+    lastStartedAt: AdminTimestamp.now(),
+    state: "SUCCEEDED",
+  });
+
+  const summary = (await ownerCallable("getOwnerOperationsSummary")({})).data;
+  assert.equal(summary.backendState, "HEALTHY");
+  assert.match(summary.backendRevision, /^[A-Za-z0-9._-]{1,128}$/);
+  assert.equal(summary.totalDeviceCount, 2);
+  assert.equal(summary.activeDeviceCount, 1);
+  assert.equal(summary.activeRoomCount, 1);
+  assert.equal(summary.pendingNotificationDeliveryCount, 1);
+  assert.equal(summary.failedNotificationDeliveryCount, 1);
+  assert.deepEqual(summary.integrity.issueCodes, []);
+  assert.equal(summary.integrity.issueCount, 0);
+  assert.equal(summary.attachmentCleanup.state, "NEVER_RUN");
+  assert.equal(summary.operationalDataCleanup.state, "SUCCEEDED");
+  assert.equal(summary.operationalDataCleanup.affectedDocumentCount, 7);
+});
+
 test("a stale owner session cannot call a recent-auth owner function", async () => {
   const owner = await seedOwner();
   await assert.rejects(

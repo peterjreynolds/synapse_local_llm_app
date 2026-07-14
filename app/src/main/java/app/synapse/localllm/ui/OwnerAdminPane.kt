@@ -36,9 +36,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.domain.remote.CreateOwnerAccountCommand
 import app.synapse.localllm.domain.remote.CreateOwnerInvitationCommand
 import app.synapse.localllm.domain.remote.OwnerAccountSummary
+import app.synapse.localllm.domain.remote.OwnerCleanupJobSummary
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import java.security.SecureRandom
 import java.time.Instant
@@ -107,7 +109,7 @@ fun OwnerAdminPane(
     ) {
         Text("Owner administration", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Accounts, invitations, registered devices, and security history.",
+            "Service health, accounts, invitations, devices, and security history.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         state.notice?.let { notice ->
@@ -119,6 +121,8 @@ fun OwnerAdminPane(
         oneTimeSecret?.let { secret ->
             OneTimeSecretCard(secret)
         }
+
+        OwnerOperationsSection(state)
 
         OwnerSection("Accounts") {
             OutlinedTextField(
@@ -350,6 +354,64 @@ fun OwnerAdminPane(
             if (state.auditEvents.isEmpty()) Text("No security history is available.")
         }
     }
+}
+
+@Composable
+private fun OwnerOperationsSection(state: OwnerAdminUiState) {
+    OwnerSection("Operations") {
+        Text(
+            "Synapse ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · " +
+                BuildConfig.SYNAPSE_APK_CHANNEL,
+        )
+        val operations = state.operationsSummary
+        if (operations == null) {
+            Text("Service status is loading.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            return@OwnerSection
+        }
+        Text("Service healthy · revision ${operations.backendRevision}")
+        Text("Devices ${operations.activeDeviceCount} active / ${operations.totalDeviceCount} registered")
+        Text(
+            "Local outbox ${state.localOutbox.pendingCount} queued · " +
+                "${state.localOutbox.inFlightCount} sending · ${state.localOutbox.failedCount} failed",
+        )
+        Text(
+            "Notification deliveries ${operations.pendingNotificationDeliveryCount} pending · " +
+                "${operations.failedNotificationDeliveryCount} with failures",
+        )
+        Text("${operations.activeRoomCount} active rooms")
+        Text(
+            "Room integrity ${operations.integrity.issueCount} issues across " +
+                "${operations.integrity.checkedRoomCount} checked rooms" +
+                if (operations.integrity.sampleLimitReached) " (bounded sample)" else "",
+        )
+        if (operations.integrity.issueCodes.isNotEmpty()) {
+            Text(
+                operations.integrity.issueCodes.joinToString { issueCode ->
+                    issueCode.lowercase().replace('_', ' ')
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        Text(formatCleanupStatus("Attachment cleanup", operations.attachmentCleanup))
+        Text(formatCleanupStatus("Operational cleanup", operations.operationalDataCleanup))
+        Text(
+            "Checked ${formatOwnerTimestamp(operations.generatedAtMillis)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun formatCleanupStatus(
+    label: String,
+    cleanup: OwnerCleanupJobSummary,
+): String {
+    val affected = cleanup.affectedDocumentCount?.let { count -> " · $count records" }.orEmpty()
+    val completed = cleanup.lastCompletedAtMillis
+        ?.let { completedAt -> " · ${formatOwnerTimestamp(completedAt)}" }
+        .orEmpty()
+    return "$label ${cleanup.state.name.lowercase().replace('_', ' ')}$affected$completed"
 }
 
 

@@ -187,6 +187,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /operationsJobStatus/{jobId} {
+      allow read, write: if false;
+    }
+
     match /localAiHostQueues/{deviceId}/{document=**} {
       allow read, write: if false;
     }

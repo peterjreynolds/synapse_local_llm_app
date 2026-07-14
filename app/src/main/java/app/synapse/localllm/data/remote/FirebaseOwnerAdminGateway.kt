@@ -6,9 +6,13 @@ import app.synapse.localllm.domain.remote.OwnerAccountMutationReceipt
 import app.synapse.localllm.domain.remote.OwnerAccountSummary
 import app.synapse.localllm.domain.remote.OwnerAdminGateway
 import app.synapse.localllm.domain.remote.OwnerAuditEventSummary
+import app.synapse.localllm.domain.remote.OwnerCleanupJobSummary
+import app.synapse.localllm.domain.remote.OwnerCleanupState
 import app.synapse.localllm.domain.remote.OwnerDeviceSummary
 import app.synapse.localllm.domain.remote.OwnerInvitationCreatedReceipt
 import app.synapse.localllm.domain.remote.OwnerInvitationSummary
+import app.synapse.localllm.domain.remote.OwnerOperationsSummary
+import app.synapse.localllm.domain.remote.OwnerRoomIntegritySummary
 import app.synapse.localllm.domain.remote.RemoteAccountRole
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAccountUid
@@ -22,6 +26,11 @@ import kotlinx.coroutines.tasks.await
 class FirebaseOwnerAdminGateway(
     private val firebaseFunctions: FirebaseFunctions,
 ) : OwnerAdminGateway {
+    override suspend fun getOperationsSummary(): OwnerOperationsSummary =
+        parseOwnerOperationsSummary(
+            call("getOwnerOperationsSummary", emptyMap(), "load operations status"),
+        )
+
     override suspend fun listAccounts(searchPrefix: String?): List<OwnerAccountSummary> {
         val response = call(
             functionName = "listOwnerAccounts",
@@ -267,6 +276,39 @@ internal fun parseOwnerAuditEventSummaries(response: Map<*, *>): List<OwnerAudit
         )
     }
 
+internal fun parseOwnerOperationsSummary(response: Map<*, *>): OwnerOperationsSummary {
+    if (response.requireString("backendState") != "HEALTHY") malformedResponse()
+    return OwnerOperationsSummary(
+        backendRevision = response.requireString("backendRevision"),
+        generatedAtMillis = response.requireLong("generatedAtMillis"),
+        totalDeviceCount = response.requireNonNegativeInt("totalDeviceCount"),
+        activeDeviceCount = response.requireNonNegativeInt("activeDeviceCount"),
+        activeRoomCount = response.requireNonNegativeInt("activeRoomCount"),
+        pendingNotificationDeliveryCount = response.requireNonNegativeInt("pendingNotificationDeliveryCount"),
+        failedNotificationDeliveryCount = response.requireNonNegativeInt("failedNotificationDeliveryCount"),
+        integrity = response.requireMap("integrity").toOwnerRoomIntegritySummary(),
+        attachmentCleanup = response.requireMap("attachmentCleanup").toOwnerCleanupJobSummary(),
+        operationalDataCleanup = response.requireMap("operationalDataCleanup").toOwnerCleanupJobSummary(),
+    )
+}
+
+private fun Map<*, *>.toOwnerRoomIntegritySummary(): OwnerRoomIntegritySummary =
+    OwnerRoomIntegritySummary(
+        checkedRoomCount = requireNonNegativeInt("checkedRoomCount"),
+        issueCount = requireNonNegativeInt("issueCount"),
+        issueCodes = requireStringList("issueCodes"),
+        sampleLimit = requireNonNegativeInt("sampleLimit").takeIf { it > 0 } ?: malformedResponse(),
+        sampleLimitReached = requireBoolean("sampleLimitReached"),
+    )
+
+private fun Map<*, *>.toOwnerCleanupJobSummary(): OwnerCleanupJobSummary =
+    OwnerCleanupJobSummary(
+        state = requireEnum<OwnerCleanupState>("state"),
+        affectedDocumentCount = optionalNonNegativeInt("affectedDocumentCount"),
+        lastStartedAtMillis = optionalLong("lastStartedAtMillis"),
+        lastCompletedAtMillis = optionalLong("lastCompletedAtMillis"),
+    )
+
 private fun parseAccountMutationReceipt(response: Map<*, *>): OwnerAccountMutationReceipt =
     OwnerAccountMutationReceipt(RemoteAccountUid(response.requireString("targetUid")))
 
@@ -292,6 +334,14 @@ private inline fun <reified T : Enum<T>> Map<*, *>.requireEnum(fieldName: String
 private fun Map<*, *>.requireMapList(fieldName: String): List<Map<*, *>> =
     (this[fieldName] as? List<*>)?.map { entry -> entry as? Map<*, *> ?: malformedResponse() }
         ?: malformedResponse()
+
+private fun Map<*, *>.requireMap(fieldName: String): Map<*, *> =
+    this[fieldName] as? Map<*, *> ?: malformedResponse()
+
+private fun Map<*, *>.requireStringList(fieldName: String): List<String> =
+    (this[fieldName] as? List<*>)?.map { value ->
+        (value as? String)?.takeIf(String::isNotBlank) ?: malformedResponse()
+    } ?: malformedResponse()
 
 private fun Map<*, *>.requireString(fieldName: String): String =
     (this[fieldName] as? String)?.takeIf(String::isNotBlank) ?: malformedResponse()
@@ -319,6 +369,20 @@ private fun Map<*, *>.requireInt(fieldName: String): Int {
     if (value !in Int.MIN_VALUE..Int.MAX_VALUE) malformedResponse()
     return value.toInt()
 }
+
+private fun Map<*, *>.requireNonNegativeInt(fieldName: String): Int =
+    requireInt(fieldName).takeIf { value -> value >= 0 } ?: malformedResponse()
+
+private fun Map<*, *>.optionalNonNegativeInt(fieldName: String): Int? =
+    when (val value = this[fieldName]) {
+        null -> null
+        is Number -> {
+            val narrowed = value.toExactLong()
+            if (narrowed !in 0..Int.MAX_VALUE.toLong()) malformedResponse()
+            narrowed.toInt()
+        }
+        else -> malformedResponse()
+    }
 
 private fun Number.toExactLong(): Long {
     val serialized = toDouble()

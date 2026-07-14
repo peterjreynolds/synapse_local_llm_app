@@ -3,6 +3,7 @@ import {onDocumentUpdated} from "firebase-functions/v2/firestore";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {deleteAttachmentObjects, requireAttachmentUpload} from "./attachmentMutation.js";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
+import {runRecordedOperationsJob} from "./operationsJobStatus.js";
 
 export const cleanupDeletedMessageAttachments = onDocumentUpdated(
   {
@@ -31,22 +32,24 @@ export const cleanupExpiredAttachmentUploads = onSchedule(
     retryCount: 3,
   },
   async (): Promise<void> => {
-    const expiredSnapshots = await firebaseAdminFirestore.collection("attachmentUploads")
-      .where("expiresAt", "<=", Timestamp.now())
-      .limit(MAXIMUM_CLEANUP_BATCH)
-      .get();
-    await cleanupUploads(
-      expiredSnapshots.docs.map((document) => document.id),
-      (upload) => upload.status === "PENDING" || upload.status === "READY" || upload.status === "CANCELLED",
-    );
+    await runRecordedOperationsJob("attachmentCleanup", async () => {
+      const expiredSnapshots = await firebaseAdminFirestore.collection("attachmentUploads")
+        .where("expiresAt", "<=", Timestamp.now())
+        .limit(MAXIMUM_CLEANUP_BATCH)
+        .get();
+      return cleanupUploads(
+        expiredSnapshots.docs.map((document) => document.id),
+        (upload) => upload.status === "PENDING" || upload.status === "READY" || upload.status === "CANCELLED",
+      );
+    });
   },
 );
 
 async function cleanupUploads(
   attachmentIds: string[],
   shouldClean: (upload: ReturnType<typeof requireAttachmentUpload>) => boolean,
-): Promise<void> {
-  await Promise.all(attachmentIds.map(async (attachmentId) => {
+): Promise<number> {
+  const cleanupResults = await Promise.all(attachmentIds.map(async (attachmentId) => {
     const uploadReference = firebaseAdminFirestore.doc(`attachmentUploads/${attachmentId}`);
     const upload = await firebaseAdminFirestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(uploadReference);
@@ -60,7 +63,7 @@ async function cleanupUploads(
       });
       return currentUpload;
     });
-    if (!upload) return;
+    if (!upload) return false;
     await deleteAttachmentObjects(upload);
     const cleanedAt = Timestamp.now();
     await uploadReference.update({
@@ -69,7 +72,9 @@ async function cleanupUploads(
       status: "CLEANED",
       updatedAt: cleanedAt,
     });
+    return true;
   }));
+  return cleanupResults.filter(Boolean).length;
 }
 
 function readAttachmentIds(value: unknown): string[] {

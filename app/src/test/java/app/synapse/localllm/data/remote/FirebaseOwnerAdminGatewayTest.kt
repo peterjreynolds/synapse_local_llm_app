@@ -69,4 +69,43 @@ class FirebaseOwnerAdminGatewayTest {
             )
         }
     }
+
+    @Test
+    fun ownerOperationsResponsesAreNarrowedWithoutLeakingBackendRecords() {
+        val operations = parseOwnerOperationsSummary(
+            mapOf(
+                "activeDeviceCount" to 2,
+                "activeRoomCount" to 3,
+                "attachmentCleanup" to cleanup("NEVER_RUN"),
+                "backendRevision" to "revision-1",
+                "backendState" to "HEALTHY",
+                "failedNotificationDeliveryCount" to 1,
+                "generatedAtMillis" to 4_000L,
+                "integrity" to mapOf(
+                    "checkedRoomCount" to 3,
+                    "issueCodes" to listOf("ACTIVE_MEMBERSHIP_MISSING"),
+                    "issueCount" to 1,
+                    "sampleLimit" to 25,
+                    "sampleLimitReached" to false,
+                ),
+                "operationalDataCleanup" to cleanup("SUCCEEDED", 7),
+                "pendingNotificationDeliveryCount" to 4,
+                "totalDeviceCount" to 5,
+            ),
+        )
+
+        assertEquals("revision-1", operations.backendRevision)
+        assertEquals(1, operations.integrity.issueCount)
+        assertEquals(7, operations.operationalDataCleanup.affectedDocumentCount)
+    }
 }
+
+private fun cleanup(
+    state: String,
+    affectedDocumentCount: Int? = null,
+): Map<String, Any?> = mapOf(
+    "affectedDocumentCount" to affectedDocumentCount,
+    "lastCompletedAtMillis" to null,
+    "lastStartedAtMillis" to null,
+    "state" to state,
+)
