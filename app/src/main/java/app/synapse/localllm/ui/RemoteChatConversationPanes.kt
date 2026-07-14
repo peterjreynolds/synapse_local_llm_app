@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Badge
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -25,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,8 +46,10 @@ import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomKind
+import app.synapse.localllm.domain.remote.RemoteRoomMuteDuration
 import coil3.compose.AsyncImage
 import java.time.ZoneId
+import java.text.Normalizer
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
@@ -67,9 +73,11 @@ internal fun RemoteChatsPane(
     }
     if (selectedRoomId == null) {
         RemoteRoomList(
-            rooms = state.rooms,
-            profiles = state.profiles,
+            state = state,
             onRoomSelected = { room -> viewModel.selectRoom(room.roomId) },
+            onMessageSearchChanged = viewModel::searchCachedMessages,
+            onMessageSearchResultSelected = viewModel::openMessageSearchResult,
+            onRoomPreferencesChanged = viewModel::updateRoomPreferences,
             onCreateGroup = { showGroupCreation = true },
             isActionRunning = groupState.isActionRunning,
         )
@@ -117,12 +125,27 @@ internal fun RemoteChatsPane(
 
 @Composable
 private fun RemoteRoomList(
-    rooms: List<RemoteCachedRoom>,
-    profiles: List<RemoteCachedProfile>,
+    state: RemoteChatUiState,
     onRoomSelected: (RemoteCachedRoom) -> Unit,
+    onMessageSearchChanged: (String) -> Unit,
+    onMessageSearchResultSelected: (app.synapse.localllm.domain.remote.RemoteMessageSearchResult) -> Unit,
+    onRoomPreferencesChanged: (RemoteCachedRoom, Boolean, Boolean, RemoteRoomMuteDuration?) -> Unit,
     onCreateGroup: () -> Unit,
     isActionRunning: Boolean,
 ) {
+    var roomSearchQuery by rememberSaveable { mutableStateOf("") }
+    var unreadOnly by rememberSaveable { mutableStateOf(false) }
+    var showArchived by rememberSaveable { mutableStateOf(false) }
+    var preferenceRoomId by rememberSaveable { mutableStateOf<String?>(null) }
+    val visibleRooms = remember(state.rooms, state.profiles, roomSearchQuery, unreadOnly, showArchived) {
+        buildRemoteRoomPresentation(
+            rooms = state.rooms,
+            profiles = state.profiles,
+            searchQuery = roomSearchQuery,
+            unreadOnly = unreadOnly,
+            showArchived = showArchived,
+        )
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         Button(
             onClick = onCreateGroup,
@@ -133,16 +156,65 @@ private fun RemoteRoomList(
         ) {
             Text("New group")
         }
-        if (rooms.isEmpty()) {
+        OutlinedTextField(
+            value = roomSearchQuery,
+            onValueChange = { value -> roomSearchQuery = value.take(MAXIMUM_VISIBLE_SEARCH_QUERY_LENGTH) },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            label = { Text("Search conversations") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = state.messageSearchQuery,
+            onValueChange = onMessageSearchChanged,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            label = { Text("Search downloaded messages") },
+            singleLine = true,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(onClick = { unreadOnly = !unreadOnly }, modifier = Modifier.weight(1f)) {
+                Text(if (unreadOnly) "All chats" else "Unread only")
+            }
+            OutlinedButton(onClick = { showArchived = !showArchived }, modifier = Modifier.weight(1f)) {
+                Text(if (showArchived) "Hide archived" else "Show archived")
+            }
+        }
+        if (state.messageSearchQuery.isNotBlank() && state.messageSearchResults.isNotEmpty()) {
+            Text(
+                "Message results",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            state.messageSearchResults.forEach { result ->
+                val room = state.rooms.firstOrNull { candidate -> candidate.roomId == result.roomId }
+                ListItem(
+                    headlineContent = { Text(room?.title ?: "Conversation") },
+                    supportingContent = { Text(result.excerpt, maxLines = 2) },
+                    modifier = Modifier.clickable { onMessageSearchResultSelected(result) },
+                )
+            }
+            HorizontalDivider()
+        }
+        if (state.rooms.isEmpty()) {
             EmptyRemotePane(
                 title = "No synced conversations yet",
                 detail = "Start a private chat from People or create a group.",
             )
             return@Column
         }
+        if (visibleRooms.isEmpty()) {
+            EmptyRemotePane(
+                title = "No conversations match",
+                detail = "Change the search or filter settings.",
+            )
+            return@Column
+        }
         LazyColumn(modifier = Modifier.weight(1f)) {
-            items(orderRemoteRoomsForList(rooms), key = { room -> room.roomId.raw }) { room ->
-            val peer = profiles.firstOrNull { profile -> profile.profileUid == room.peerUid }
+            items(visibleRooms, key = { room -> room.roomId.raw }) { room ->
+            val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room.peerUid }
             val displayName = if (room.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room.title
             ListItem(
                 headlineContent = {
@@ -167,7 +239,9 @@ private fun RemoteRoomList(
                     Column(horizontalAlignment = Alignment.End) {
                         if (room.isPinned) Text("Pinned", style = MaterialTheme.typography.labelSmall)
                         if (room.isArchived) Text("Archived", style = MaterialTheme.typography.labelSmall)
+                        if (room.isMuted) Text("Muted", style = MaterialTheme.typography.labelSmall)
                         if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
+                        TextButton(onClick = { preferenceRoomId = room.roomId.raw }) { Text("Manage") }
                     }
                 },
                 modifier = Modifier.clickable { onRoomSelected(room) },
@@ -176,6 +250,78 @@ private fun RemoteRoomList(
             }
         }
     }
+    state.rooms.firstOrNull { room -> room.roomId.raw == preferenceRoomId }?.let { room ->
+        RemoteRoomPreferencesDialog(
+            room = room,
+            isActionRunning = state.isActionRunning,
+            onDismiss = { preferenceRoomId = null },
+            onSave = { archived, pinned, muteDuration ->
+                onRoomPreferencesChanged(room, archived, pinned, muteDuration)
+                preferenceRoomId = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun RemoteRoomPreferencesDialog(
+    room: RemoteCachedRoom,
+    isActionRunning: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (Boolean, Boolean, RemoteRoomMuteDuration?) -> Unit,
+) {
+    var archived by rememberSaveable(room.roomId.raw, room.isArchived) { mutableStateOf(room.isArchived) }
+    var pinned by rememberSaveable(room.roomId.raw, room.isPinned) { mutableStateOf(room.isPinned) }
+    var muteDuration by rememberSaveable(room.roomId.raw, room.isMuted, room.mutedUntil) {
+        mutableStateOf<RemoteRoomMuteDuration?>(null)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Conversation settings") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(onClick = { pinned = !pinned }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (pinned) "Unpin conversation" else "Pin conversation")
+                }
+                OutlinedButton(onClick = { archived = !archived }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (archived) "Restore from archive" else "Archive conversation")
+                }
+                Text("Mute notifications", fontWeight = FontWeight.SemiBold)
+                OutlinedButton(
+                    onClick = { muteDuration = null },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (muteDuration == null) "✓ Keep current setting" else "Keep current setting")
+                }
+                RemoteRoomMuteDuration.entries.forEach { duration ->
+                    OutlinedButton(
+                        onClick = { muteDuration = duration },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (muteDuration == duration) "✓ ${duration.label()}" else duration.label())
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(archived, pinned, muteDuration) },
+                enabled = !isActionRunning,
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private fun RemoteRoomMuteDuration.label(): String = when (this) {
+    RemoteRoomMuteDuration.OFF -> "Not muted"
+    RemoteRoomMuteDuration.ONE_HOUR -> "1 hour"
+    RemoteRoomMuteDuration.EIGHT_HOURS -> "8 hours"
+    RemoteRoomMuteDuration.ONE_WEEK -> "1 week"
+    RemoteRoomMuteDuration.FOREVER -> "Until I turn it off"
 }
 
 
@@ -330,13 +476,13 @@ internal fun buildRemotePeoplePresentation(
     currentAccountUid: String?,
     searchQuery: String,
 ): RemotePeoplePresentation {
-    val normalizedQuery = searchQuery.trim().lowercase()
+    val normalizedQuery = normalizeRemoteSearchQuery(searchQuery)
     val candidates = profiles.filter { profile ->
         profile.profileUid.raw != currentAccountUid &&
             (
                 normalizedQuery.isEmpty() ||
-                    profile.displayName.lowercase().contains(normalizedQuery) ||
-                    profile.username.lowercase().contains(normalizedQuery)
+                    normalizeRemoteSearchQuery(profile.displayName).contains(normalizedQuery) ||
+                    normalizeRemoteSearchQuery(profile.username).contains(normalizedQuery)
             )
     }
     if (normalizedQuery.isNotEmpty()) {
@@ -365,6 +511,34 @@ internal fun orderRemoteRoomsForList(rooms: List<RemoteCachedRoom>): List<Remote
             .thenBy { room -> room.isArchived }
             .thenByDescending { room -> room.remoteUpdatedAt },
     )
+
+internal fun buildRemoteRoomPresentation(
+    rooms: List<RemoteCachedRoom>,
+    profiles: List<RemoteCachedProfile>,
+    searchQuery: String,
+    unreadOnly: Boolean,
+    showArchived: Boolean,
+): List<RemoteCachedRoom> {
+    val normalizedQuery = normalizeRemoteSearchQuery(searchQuery)
+    val profilesByUid = profiles.associateBy(RemoteCachedProfile::profileUid)
+    return orderRemoteRoomsForList(
+        rooms.filter { room ->
+            val peer = room.peerUid?.let(profilesByUid::get)
+            val matchesQuery = normalizedQuery.isEmpty() || listOfNotNull(
+                room.title,
+                peer?.displayName,
+                peer?.username,
+            ).any { candidate -> normalizeRemoteSearchQuery(candidate).contains(normalizedQuery) }
+            matchesQuery && (!unreadOnly || room.unreadCount > 0) && (showArchived || !room.isArchived)
+        },
+    )
+}
+
+private fun normalizeRemoteSearchQuery(value: String): String =
+    Normalizer.normalize(value, Normalizer.Form.NFKC)
+        .trim()
+        .lowercase()
+        .take(MAXIMUM_VISIBLE_SEARCH_QUERY_LENGTH)
 
 @Composable
 private fun RemotePeopleListItem(
@@ -515,3 +689,5 @@ private val REMOTE_PRESENCE_FORMATTER: DateTimeFormatter =
     DateTimeFormatter
         .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
         .withZone(ZoneId.systemDefault())
+
+private const val MAXIMUM_VISIBLE_SEARCH_QUERY_LENGTH = 100

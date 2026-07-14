@@ -1,8 +1,12 @@
 package app.synapse.localllm.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Fts4
+import androidx.room.FtsOptions
 import androidx.room.Index
+import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "remote_profile_cache",
@@ -56,6 +60,7 @@ data class RemoteRoomCacheEntity(
     val lastReadAtEpochMillis: Long?,
     val remoteUpdatedAtEpochMillis: Long,
     val cachedAtEpochMillis: Long,
+    val mutedUntilEpochMillis: Long? = null,
 )
 
 @Entity(
@@ -96,6 +101,18 @@ data class RemoteMessageCacheEntity(
     val serverCreatedAtEpochMillis: Long?,
     val failureReason: String?,
     val cachedAtEpochMillis: Long,
+)
+
+@Fts4(tokenizer = FtsOptions.TOKENIZER_UNICODE61)
+@Entity(tableName = "remote_message_search")
+data class RemoteMessageSearchEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "rowid")
+    val rowId: Long,
+    val accountUid: String,
+    val remoteRoomId: String,
+    val remoteMessageId: String,
+    val body: String,
 )
 
 @Entity(

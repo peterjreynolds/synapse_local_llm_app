@@ -7,6 +7,7 @@ import {
   requireActiveGroupRoom,
 } from "./groupRoomAuthorization.js";
 import {GroupMemberRole, parseGroupRoomCommand} from "./groupRoomDomain.js";
+import {isRoomMuteActive} from "./roomPreferenceDomain.js";
 
 interface GroupMemberSummary {
   joinedAtMillis: number;
@@ -63,7 +64,12 @@ export const getGroupRoomDetails = onCall(
       archived: actorMembership.archived,
       avatarObjectPath: room.avatarObjectPath,
       members,
-      muted: actorMembership.muted,
+      muted: isRoomMuteActive(
+        actorMembership.muted,
+        actorMembershipSnapshot.get("mutedUntil") instanceof Timestamp ?
+          (actorMembershipSnapshot.get("mutedUntil") as Timestamp).toMillis() : null,
+        Date.now(),
+      ),
       ownerUid: room.ownerUid,
       pinned: actorMembership.pinned,
       revision: room.revision,

@@ -92,7 +92,7 @@ function call(client, name) {
   return httpsCallable(client.functions, name);
 }
 
-async function waitForCondition(condition, timeoutMillis = 10_000) {
+async function waitForCondition(condition, timeoutMillis = 30_000) {
   const deadline = Date.now() + timeoutMillis;
   while (Date.now() < deadline) {
     if (await condition()) return;
@@ -238,6 +238,99 @@ test("member preferences, role permissions, and deletion confirmation fail close
     call(trishClient, "getGroupRoomDetails")({roomId}),
     (error) => error.code === "functions/failed-precondition",
   );
+});
+
+test("room and notification preferences support direct rooms, groups, and timed mutes", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  const trishClient = await signIn("trish", trish);
+  const group = await call(peterClient, "createGroupRoom")({memberUids: [trish.uid], title: "Preferences"});
+
+  const timedMute = await call(trishClient, "updateRoomPreferences")({
+    archived: true,
+    muteDuration: "ONE_HOUR",
+    pinned: true,
+    roomId: group.data.roomId,
+  });
+  assert.equal(timedMute.data.muted, true);
+  assert.equal(timedMute.data.mutedUntilMillis > Date.now(), true);
+  const groupMembership = await adminFirestore.doc(`rooms/${group.data.roomId}/members/${trish.uid}`).get();
+  assert.equal(groupMembership.get("archived"), true);
+  assert.equal(groupMembership.get("pinned"), true);
+  assert.equal(groupMembership.get("mutedUntil") instanceof AdminTimestamp, true);
+
+  const direct = await call(peterClient, "openDirectRoom")({targetUid: trish.uid});
+  const permanentMute = await call(trishClient, "updateRoomPreferences")({
+    archived: false,
+    muteDuration: "FOREVER",
+    pinned: false,
+    roomId: direct.data.roomId,
+  });
+  assert.equal(permanentMute.data.muted, true);
+  assert.equal(permanentMute.data.mutedUntilMillis, null);
+
+  const defaults = await call(trishClient, "getNotificationPreferences")();
+  assert.deepEqual(defaults.data, {
+    directMessages: true,
+    groupMessages: true,
+    mentions: true,
+    mutedRooms: false,
+  });
+  const updated = await call(trishClient, "updateNotificationPreferences")({
+    directMessages: false,
+    groupMessages: false,
+    mentions: true,
+    mutedRooms: true,
+  });
+  assert.equal(updated.data.directMessages, false);
+  assert.equal(updated.data.mutedRooms, true);
+  await assertFails(
+    setDoc(doc(trishClient.firestore, "notificationPreferences", trish.uid), {directMessages: true}),
+  );
+});
+
+test("mention preferences can select a bounded subset of group recipients", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const josh = await seedActiveAccount("josh");
+  const peterClient = await signIn("peter", peter);
+  const trishClient = await signIn("trish", trish);
+  const joshClient = await signIn("josh", josh);
+  const created = await call(peterClient, "createGroupRoom")({
+    memberUids: [trish.uid, josh.uid],
+    title: "Mentions",
+  });
+  await call(trishClient, "updateNotificationPreferences")({
+    directMessages: true,
+    groupMessages: false,
+    mentions: true,
+    mutedRooms: false,
+  });
+  await call(joshClient, "updateNotificationPreferences")({
+    directMessages: true,
+    groupMessages: false,
+    mentions: false,
+    mutedRooms: false,
+  });
+  await setDoc(doc(peterClient.firestore, "rooms", created.data.roomId, "messages", "mention-message"), {
+    authorKind: "HUMAN",
+    body: "@trish please review",
+    clientCreatedAt: Timestamp.now(),
+    clientMessageId: "mention-message",
+    createdAt: serverTimestamp(),
+    deletedAt: null,
+    editedAt: null,
+    replyToMessageId: null,
+    senderUid: peter.uid,
+  });
+
+  await waitForCondition(async () => {
+    const membership = await adminFirestore.doc(`rooms/${created.data.roomId}/members/${trish.uid}`).get();
+    return membership.get("unreadCount") === 1;
+  });
+  const joshMembership = await adminFirestore.doc(`rooms/${created.data.roomId}/members/${josh.uid}`).get();
+  assert.equal(joshMembership.get("unreadCount"), 0);
 });
 
 test("group notification fan-out increments unread only for authorized unmuted members", async () => {

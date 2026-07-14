@@ -10,6 +10,8 @@ import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedAttachment
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteMessageId
+import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
+import app.synapse.localllm.domain.remote.RemoteNotificationPreferences
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 
 data class RemoteChatUiState(
@@ -29,6 +31,9 @@ data class RemoteChatUiState(
     val hasReachedMessageStart: Boolean = false,
     val isLoadingOlderMessages: Boolean = false,
     val messageToRevealId: RemoteMessageId? = null,
+    val messageSearchQuery: String = "",
+    val messageSearchResults: List<RemoteMessageSearchResult> = emptyList(),
+    val notificationPreferences: RemoteNotificationPreferences = RemoteNotificationPreferences(),
     val isActionRunning: Boolean = false,
     val notice: String? = null,
 )

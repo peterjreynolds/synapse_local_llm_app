@@ -80,6 +80,22 @@ data class RemoteMessagePage(
     val reachedStart: Boolean,
 )
 
+data class UpdateRemoteRoomPreferencesCommand(
+    val accountUid: RemoteAccountUid,
+    val roomId: RemoteRoomId,
+    val isArchived: Boolean,
+    val isPinned: Boolean,
+    val muteDuration: RemoteRoomMuteDuration?,
+)
+
+data class RemoteRoomPreferencesReceipt(
+    val roomId: RemoteRoomId,
+    val isArchived: Boolean,
+    val isPinned: Boolean,
+    val muteDuration: RemoteRoomMuteDuration?,
+    val mutedUntil: Instant?,
+)
+
 data class RemoteTypingParticipant(
     val profileUid: RemoteProfileUid,
     val expiresAt: Instant,
@@ -130,4 +146,17 @@ interface RemoteConversationGateway {
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
     )
+
+    suspend fun updateRoomPreferences(
+        command: UpdateRemoteRoomPreferencesCommand,
+    ): RemoteRoomPreferencesReceipt
+
+    suspend fun getNotificationPreferences(
+        accountUid: RemoteAccountUid,
+    ): RemoteNotificationPreferences
+
+    suspend fun updateNotificationPreferences(
+        accountUid: RemoteAccountUid,
+        preferences: RemoteNotificationPreferences,
+    ): RemoteNotificationPreferences
 }

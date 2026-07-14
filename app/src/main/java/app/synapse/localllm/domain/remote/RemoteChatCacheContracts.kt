@@ -74,6 +74,14 @@ enum class RemoteRoomMemberRole {
     MEMBER,
 }
 
+enum class RemoteRoomMuteDuration {
+    OFF,
+    ONE_HOUR,
+    EIGHT_HOURS,
+    ONE_WEEK,
+    FOREVER,
+}
+
 data class RemoteCachedProfile(
     val accountUid: RemoteAccountUid,
     val profileUid: RemoteProfileUid,
@@ -106,6 +114,7 @@ data class RemoteCachedRoom(
     val joinedAt: Instant,
     val lastReadAt: Instant?,
     val remoteUpdatedAt: Instant,
+    val mutedUntil: Instant? = null,
 ) {
     init {
         require(unreadCount >= 0) { "Remote room unread count cannot be negative." }
@@ -214,6 +223,26 @@ data class RemoteMessageDraft(
     val updatedAt: Instant,
 )
 
+data class SearchRemoteMessagesCommand(
+    val accountUid: RemoteAccountUid,
+    val query: String,
+    val roomId: RemoteRoomId? = null,
+    val limit: Int = 25,
+)
+
+data class RemoteMessageSearchResult(
+    val roomId: RemoteRoomId,
+    val messageId: RemoteMessageId,
+    val excerpt: String,
+)
+
+data class RemoteNotificationPreferences(
+    val directMessages: Boolean = true,
+    val groupMessages: Boolean = true,
+    val mentions: Boolean = true,
+    val mutedRooms: Boolean = false,
+)
+
 enum class RemoteCacheMutation {
     PROFILES_CACHED,
     ROOMS_CACHED,
@@ -275,6 +304,8 @@ interface RemoteChatCacheRepository {
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
     ): RemoteCacheMutationReceipt
+
+    suspend fun searchMessages(command: SearchRemoteMessagesCommand): List<RemoteMessageSearchResult>
 
     suspend fun findSyncCursor(
         collectionName: String,

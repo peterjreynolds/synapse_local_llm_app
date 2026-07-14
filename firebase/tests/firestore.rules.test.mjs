@@ -286,6 +286,14 @@ test("keeps FCM installation IDs server-owned", async () => {
     }),
   );
   await assertFails(getDoc(peterDevice));
+  const notificationPreferences = doc(peter, "notificationPreferences", PETER_UID);
+  await assertFails(getDoc(notificationPreferences));
+  await assertFails(setDoc(notificationPreferences, {
+    directMessages: true,
+    groupMessages: true,
+    mentions: true,
+    mutedRooms: false,
+  }));
 });
 
 test("keeps block and account deletion state server-owned", async () => {

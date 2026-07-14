@@ -16,6 +16,7 @@ import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_10_11
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_11_12
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_12_13
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_13_14
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
@@ -125,6 +126,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_10_11,
         SYNAPSE_DATABASE_MIGRATION_11_12,
         SYNAPSE_DATABASE_MIGRATION_12_13,
+        SYNAPSE_DATABASE_MIGRATION_13_14,
     ).build()
 
     val remoteAccountSessionController = RemoteAccountSessionCoordinator()

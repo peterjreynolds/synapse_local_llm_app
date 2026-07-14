@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -194,6 +195,46 @@ internal fun RemoteProfilePane(
                 Text(" Enable notifications")
             }
         }
+        NotificationPreferenceRow(
+            label = "Direct messages",
+            checked = state.notificationPreferences.directMessages,
+            enabled = !state.isActionRunning,
+            onCheckedChange = { enabled ->
+                viewModel.updateNotificationPreferences(
+                    state.notificationPreferences.copy(directMessages = enabled),
+                )
+            },
+        )
+        NotificationPreferenceRow(
+            label = "Group messages",
+            checked = state.notificationPreferences.groupMessages,
+            enabled = !state.isActionRunning,
+            onCheckedChange = { enabled ->
+                viewModel.updateNotificationPreferences(
+                    state.notificationPreferences.copy(groupMessages = enabled),
+                )
+            },
+        )
+        NotificationPreferenceRow(
+            label = "Group mentions",
+            checked = state.notificationPreferences.mentions,
+            enabled = !state.isActionRunning,
+            onCheckedChange = { enabled ->
+                viewModel.updateNotificationPreferences(
+                    state.notificationPreferences.copy(mentions = enabled),
+                )
+            },
+        )
+        NotificationPreferenceRow(
+            label = "Alerts from muted conversations",
+            checked = state.notificationPreferences.mutedRooms,
+            enabled = !state.isActionRunning,
+            onCheckedChange = { enabled ->
+                viewModel.updateNotificationPreferences(
+                    state.notificationPreferences.copy(mutedRooms = enabled),
+                )
+            },
+        )
 
         HorizontalDivider()
         Text("Security", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -401,6 +442,27 @@ internal fun RemoteProfilePane(
             Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
             Text(" Secure logout")
         }
+    }
+}
+
+@Composable
+private fun NotificationPreferenceRow(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+        )
     }
 }
 

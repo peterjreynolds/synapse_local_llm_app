@@ -20,15 +20,19 @@ import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessagePage
 import app.synapse.localllm.domain.remote.RemoteMessageRevisionReceipt
 import app.synapse.localllm.domain.remote.RemoteMessageSendReceipt
+import app.synapse.localllm.domain.remote.RemoteNotificationPreferences
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteReactionReceipt
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
+import app.synapse.localllm.domain.remote.RemoteRoomMuteDuration
+import app.synapse.localllm.domain.remote.RemoteRoomPreferencesReceipt
 import app.synapse.localllm.domain.remote.RemoteTypingParticipant
 import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
 import app.synapse.localllm.domain.remote.SendRemoteMessageCommand
 import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
+import app.synapse.localllm.domain.remote.UpdateRemoteRoomPreferencesCommand
 import app.synapse.localllm.domain.remote.isValidRemoteDirectRoomId
 import app.synapse.localllm.domain.remote.isValidRemoteGroupRoomId
 import com.google.firebase.Timestamp
@@ -41,6 +45,7 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.functions.FirebaseFunctions
+import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -447,6 +452,75 @@ class FirebaseRemoteConversationGateway(
         }
     }
 
+    override suspend fun updateRoomPreferences(
+        command: UpdateRemoteRoomPreferencesCommand,
+    ): RemoteRoomPreferencesReceipt {
+        requireAuthenticatedUid(command.accountUid)
+        return try {
+            val result = functions.getHttpsCallable("updateRoomPreferences")
+                .call(
+                    mapOf(
+                        "archived" to command.isArchived,
+                        "muteDuration" to command.muteDuration?.name,
+                        "pinned" to command.isPinned,
+                        "roomId" to command.roomId.raw,
+                    ),
+                )
+                .await()
+                .data
+                .requireCallableMap("room preference")
+            RemoteRoomPreferencesReceipt(
+                roomId = RemoteRoomId(result.requireString("roomId")),
+                isArchived = result.requireBoolean("archived"),
+                isPinned = result.requireBoolean("pinned"),
+                muteDuration = (result["muteDuration"] as? String)?.let(RemoteRoomMuteDuration::valueOf),
+                mutedUntil = (result["mutedUntilMillis"] as? Number)?.toLong()?.let(Instant::ofEpochMilli),
+            )
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("update conversation preferences")
+        }
+    }
+
+    override suspend fun getNotificationPreferences(
+        accountUid: RemoteAccountUid,
+    ): RemoteNotificationPreferences {
+        requireAuthenticatedUid(accountUid)
+        return try {
+            functions.getHttpsCallable("getNotificationPreferences")
+                .call()
+                .await()
+                .data
+                .requireCallableMap("notification preference")
+                .toNotificationPreferences()
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("load notification preferences")
+        }
+    }
+
+    override suspend fun updateNotificationPreferences(
+        accountUid: RemoteAccountUid,
+        preferences: RemoteNotificationPreferences,
+    ): RemoteNotificationPreferences {
+        requireAuthenticatedUid(accountUid)
+        return try {
+            functions.getHttpsCallable("updateNotificationPreferences")
+                .call(
+                    mapOf(
+                        "directMessages" to preferences.directMessages,
+                        "groupMessages" to preferences.groupMessages,
+                        "mentions" to preferences.mentions,
+                        "mutedRooms" to preferences.mutedRooms,
+                    ),
+                )
+                .await()
+                .data
+                .requireCallableMap("notification preference")
+                .toNotificationPreferences()
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("update notification preferences")
+        }
+    }
+
     private fun DocumentSnapshot.toRoomSnapshot(
         accountUid: RemoteAccountUid,
         membershipDocument: DocumentSnapshot,
@@ -491,7 +565,9 @@ class FirebaseRemoteConversationGateway(
         if (roomKind == RemoteRoomKind.GROUP && avatarObjectPathValue != null && avatarObjectPathValue !is String) {
             return null
         }
-        val isMuted = membershipDocument.getBoolean("muted") ?: false
+        val mutedUntil = membershipDocument.getTimestamp("mutedUntil")?.toInstant()
+        val isMuted = membershipDocument.getBoolean("muted") == true &&
+            (mutedUntil == null || mutedUntil.isAfter(Instant.now()))
         return RemoteCachedRoom(
             accountUid = accountUid,
             roomId = RemoteRoomId(id),
@@ -515,6 +591,7 @@ class FirebaseRemoteConversationGateway(
             joinedAt = joinedAt.toInstant(),
             lastReadAt = membershipDocument.getTimestamp("lastReadAt")?.toInstant(),
             remoteUpdatedAt = updatedAt.toInstant(),
+            mutedUntil = mutedUntil,
         )
     }
 
@@ -648,6 +725,18 @@ private fun Any?.requireCallableMap(receiptName: String): Map<*, *> =
 private fun Map<*, *>.requireString(fieldName: String): String =
     (this[fieldName] as? String)?.takeIf(String::isNotBlank)
         ?: throw RemoteChatException("Firebase returned an invalid $fieldName receipt field.")
+
+private fun Map<*, *>.requireBoolean(fieldName: String): Boolean =
+    this[fieldName] as? Boolean
+        ?: throw RemoteChatException("Firebase returned an invalid $fieldName receipt field.")
+
+private fun Map<*, *>.toNotificationPreferences(): RemoteNotificationPreferences =
+    RemoteNotificationPreferences(
+        directMessages = requireBoolean("directMessages"),
+        groupMessages = requireBoolean("groupMessages"),
+        mentions = requireBoolean("mentions"),
+        mutedRooms = requireBoolean("mutedRooms"),
+    )
 
 private fun Map<*, *>.requirePositiveLong(fieldName: String): Long =
     (this[fieldName] as? Number)?.toLong()?.takeIf { value -> value >= 1L }

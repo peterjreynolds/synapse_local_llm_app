@@ -13,6 +13,12 @@ import {
   firebaseAdminMessaging,
 } from "./firebaseAdmin.js";
 import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js";
+import {
+  buildRemoteMessageNotificationData,
+  readNotificationPreferences,
+  shouldNotifyForRemoteMessage,
+} from "./notificationPreferenceDomain.js";
+import {isRoomMuteActive} from "./roomPreferenceDomain.js";
 import {requireActiveAccount} from "./accountAuthorization.js";
 import {
   buildReciprocalBlockReferences,
@@ -66,6 +72,11 @@ export {
   updateGroupPreferences,
 } from "./groupRoomMutation.js";
 export {getGroupRoomDetails} from "./groupRoomQuery.js";
+export {updateRoomPreferences} from "./roomPreferenceMutation.js";
+export {
+  getNotificationPreferences,
+  updateNotificationPreferences,
+} from "./notificationPreferenceMutation.js";
 export {
   cleanupDeletedMessageAttachments,
   cleanupExpiredAttachmentUploads,
@@ -193,6 +204,7 @@ export const openDirectRoom = onCall(
           lastReadAt: null,
           leftAt: null,
           muted: false,
+          mutedUntil: null,
           pinned: false,
           role: "MEMBER",
           uid,
@@ -272,7 +284,12 @@ export const notifyRemoteMessage = onDocumentCreated(
       return;
     }
     const memberIds = roomSnapshot.get("memberIds");
-    if (!Array.isArray(memberIds) || !memberIds.includes(message.senderUid)) {
+    const roomKind = roomSnapshot.get("kind");
+    if (
+      !Array.isArray(memberIds) ||
+      !memberIds.includes(message.senderUid) ||
+      (roomKind !== "DIRECT" && roomKind !== "GROUP")
+    ) {
       return;
     }
     const candidateRecipientUids = [
@@ -287,16 +304,39 @@ export const notifyRemoteMessage = onDocumentCreated(
       ...candidateRecipientUids.flatMap((recipientUid) => [
         firestore.doc(`profiles/${recipientUid}`),
         roomReference.collection("members").doc(recipientUid),
+        firestore.doc(`notificationPreferences/${recipientUid}`),
       ]),
     );
-    const authorizationStates = candidateRecipientUids.map((recipientUid, recipientIndex) => ({
-        membershipActive: authorizationSnapshots[recipientIndex * 2 + 1]?.get("active") === true,
-        notificationsEnabled: authorizationSnapshots[recipientIndex * 2 + 1]?.get("muted") !== true,
+    const notificationEvaluatedAt = Timestamp.now().toMillis();
+    const authorizationStates = candidateRecipientUids.map((recipientUid, recipientIndex) => {
+      const profileSnapshot = authorizationSnapshots[recipientIndex * 3];
+      const membershipSnapshot = authorizationSnapshots[recipientIndex * 3 + 1];
+      const preferenceSnapshot = authorizationSnapshots[recipientIndex * 3 + 2];
+      const mutedUntil = membershipSnapshot?.get("mutedUntil");
+      const muted = isRoomMuteActive(
+        membershipSnapshot?.get("muted"),
+        mutedUntil instanceof Timestamp ? mutedUntil.toMillis() : null,
+        notificationEvaluatedAt,
+      );
+      const preferences = preferenceSnapshot?.exists ?
+        readNotificationPreferences(preferenceSnapshot.data()) :
+        readNotificationPreferences(undefined);
+      const username = profileSnapshot?.get("usernameNormalized") ?? profileSnapshot?.get("username");
+      return {
+        membershipActive: membershipSnapshot?.get("active") === true,
+        notificationsEnabled: typeof username === "string" && shouldNotifyForRemoteMessage({
+          body: message.body,
+          muted,
+          preferences,
+          recipientUsername: username,
+          roomKind,
+        }),
         profileAllowed:
-          authorizationSnapshots[recipientIndex * 2]?.get("allowed") === true &&
-          authorizationSnapshots[recipientIndex * 2]?.get("accountState") === "ACTIVE",
+          profileSnapshot?.get("allowed") === true &&
+          profileSnapshot?.get("accountState") === "ACTIVE",
         uid: recipientUid,
-      }));
+      };
+    });
     const notificationRecipientUids = selectAuthorizedMessageRecipientUids(
       candidateRecipientUids,
       authorizationStates,
@@ -346,12 +386,7 @@ export const notifyRemoteMessage = onDocumentCreated(
             priority: "high",
             ttl: 24 * 60 * 60 * 1000,
           },
-          data: {
-            messageId,
-            roomId,
-            senderUid: message.senderUid,
-            type: "SYNAPSE_CHAT_MESSAGE",
-          },
+          data: buildRemoteMessageNotificationData({messageId, roomId, senderUid: message.senderUid}),
           fids: deviceRecords.map((device) => device.value.installationId),
         });
         successCount = sendResult.successCount;

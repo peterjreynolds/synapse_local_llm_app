@@ -66,6 +66,71 @@ interface RemoteChatCacheDao {
     @Upsert
     suspend fun upsertMessages(messages: List<RemoteMessageCacheEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertMessageSearchEntries(entries: List<RemoteMessageSearchEntity>)
+
+    @Query(
+        """
+        DELETE FROM remote_message_search
+        WHERE accountUid = :accountUid
+          AND remoteRoomId = :remoteRoomId
+          AND remoteMessageId IN (:remoteMessageIds)
+        """,
+    )
+    suspend fun deleteMessageSearchEntries(
+        accountUid: String,
+        remoteRoomId: String,
+        remoteMessageIds: List<String>,
+    ): Int
+
+    @Query("DELETE FROM remote_message_search WHERE accountUid = :accountUid")
+    suspend fun deleteAllMessageSearchEntries(accountUid: String): Int
+
+    @Query(
+        """
+        DELETE FROM remote_message_search
+        WHERE accountUid = :accountUid AND remoteRoomId NOT IN (:authorizedRoomIds)
+        """,
+    )
+    suspend fun deleteUnauthorizedRoomSearchEntries(
+        accountUid: String,
+        authorizedRoomIds: List<String>,
+    ): Int
+
+    @Query(
+        """
+        SELECT remoteRoomId, remoteMessageId, body
+        FROM remote_message_search
+        WHERE accountUid = :accountUid
+          AND remote_message_search MATCH :matchQuery
+        ORDER BY rowid DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchAllMessages(
+        accountUid: String,
+        matchQuery: String,
+        limit: Int,
+    ): List<RemoteMessageSearchRow>
+
+    @Query(
+        """
+        SELECT remoteRoomId, remoteMessageId, body
+        FROM remote_message_search
+        WHERE accountUid = :accountUid
+          AND remoteRoomId = :remoteRoomId
+          AND remote_message_search MATCH :matchQuery
+        ORDER BY rowid DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchRoomMessages(
+        accountUid: String,
+        remoteRoomId: String,
+        matchQuery: String,
+        limit: Int,
+    ): List<RemoteMessageSearchRow>
+
     @Query(
         """
         UPDATE remote_message_cache
@@ -163,3 +228,9 @@ interface RemoteChatCacheDao {
         scopeId: String,
     ): RemoteSyncCursorEntity?
 }
+
+data class RemoteMessageSearchRow(
+    val remoteRoomId: String,
+    val remoteMessageId: String,
+    val body: String,
+)

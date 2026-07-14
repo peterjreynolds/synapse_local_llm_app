@@ -32,15 +32,20 @@ import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageDraft
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
+import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
+import app.synapse.localllm.domain.remote.RemoteNotificationPreferences
 import app.synapse.localllm.domain.remote.RemoteOutboxState
 import app.synapse.localllm.domain.remote.RemotePasswordChangeCommand
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteRoomMuteDuration
 import app.synapse.localllm.domain.remote.RemoteSignInCommand
 import app.synapse.localllm.domain.remote.RemoteVoiceNoteRecorder
 import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
+import app.synapse.localllm.domain.remote.SearchRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteProfileCommand
+import app.synapse.localllm.domain.remote.UpdateRemoteRoomPreferencesCommand
 import app.synapse.localllm.domain.remote.UploadRemoteAvatarCommand
 import app.synapse.localllm.domain.time.SynapseClock
 import kotlinx.coroutines.CancellationException
@@ -83,6 +88,7 @@ class RemoteChatViewModel(
     private var pendingNotificationRoomId: RemoteRoomId? = null
     private var draftSaveJob: Job? = null
     private var readAcknowledgementJob: Job? = null
+    private var messageSearchJob: Job? = null
     private var typingHeartbeatJob: Job? = null
     private var typingRoomId: RemoteRoomId? = null
     private val attachmentTransferController = RemoteAttachmentTransferController(
@@ -242,6 +248,63 @@ class RemoteChatViewModel(
         pendingNotificationRoomId = roomId
         openPendingNotificationRoomIfAvailable(mutableUiState.value.rooms)
     }
+
+    fun searchCachedMessages(query: String) {
+        val boundedQuery = query.take(MAXIMUM_MESSAGE_SEARCH_QUERY_LENGTH)
+        messageSearchJob?.cancel()
+        mutableUiState.update { state ->
+            state.copy(
+                messageSearchQuery = boundedQuery,
+                messageSearchResults = if (boundedQuery.isBlank()) emptyList() else state.messageSearchResults,
+            )
+        }
+        if (boundedQuery.isBlank()) return
+        val accountUid = mutableUiState.value.account?.accountUid ?: return
+        messageSearchJob = viewModelScope.launch {
+            delay(MESSAGE_SEARCH_DEBOUNCE_MILLIS)
+            try {
+                val results = cacheRepository.searchMessages(
+                    SearchRemoteMessagesCommand(accountUid, boundedQuery),
+                )
+                if (mutableUiState.value.messageSearchQuery == boundedQuery) {
+                    mutableUiState.update { state -> state.copy(messageSearchResults = results) }
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                publishFailure(exception)
+            }
+        }
+    }
+
+    fun openMessageSearchResult(result: RemoteMessageSearchResult) {
+        selectRoom(result.roomId)
+        jumpToMessage(result.messageId)
+    }
+
+    fun updateRoomPreferences(
+        room: RemoteCachedRoom,
+        isArchived: Boolean,
+        isPinned: Boolean,
+        muteDuration: RemoteRoomMuteDuration?,
+    ) = launchAction(successNotice = "Conversation preferences saved.") {
+        conversationGateway.updateRoomPreferences(
+            UpdateRemoteRoomPreferencesCommand(
+                accountUid = requireSignedInAccount().accountUid,
+                roomId = room.roomId,
+                isArchived = isArchived,
+                isPinned = isPinned,
+                muteDuration = muteDuration,
+            ),
+        )
+    }
+
+    fun updateNotificationPreferences(preferences: RemoteNotificationPreferences) =
+        launchAction(successNotice = "Notification preferences saved.") {
+            val accountUid = requireSignedInAccount().accountUid
+            val savedPreferences = conversationGateway.updateNotificationPreferences(accountUid, preferences)
+            mutableUiState.update { state -> state.copy(notificationPreferences = savedPreferences) }
+        }
 
     fun sendMessage(body: String) = launchAction {
         val normalizedBody = body.trim()
@@ -635,6 +698,16 @@ class RemoteChatViewModel(
                 launchStartupMutation("Could not enable notifications for this device.") {
                     deviceRegistrationGateway.registerCurrentDevice(account.accountUid)
                 }
+                launch {
+                    try {
+                        val preferences = conversationGateway.getNotificationPreferences(account.accountUid)
+                        mutableUiState.update { state -> state.copy(notificationPreferences = preferences) }
+                    } catch (exception: CancellationException) {
+                        throw exception
+                    } catch (_: Exception) {
+                        publishFailureMessage("Could not load notification preferences.")
+                    }
+                }
                 awaitCancellation()
             }
         } finally {
@@ -642,6 +715,7 @@ class RemoteChatViewModel(
             attachmentGateway.clearAccountCache(account.accountUid)
             stopTyping(selectedRoomId.value)
             draftSaveJob?.cancel()
+            messageSearchJob?.cancel()
             readAcknowledgementJob?.cancel()
             cacheRepository.clearActiveAccount()
             selectedRoomId.value = null
@@ -659,6 +733,9 @@ class RemoteChatViewModel(
                     replyToMessageId = null,
                     ownReactions = emptyMap(),
                     typingParticipantUids = emptyList(),
+                    messageSearchQuery = "",
+                    messageSearchResults = emptyList(),
+                    notificationPreferences = RemoteNotificationPreferences(),
                     isActionRunning = false,
                 )
             }
@@ -854,6 +931,8 @@ class RemoteChatViewModel(
         const val HUMAN_AUTHOR_KIND = "HUMAN"
         const val MESSAGE_BODY_LIMIT = 4_000
         const val MESSAGE_PAGE_LIMIT = 50
+        const val MAXIMUM_MESSAGE_SEARCH_QUERY_LENGTH = 100
+        const val MESSAGE_SEARCH_DEBOUNCE_MILLIS = 250L
         const val MAXIMUM_ACKNOWLEDGEMENT_SIZE = 50
         const val DRAFT_SAVE_DEBOUNCE_MILLIS = 300L
         const val TYPING_HEARTBEAT_MILLIS = 5_000L

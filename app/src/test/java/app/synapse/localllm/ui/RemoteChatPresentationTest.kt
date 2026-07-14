@@ -82,6 +82,20 @@ class RemoteChatPresentationTest {
     }
 
     @Test
+    fun peopleSearchNormalizesCompatibilityCharacters() {
+        val trish = profile("trish-uid", "Trish")
+
+        val presentation = buildRemotePeoplePresentation(
+            profiles = listOf(trish),
+            rooms = emptyList(),
+            currentAccountUid = "peter-uid",
+            searchQuery = "ＴＲＩ",
+        )
+
+        assertEquals(listOf(trish), presentation.directory)
+    }
+
+    @Test
     fun roomListPrioritizesPinnedThenActiveBeforeArchived() {
         val activeRoom = groupRoom("active", 'a', isPinned = false, isArchived = false)
         val archivedRoom = groupRoom("archived", 'b', isPinned = false, isArchived = true)
@@ -90,6 +104,34 @@ class RemoteChatPresentationTest {
         assertEquals(
             listOf(pinnedRoom, activeRoom, archivedRoom),
             orderRemoteRoomsForList(listOf(archivedRoom, activeRoom, pinnedRoom)),
+        )
+    }
+
+    @Test
+    fun roomPresentationSearchesPeersAndAppliesUnreadArchiveFilters() {
+        val trish = profile("trish-uid", "Trish")
+        val direct = room(trish.profileUid, NOW).copy(unreadCount = 2)
+        val archived = groupRoom("Archived project", 'b', isPinned = false, isArchived = true)
+
+        assertEquals(
+            listOf(direct),
+            buildRemoteRoomPresentation(
+                rooms = listOf(archived, direct),
+                profiles = listOf(trish),
+                searchQuery = "ＴＲＩ",
+                unreadOnly = true,
+                showArchived = false,
+            ),
+        )
+        assertEquals(
+            listOf(archived),
+            buildRemoteRoomPresentation(
+                rooms = listOf(archived, direct),
+                profiles = listOf(trish),
+                searchQuery = "project",
+                unreadOnly = false,
+                showArchived = true,
+            ),
         )
     }
 

@@ -29,11 +29,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RemoteProfileCacheEntity::class,
         RemoteRoomCacheEntity::class,
         RemoteMessageCacheEntity::class,
+        RemoteMessageSearchEntity::class,
         RemoteMessageOutboxEntity::class,
         RemoteMessageDraftEntity::class,
         RemoteSyncCursorEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -870,6 +871,22 @@ val SYNAPSE_DATABASE_MIGRATION_12_13 =
             db.execSQL(
                 "ALTER TABLE remote_message_outbox " +
                     "ADD COLUMN attachmentsJson TEXT NOT NULL DEFAULT '[]'",
+            )
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_13_14 =
+    object : Migration(13, 14) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE remote_room_cache ADD COLUMN mutedUntilEpochMillis INTEGER")
+            db.execSQL(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS remote_message_search USING FTS4(" +
+                    "accountUid, remoteRoomId, remoteMessageId, body, tokenize=unicode61)",
+            )
+            db.execSQL(
+                "INSERT INTO remote_message_search(accountUid, remoteRoomId, remoteMessageId, body) " +
+                    "SELECT accountUid, remoteRoomId, remoteMessageId, body " +
+                    "FROM remote_message_cache WHERE deletedAtEpochMillis IS NULL AND body != ''",
             )
         }
     }

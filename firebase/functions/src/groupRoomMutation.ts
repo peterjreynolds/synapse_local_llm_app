@@ -25,6 +25,7 @@ import {
   parseUpdateGroupPreferencesCommand,
 } from "./groupRoomDomain.js";
 import {buildReciprocalBlockReferences} from "./privacyAdmin.js";
+import {persistRoomPreferences} from "./roomPreferenceMutation.js";
 
 const RECENT_GROUP_DELETION_AUTHENTICATION_SECONDS = 5 * 60;
 
@@ -77,6 +78,7 @@ export const createGroupRoom = onCall(
           lastReadAt: null,
           leftAt: null,
           muted: false,
+          mutedUntil: null,
           pinned: false,
           role: memberUid === actorUid ? "OWNER" : "MEMBER",
           uid: memberUid,
@@ -142,6 +144,7 @@ export const addGroupMembers = onCall(
           lastReadAt: null,
           leftAt: null,
           muted: false,
+          mutedUntil: null,
           pinned: false,
           role: "MEMBER",
           uid: memberUid,
@@ -195,6 +198,7 @@ export const removeGroupMember = onCall(
         archived: false,
         leftAt: changedAt,
         muted: false,
+        mutedUntil: null,
         pinned: false,
         removedBy: actorUid,
       });
@@ -305,6 +309,7 @@ export const leaveGroupRoom = onCall(
         archived: false,
         leftAt: changedAt,
         muted: false,
+        mutedUntil: null,
         pinned: false,
       });
       transaction.update(roomReference, {
@@ -361,14 +366,11 @@ export const updateGroupPreferences = onCall(
   async (request): Promise<{archived: boolean; muted: boolean; pinned: boolean; roomId: string}> => {
     const {uid: actorUid} = await requireActiveAccount(request.auth);
     const command = parseUpdateGroupPreferencesCommand(request.data);
-    const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
-    await firebaseAdminFirestore.runTransaction(async (transaction) => {
-      await requireActiveGroupActor(transaction, roomReference, actorUid);
-      transaction.update(roomReference.collection("members").doc(actorUid), {
-        archived: command.archived,
-        muted: command.muted,
-        pinned: command.pinned,
-      });
+    await persistRoomPreferences(actorUid, {
+      archived: command.archived,
+      muteDuration: command.muted ? "FOREVER" : "OFF",
+      pinned: command.pinned,
+      roomId: command.roomId,
     });
     return command;
   },
@@ -399,6 +401,7 @@ export const deleteGroupRoom = onCall(
         archived: false,
         leftAt: deletedAt,
         muted: false,
+        mutedUntil: null,
         pinned: false,
       }));
       transaction.update(roomReference, {

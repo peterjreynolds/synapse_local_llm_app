@@ -26,17 +26,22 @@ import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
 import app.synapse.localllm.domain.remote.RemoteMessagePage
 import app.synapse.localllm.domain.remote.RemoteMessageRevisionReceipt
 import app.synapse.localllm.domain.remote.RemoteMessageSendReceipt
+import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
+import app.synapse.localllm.domain.remote.RemoteNotificationPreferences
 import app.synapse.localllm.domain.remote.RemoteOutboxState
 import app.synapse.localllm.domain.remote.RemoteProfileMutationReceipt
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteReactionReceipt
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteRoomPreferencesReceipt
 import app.synapse.localllm.domain.remote.RemoteSyncCursor
 import app.synapse.localllm.domain.remote.RemoteTypingParticipant
 import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
 import app.synapse.localllm.domain.remote.SendRemoteMessageCommand
+import app.synapse.localllm.domain.remote.SearchRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteProfileCommand
+import app.synapse.localllm.domain.remote.UpdateRemoteRoomPreferencesCommand
 import app.synapse.localllm.domain.remote.UploadRemoteAvatarCommand
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
@@ -164,6 +169,19 @@ class RemoteChatSessionSynchronizerTest {
             accountUid: RemoteAccountUid,
             roomId: RemoteRoomId,
         ) = Unit
+
+        override suspend fun updateRoomPreferences(
+            command: UpdateRemoteRoomPreferencesCommand,
+        ): RemoteRoomPreferencesReceipt = error("Not used by this test.")
+
+        override suspend fun getNotificationPreferences(
+            accountUid: RemoteAccountUid,
+        ): RemoteNotificationPreferences = error("Not used by this test.")
+
+        override suspend fun updateNotificationPreferences(
+            accountUid: RemoteAccountUid,
+            preferences: RemoteNotificationPreferences,
+        ): RemoteNotificationPreferences = error("Not used by this test.")
     }
 
     private class RecordingCacheRepository : RemoteChatCacheRepository {
@@ -226,6 +244,10 @@ class RemoteChatSessionSynchronizerTest {
             accountUid: RemoteAccountUid,
             roomId: RemoteRoomId,
         ): RemoteCacheMutationReceipt = receipt(RemoteCacheMutation.DRAFT_CLEARED)
+
+        override suspend fun searchMessages(
+            command: SearchRemoteMessagesCommand,
+        ): List<RemoteMessageSearchResult> = emptyList()
 
         override suspend fun findSyncCursor(
             collectionName: String,

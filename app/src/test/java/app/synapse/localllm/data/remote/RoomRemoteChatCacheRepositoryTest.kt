@@ -27,6 +27,7 @@ import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
+import app.synapse.localllm.domain.remote.SearchRemoteMessagesCommand
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
@@ -167,6 +168,113 @@ class RoomRemoteChatCacheRepositoryTest {
     }
 
     @Test
+    fun fullTextSearchIsAccountAndRoomScoped() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        cacheRooms(
+            accountUid = PETER_ACCOUNT,
+            remoteRoom(PETER_ACCOUNT, ROOM_ID, TRISH_PROFILE, "Peter, Trish"),
+            remoteRoom(PETER_ACCOUNT, SECOND_ROOM_ID, JOSH_PROFILE, "Peter, Josh"),
+        )
+        repository.cacheMessages(
+            CacheRemoteMessagesCommand(
+                PETER_ACCOUNT,
+                listOf(
+                    remoteMessage(PETER_ACCOUNT, "message-forecast", "key-forecast", FixedClock.now())
+                        .copy(body = "Forecast review is tomorrow"),
+                    remoteMessage(
+                        PETER_ACCOUNT,
+                        "message-sealcoat",
+                        "key-sealcoat",
+                        FixedClock.now(),
+                        SECOND_ROOM_ID,
+                    ).copy(body = "Sealcoat estimate is ready"),
+                ),
+            ),
+        )
+
+        assertEquals(
+            listOf("message-forecast"),
+            repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "FOREC"))
+                .map { result -> result.messageId.raw },
+        )
+        assertTrue(
+            repository.searchMessages(
+                SearchRemoteMessagesCommand(PETER_ACCOUNT, "sealcoat", roomId = ROOM_ID),
+            ).isEmpty(),
+        )
+
+        repository.activateAccount(TRISH_ACCOUNT)
+        cacheRoom(TRISH_ACCOUNT, PETER_PROFILE)
+        repository.cacheMessages(
+            CacheRemoteMessagesCommand(
+                TRISH_ACCOUNT,
+                listOf(
+                    remoteMessage(TRISH_ACCOUNT, "message-private", "key-private", FixedClock.now())
+                        .copy(body = "Private budget notes"),
+                ),
+            ),
+        )
+        assertTrue(
+            repository.searchMessages(SearchRemoteMessagesCommand(TRISH_ACCOUNT, "forecast")).isEmpty(),
+        )
+        assertEquals(
+            listOf("message-private"),
+            repository.searchMessages(SearchRemoteMessagesCommand(TRISH_ACCOUNT, "budget"))
+                .map { result -> result.messageId.raw },
+        )
+
+        repository.activateAccount(PETER_ACCOUNT)
+        assertTrue(repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "budget")).isEmpty())
+    }
+
+    @Test
+    fun deletedMessagesAndUnauthorizedRoomsAreRemovedFromSearch() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        cacheRooms(
+            accountUid = PETER_ACCOUNT,
+            remoteRoom(PETER_ACCOUNT, ROOM_ID, TRISH_PROFILE, "Peter, Trish"),
+            remoteRoom(PETER_ACCOUNT, SECOND_ROOM_ID, JOSH_PROFILE, "Peter, Josh"),
+        )
+        val deletedMessage = remoteMessage(PETER_ACCOUNT, "message-delete", "key-delete", FixedClock.now())
+            .copy(body = "Delete this searchable phrase")
+        val removedRoomMessage = remoteMessage(
+            PETER_ACCOUNT,
+            "message-removed-room",
+            "key-removed-room",
+            FixedClock.now(),
+            SECOND_ROOM_ID,
+        ).copy(body = "Orphaned searchable phrase")
+        repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(deletedMessage, removedRoomMessage)))
+
+        repository.cacheMessages(
+            CacheRemoteMessagesCommand(
+                PETER_ACCOUNT,
+                listOf(deletedMessage.copy(body = "", deletedAt = FixedClock.now(), revision = 2)),
+            ),
+        )
+        assertTrue(repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "delete")).isEmpty())
+
+        repository.cacheRooms(
+            CacheRemoteRoomsCommand(
+                PETER_ACCOUNT,
+                listOf(remoteRoom(PETER_ACCOUNT, ROOM_ID, TRISH_PROFILE, "Peter, Trish")),
+            ),
+        )
+        assertTrue(repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "orphaned")).isEmpty())
+    }
+
+    @Test
+    fun fullTextSearchRejectsUnboundedResultLimits() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+
+        val failure = runCatching {
+            repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "hello", limit = 51))
+        }
+
+        assertTrue(failure.isFailure)
+    }
+
+    @Test
     fun draftsRemainAccountScopedAcrossSwitches() = runTest {
         repository.activateAccount(PETER_ACCOUNT)
         cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
@@ -245,34 +353,45 @@ class RoomRemoteChatCacheRepositoryTest {
         accountUid: RemoteAccountUid,
         peerUid: RemoteProfileUid,
     ) {
-        repository.cacheRooms(
-            CacheRemoteRoomsCommand(
-                accountUid = accountUid,
-                rooms = listOf(
-                    RemoteCachedRoom(
-                        accountUid = accountUid,
-                        roomId = ROOM_ID,
-                        kind = RemoteRoomKind.DIRECT,
-                        directKey = "peter-uid:trish-uid",
-                        peerUid = peerUid,
-                        title = "Peter, Trish",
-                        avatarObjectPath = null,
-                        unreadCount = 0,
-                        latestMessagePreview = null,
-                        latestMessageSenderUid = null,
-                        currentMemberRole = RemoteRoomMemberRole.MEMBER,
-                        notificationsEnabled = true,
-                        isMuted = false,
-                        isArchived = false,
-                        isPinned = false,
-                        joinedAt = FixedClock.now(),
-                        lastReadAt = null,
-                        remoteUpdatedAt = FixedClock.now(),
-                    ),
-                ),
-            ),
+        cacheRooms(
+            accountUid,
+            remoteRoom(accountUid, ROOM_ID, peerUid, "Peter, Trish"),
         )
     }
+
+    private suspend fun cacheRooms(
+        accountUid: RemoteAccountUid,
+        vararg rooms: RemoteCachedRoom,
+    ) {
+        repository.cacheRooms(CacheRemoteRoomsCommand(accountUid, rooms.toList()))
+    }
+
+    private fun remoteRoom(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        peerUid: RemoteProfileUid,
+        title: String,
+    ): RemoteCachedRoom =
+        RemoteCachedRoom(
+            accountUid = accountUid,
+            roomId = roomId,
+            kind = RemoteRoomKind.DIRECT,
+            directKey = "${accountUid.raw}:${peerUid.raw}",
+            peerUid = peerUid,
+            title = title,
+            avatarObjectPath = null,
+            unreadCount = 0,
+            latestMessagePreview = null,
+            latestMessageSenderUid = null,
+            currentMemberRole = RemoteRoomMemberRole.MEMBER,
+            notificationsEnabled = true,
+            isMuted = false,
+            isArchived = false,
+            isPinned = false,
+            joinedAt = FixedClock.now(),
+            lastReadAt = null,
+            remoteUpdatedAt = FixedClock.now(),
+        )
 
     private fun remoteProfile(
         accountUid: RemoteAccountUid,
@@ -324,10 +443,11 @@ class RoomRemoteChatCacheRepositoryTest {
         messageId: String,
         idempotencyKey: String,
         serverCreatedAt: Instant?,
+        roomId: RemoteRoomId = ROOM_ID,
     ): RemoteCachedMessage =
         RemoteCachedMessage(
             accountUid = accountUid,
-            roomId = ROOM_ID,
+            roomId = roomId,
             messageId = RemoteMessageId(messageId),
             idempotencyKey = RemoteIdempotencyKey(idempotencyKey),
             senderUid = PETER_PROFILE,
@@ -368,6 +488,8 @@ class RoomRemoteChatCacheRepositoryTest {
         val TRISH_ACCOUNT = RemoteAccountUid("trish-uid")
         val PETER_PROFILE = RemoteProfileUid("peter-uid")
         val TRISH_PROFILE = RemoteProfileUid("trish-uid")
+        val JOSH_PROFILE = RemoteProfileUid("josh-uid")
         val ROOM_ID = RemoteRoomId("direct-room")
+        val SECOND_ROOM_ID = RemoteRoomId("direct-room-two")
     }
 }

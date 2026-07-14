@@ -48,6 +48,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
             .setContentText("New message")
             .setContentIntent(openRoomPendingIntent(payload.roomId))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setGroup(REMOTE_CHAT_NOTIFICATION_GROUP)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .build()
@@ -97,6 +98,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
     private companion object {
         const val REMOTE_CHAT_NOTIFICATION_CHANNEL_ID = "synapse_remote_chat_messages"
         const val REMOTE_CHAT_NOTIFICATION_ID = 4_301
+        const val REMOTE_CHAT_NOTIFICATION_GROUP = "synapse_remote_chat"
     }
 }
 
