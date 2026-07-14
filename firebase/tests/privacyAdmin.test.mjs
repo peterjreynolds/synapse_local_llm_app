@@ -121,6 +121,23 @@ test("users block direct-room creation and manage a deletion request", async () 
   await signInWithEmailAndPassword(peterAuth, peter.email, PETER_PASSWORD);
   const peterCall = (name) => httpsCallable(peterFunctions, name);
 
+  const privateInstallationId = "private-firebase-installation-id";
+  const registration = await peterCall("registerOwnDevice")({installationId: privateInstallationId});
+  const peterDeviceId = registration.data.deviceId;
+  assert.match(peterDeviceId, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(registration.data).includes(privateInstallationId), false);
+  const ownDevices = await peterCall("listOwnDevices")({});
+  assert.deepEqual(ownDevices.data.devices, [{
+    active: true,
+    deviceId: peterDeviceId,
+    platform: "ANDROID",
+    updatedAtMillis: ownDevices.data.devices[0].updatedAtMillis,
+  }]);
+  assert.equal(JSON.stringify(ownDevices.data).includes("private-firebase-installation-id"), false);
+  assert.equal((await peterCall("removeOwnDevice")({deviceId: peterDeviceId})).data.removed, true);
+  assert.equal((await peterCall("removeOwnDevice")({deviceId: peterDeviceId})).data.removed, false);
+  assert.equal((await adminFirestore.doc(`devices/${peterDeviceId}`).get()).exists, false);
+
   const initialPrivacy = await peterCall("getOwnPrivacyState")({});
   assert.deepEqual(initialPrivacy.data, {blockedUids: [], deletionRequestPending: false});
   await peterCall("setUserBlocked")({blocked: true, targetUid: trish.uid});

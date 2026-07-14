@@ -14,6 +14,13 @@ import {parseTargetUid} from "./domain.js";
 const RECENT_ACCOUNT_AUTHENTICATION_SECONDS = 5 * 60;
 const MAXIMUM_BLOCK_RESULTS = 500;
 
+interface OwnDeviceSummary {
+  active: boolean;
+  deviceId: string;
+  platform: "ANDROID";
+  updatedAtMillis: number | null;
+}
+
 export const getOwnPrivacyState = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<{blockedUids: string[]; deletionRequestPending: boolean}> => {
@@ -35,6 +42,76 @@ export const getOwnPrivacyState = onCall(
       }),
       deletionRequestPending: deletionRequest.get("state") === "PENDING",
     };
+  },
+);
+
+export const listOwnDevices = onCall(
+  {region: FIREBASE_FUNCTIONS_REGION},
+  async (request): Promise<{devices: OwnDeviceSummary[]}> => {
+    const {uid} = await requireActiveAccount(request.auth);
+    const devices = await firebaseAdminFirestore.collection("devices")
+      .where("ownerUid", "==", uid)
+      .get();
+    return {
+      devices: devices.docs.map((device) => ({
+        active: device.get("active") === true,
+        deviceId: device.id,
+        platform: "ANDROID",
+        updatedAtMillis: readTimestampMillis(device.get("updatedAt")),
+      })),
+    };
+  },
+);
+
+export const registerOwnDevice = onCall(
+  {region: FIREBASE_FUNCTIONS_REGION},
+  async (request): Promise<{deviceId: string; registered: true}> => {
+    const {uid} = await requireActiveAccount(request.auth);
+    const installationId = parseInstallationId(request.data);
+    const deviceId = createHash("sha256").update(installationId, "utf8").digest("hex");
+    const deviceReference = firebaseAdminFirestore.doc(`devices/${deviceId}`);
+    const registeredAt = Timestamp.now();
+    await firebaseAdminFirestore.runTransaction(async (transaction) => {
+      const existingDevice = await transaction.get(deviceReference);
+      if (existingDevice.exists && existingDevice.get("ownerUid") !== uid) {
+        throw new HttpsError("permission-denied", "Device registration is unavailable.");
+      }
+      transaction.set(deviceReference, {
+        active: true,
+        createdAt: existingDevice.exists ? existingDevice.get("createdAt") : registeredAt,
+        installationId,
+        ownerUid: uid,
+        platform: "ANDROID",
+        updatedAt: registeredAt,
+      });
+    });
+    return {deviceId, registered: true};
+  },
+);
+
+export const removeOwnDevice = onCall(
+  {region: FIREBASE_FUNCTIONS_REGION},
+  async (request): Promise<{deviceId: string; removed: boolean}> => {
+    const {uid} = await requireActiveAccount(request.auth);
+    const deviceId = parseDeviceId(request.data);
+    const deviceReference = firebaseAdminFirestore.doc(`devices/${deviceId}`);
+    const device = await deviceReference.get();
+    if (!device.exists) return {deviceId, removed: false};
+    if (device.get("ownerUid") !== uid) {
+      throw new HttpsError("not-found", "Device registration was not found.");
+    }
+    const removedAt = Timestamp.now();
+    const writes = firebaseAdminFirestore.batch();
+    writes.delete(deviceReference);
+    writes.create(firebaseAdminFirestore.doc(`securityAuditEvents/${randomUUID()}`), {
+      actorUid: uid,
+      createdAt: removedAt,
+      deviceId,
+      eventType: "OWN_DEVICE_REGISTRATION_REMOVED",
+      targetUid: uid,
+    });
+    await writes.commit();
+    return {deviceId, removed: true};
   },
 );
 
@@ -161,6 +238,32 @@ function parseBlockCommand(input: unknown): {blocked: boolean; targetUid: string
   } catch {
     throw new HttpsError("invalid-argument", "Block command is invalid.");
   }
+}
+
+function parseDeviceId(input: unknown): string {
+  if (!isRecord(input) || typeof input.deviceId !== "string") {
+    throw new HttpsError("invalid-argument", "Device command is invalid.");
+  }
+  const deviceId = input.deviceId.trim().toLocaleLowerCase("en-US");
+  if (!/^[a-f0-9]{64}$/.test(deviceId)) {
+    throw new HttpsError("invalid-argument", "Device command is invalid.");
+  }
+  return deviceId;
+}
+
+function parseInstallationId(input: unknown): string {
+  if (!isRecord(input) || typeof input.installationId !== "string") {
+    throw new HttpsError("invalid-argument", "Device registration is invalid.");
+  }
+  const installationId = input.installationId;
+  if (installationId.length < 16 || installationId.length > 256) {
+    throw new HttpsError("invalid-argument", "Device registration is invalid.");
+  }
+  return installationId;
+}
+
+function readTimestampMillis(value: unknown): number | null {
+  return value instanceof Timestamp ? value.toMillis() : null;
 }
 
 function isUid(value: string): boolean {

@@ -47,6 +47,9 @@ export {
 export {
   cancelAccountDeletionRequest,
   getOwnPrivacyState,
+  listOwnDevices,
+  registerOwnDevice,
+  removeOwnDevice,
   requestAccountDeletion,
   setUserBlocked,
 } from "./privacyAdmin.js";

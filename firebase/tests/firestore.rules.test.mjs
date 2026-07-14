@@ -272,10 +272,10 @@ test("rejects invalid messages and all client membership writes", async () => {
   );
 });
 
-test("binds FCM installation IDs to the authenticated owner", async () => {
+test("keeps FCM installation IDs server-owned", async () => {
   const peter = activeContext(PETER_UID).firestore();
   const peterDevice = doc(peter, "devices", "peter-device");
-  await assertSucceeds(
+  await assertFails(
     setDoc(peterDevice, {
       active: true,
       createdAt: serverTimestamp(),
@@ -285,19 +285,7 @@ test("binds FCM installation IDs to the authenticated owner", async () => {
       updatedAt: serverTimestamp(),
     }),
   );
-  await assertFails(
-    setDoc(doc(peter, "devices", "forged-device"), {
-      active: true,
-      createdAt: serverTimestamp(),
-      installationId: "trish-firebase-installation-id",
-      ownerUid: TRISH_UID,
-      platform: "ANDROID",
-      updatedAt: serverTimestamp(),
-    }),
-  );
-
-  const trish = activeContext(TRISH_UID).firestore();
-  await assertFails(getDoc(doc(trish, "devices", "peter-device")));
+  await assertFails(getDoc(peterDevice));
 });
 
 test("keeps block and account deletion state server-owned", async () => {

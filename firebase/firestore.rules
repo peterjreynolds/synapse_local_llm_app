@@ -125,42 +125,7 @@ service cloud.firestore {
     }
 
     match /devices/{deviceId} {
-      allow get, list: if isActiveUser()
-        && resource.data.ownerUid == request.auth.uid;
-      allow create: if isActiveUser()
-        && request.resource.data.keys().hasOnly([
-          'active',
-          'createdAt',
-          'installationId',
-          'ownerUid',
-          'platform',
-          'updatedAt'
-        ])
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.platform == 'ANDROID'
-        && request.resource.data.active == true
-        && request.resource.data.installationId is string
-        && request.resource.data.installationId.size() >= 16
-        && request.resource.data.installationId.size() <= 256
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedAt == request.time;
-      allow update: if isActiveUser()
-        && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'active',
-          'installationId',
-          'platform',
-          'updatedAt'
-        ])
-        && request.resource.data.platform == 'ANDROID'
-        && request.resource.data.active is bool
-        && request.resource.data.installationId is string
-        && request.resource.data.installationId.size() >= 16
-        && request.resource.data.installationId.size() <= 256
-        && request.resource.data.updatedAt == request.time;
-      allow delete: if isActiveUser() && resource.data.ownerUid == request.auth.uid;
+      allow read, write: if false;
     }
 
     match /notificationDeliveries/{eventId} {
