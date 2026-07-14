@@ -1,6 +1,4 @@
-import {getApps, initializeApp} from "firebase-admin/app";
-import {FieldValue, Timestamp, getFirestore} from "firebase-admin/firestore";
-import {getMessaging} from "firebase-admin/messaging";
+import {FieldValue, Timestamp} from "firebase-admin/firestore";
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {onDocumentCreated} from "firebase-functions/v2/firestore";
 import {
@@ -9,15 +7,16 @@ import {
   parseHumanMessagePayload,
   parseTargetUid,
 } from "./domain.js";
+import {
+  FIREBASE_FUNCTIONS_REGION,
+  firebaseAdminFirestore,
+  firebaseAdminMessaging,
+} from "./firebaseAdmin.js";
 import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js";
 
-if (getApps().length === 0) {
-  initializeApp();
-}
-
-const firestore = getFirestore();
-const messaging = getMessaging();
-const REGION = "northamerica-northeast1";
+const firestore = firebaseAdminFirestore;
+const messaging = firebaseAdminMessaging;
+const REGION = FIREBASE_FUNCTIONS_REGION;
 
 interface ProfileDocument {
   allowed?: unknown;
