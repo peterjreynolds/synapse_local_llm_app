@@ -67,6 +67,8 @@ interface RemoteAuthenticationGateway {
 
     suspend fun refreshAccount(): RemoteAuthenticatedAccount
 
+    suspend fun reauthenticate(password: String)
+
     suspend fun changePassword(command: RemotePasswordChangeCommand)
 
     suspend fun signOut()

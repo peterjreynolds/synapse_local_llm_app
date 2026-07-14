@@ -121,17 +121,36 @@ class FirebaseRemoteAuthenticationGateway(
         require(command.newPassword.length >= MINIMUM_REMOTE_PASSWORD_LENGTH) {
             "New password must contain at least $MINIMUM_REMOTE_PASSWORD_LENGTH characters."
         }
+        try {
+            reauthenticate(command.currentPassword)
+            val currentUser = firebaseAuth.currentUser
+                ?: throw RemoteChatException("Sign in before changing the password.")
+            currentUser.updatePassword(command.newPassword).await()
+            currentUser.getIdToken(true).await()
+            firebaseFunctions.getHttpsCallable("completeRequiredPasswordChange")
+                .call(emptyMap<String, Any>())
+                .await()
+            refreshAccount()
+        } catch (exception: RemoteChatException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw exception.toRemoteAuthenticationFailure("change the password")
+        }
+    }
+
+    override suspend fun reauthenticate(password: String) {
+        require(password.isNotEmpty()) { "Password cannot be empty." }
         val currentUser = firebaseAuth.currentUser
-            ?: throw RemoteChatException("Sign in before changing the password.")
+            ?: throw RemoteChatException("Sign in before confirming owner access.")
         val email = currentUser.email
             ?: throw RemoteChatException("The signed-in account has no password identity.")
         try {
-            currentUser.reauthenticate(
-                EmailAuthProvider.getCredential(email, command.currentPassword),
-            ).await()
-            currentUser.updatePassword(command.newPassword).await()
+            currentUser.reauthenticate(EmailAuthProvider.getCredential(email, password)).await()
+            currentUser.getIdToken(true).await()
+        } catch (exception: RemoteChatException) {
+            throw exception
         } catch (exception: Exception) {
-            throw exception.toRemoteAuthenticationFailure("change the password")
+            throw exception.toRemoteAuthenticationFailure("confirm owner access")
         }
     }
 

@@ -34,7 +34,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteChatViewModelAccountAccessTest {
     @Test
-    fun pendingAccountDoesNotStartRemoteChatResources() = runTest {
+    fun pendingOrForcedPasswordAccountDoesNotStartRemoteChatResources() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val pendingAccount = RemoteAuthenticatedAccount(
             accountUid = RemoteAccountUid("pending-uid"),
@@ -43,40 +43,50 @@ class RemoteChatViewModelAccountAccessTest {
             state = RemoteAccountState.PENDING_APPROVAL,
             mustChangePassword = false,
         )
-        val authenticationGateway = mockk<RemoteAuthenticationGateway> {
-            every { authenticationState } returns MutableStateFlow(
-                RemoteAuthenticationState.SignedIn(pendingAccount),
-            )
-        }
-        val cacheRepository = mockk<RemoteChatCacheRepository>(relaxed = true)
-        val directoryGateway = mockk<RemoteDirectoryGateway>(relaxed = true)
-        val conversationGateway = mockk<RemoteConversationGateway>(relaxed = true)
-        val deviceRegistrationGateway = mockk<RemoteDeviceRegistrationGateway>(relaxed = true)
-        val sessionSynchronizer = mockk<RemoteChatSessionSynchronizer>(relaxed = true)
-        val viewModel = RemoteChatViewModel(
-            authenticationGateway = authenticationGateway,
-            directoryGateway = directoryGateway,
-            conversationGateway = conversationGateway,
-            deviceRegistrationGateway = deviceRegistrationGateway,
-            cacheRepository = cacheRepository,
-            sessionSynchronizer = sessionSynchronizer,
-            roomVisibilityTracker = RemoteRoomVisibilityTracker(),
-            idFactory = SynapseIdFactory(),
-            clock = object : SynapseClock {
-                override fun now(): Instant = Instant.EPOCH
-            },
+        val restrictedAccounts = listOf(
+            pendingAccount,
+            pendingAccount.copy(
+                state = RemoteAccountState.ACTIVE,
+                mustChangePassword = true,
+            ),
         )
 
         try {
-            runCurrent()
+            restrictedAccounts.forEach { restrictedAccount ->
+                val authenticationGateway = mockk<RemoteAuthenticationGateway> {
+                    every { authenticationState } returns MutableStateFlow(
+                        RemoteAuthenticationState.SignedIn(restrictedAccount),
+                    )
+                }
+                val cacheRepository = mockk<RemoteChatCacheRepository>(relaxed = true)
+                val directoryGateway = mockk<RemoteDirectoryGateway>(relaxed = true)
+                val conversationGateway = mockk<RemoteConversationGateway>(relaxed = true)
+                val deviceRegistrationGateway = mockk<RemoteDeviceRegistrationGateway>(relaxed = true)
+                val sessionSynchronizer = mockk<RemoteChatSessionSynchronizer>(relaxed = true)
+                val viewModel = RemoteChatViewModel(
+                    authenticationGateway = authenticationGateway,
+                    directoryGateway = directoryGateway,
+                    conversationGateway = conversationGateway,
+                    deviceRegistrationGateway = deviceRegistrationGateway,
+                    cacheRepository = cacheRepository,
+                    sessionSynchronizer = sessionSynchronizer,
+                    roomVisibilityTracker = RemoteRoomVisibilityTracker(),
+                    idFactory = SynapseIdFactory(),
+                    clock = object : SynapseClock {
+                        override fun now(): Instant = Instant.EPOCH
+                    },
+                )
 
-            assertEquals(pendingAccount, viewModel.uiState.value.account)
-            coVerify(exactly = 0) { cacheRepository.activateAccount(any()) }
-            coVerify(exactly = 0) { directoryGateway.updatePresence(any(), any()) }
-            coVerify(exactly = 0) { deviceRegistrationGateway.registerCurrentDevice(any()) }
-            coVerify(exactly = 0) { sessionSynchronizer.synchronize(any(), any(), any()) }
+                runCurrent()
+
+                assertEquals(restrictedAccount, viewModel.uiState.value.account)
+                coVerify(exactly = 0) { cacheRepository.activateAccount(any()) }
+                coVerify(exactly = 0) { directoryGateway.updatePresence(any(), any()) }
+                coVerify(exactly = 0) { deviceRegistrationGateway.registerCurrentDevice(any()) }
+                coVerify(exactly = 0) { sessionSynchronizer.synchronize(any(), any(), any()) }
+                viewModel.viewModelScope.cancel()
+            }
         } finally {
-            viewModel.viewModelScope.cancel()
             Dispatchers.resetMain()
         }
     }

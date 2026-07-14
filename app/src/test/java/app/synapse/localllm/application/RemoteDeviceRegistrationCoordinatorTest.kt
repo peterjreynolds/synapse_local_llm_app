@@ -88,6 +88,26 @@ class RemoteDeviceRegistrationCoordinatorTest {
         assertEquals(RemoteDeviceRegistrationStatus.Idle, coordinator.status.value)
     }
 
+    @Test
+    fun refreshedInstallationIsIgnoredWhilePasswordChangeIsRequired() = runTest {
+        val deviceGateway = RecordingDeviceRegistrationGateway()
+        val coordinator = RemoteDeviceRegistrationCoordinator(
+            authenticationGateway = RecordingAuthenticationGateway(
+                RemoteAuthenticationState.SignedIn(
+                    activeAccount(PETER_ACCOUNT, "peter").copy(mustChangePassword = true),
+                ),
+            ),
+            deviceRegistrationGateway = deviceGateway,
+            applicationScope = this,
+        )
+
+        coordinator.handleRefreshedInstallation(FIREBASE_INSTALLATION_ID)
+        advanceUntilIdle()
+
+        assertNull(deviceGateway.registeredCommand)
+        assertEquals(RemoteDeviceRegistrationStatus.Idle, coordinator.status.value)
+    }
+
     private class RecordingAuthenticationGateway(
         initialState: RemoteAuthenticationState,
     ) : RemoteAuthenticationGateway {
@@ -102,6 +122,10 @@ class RemoteDeviceRegistrationCoordinatorTest {
 
         override suspend fun refreshAccount(): RemoteAuthenticatedAccount =
             error("Not used by this test.")
+
+        override suspend fun reauthenticate(password: String) {
+            error("Not used by this test.")
+        }
 
         override suspend fun changePassword(command: RemotePasswordChangeCommand) {
             error("Not used by this test.")

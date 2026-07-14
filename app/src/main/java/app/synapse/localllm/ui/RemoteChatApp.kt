@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SmartToy
@@ -53,6 +54,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import app.synapse.localllm.domain.remote.RemoteAccountRole
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
@@ -62,6 +64,8 @@ import app.synapse.localllm.domain.remote.validateRemoteInviteRegistrationComman
 fun RemoteChatApp(
     remoteViewModel: RemoteChatViewModel,
     localViewModel: SynapseViewModel,
+    ownerAdminViewModel: OwnerAdminViewModel,
+    requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val state by remoteViewModel.uiState.collectAsStateWithLifecycle()
     var showLocalWhileSignedOut by rememberSaveable { mutableStateOf(false) }
@@ -75,9 +79,13 @@ fun RemoteChatApp(
             onRefresh = remoteViewModel::refreshAccountAccess,
             onSignOut = remoteViewModel::signOut,
         )
-    } else if (account != null && account.state != RemoteAccountState.ACTIVE) {
+    } else if (
+        account != null &&
+        (account.state != RemoteAccountState.ACTIVE || account.mustChangePassword)
+    ) {
         RemoteRestrictedAccountScreen(
             state = state,
+            onChangePassword = remoteViewModel::changePassword,
             onRefresh = remoteViewModel::refreshAccountAccess,
             onSignOut = remoteViewModel::signOut,
         )
@@ -98,6 +106,8 @@ fun RemoteChatApp(
             state = state,
             remoteViewModel = remoteViewModel,
             localViewModel = localViewModel,
+            ownerAdminViewModel = ownerAdminViewModel,
+            requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
         )
     }
 }
@@ -308,7 +318,7 @@ private fun RemoteLoginScreen(
 }
 
 @Composable
-private fun ClearSensitiveInputsOnStop(onClear: () -> Unit) {
+internal fun ClearSensitiveInputsOnStop(onClear: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentClear by rememberUpdatedState(onClear)
     DisposableEffect(lifecycleOwner) {
@@ -356,9 +366,14 @@ private fun RemoteInvalidSessionScreen(
 @Composable
 private fun RemoteRestrictedAccountScreen(
     state: RemoteChatUiState,
+    onChangePassword: (String, String) -> Unit,
     onRefresh: () -> Unit,
     onSignOut: () -> Unit,
 ) {
+    if (state.account?.mustChangePassword == true) {
+        RemoteRequiredPasswordChangeScreen(state, onChangePassword, onSignOut)
+        return
+    }
     val accountState = state.account?.state
     val (title, message) = when (accountState) {
         RemoteAccountState.PENDING_APPROVAL ->
@@ -370,6 +385,106 @@ private fun RemoteRestrictedAccountScreen(
         else -> "Account unavailable" to "This account cannot use remote chat."
     }
     RemoteAccountStatusScreen(title, message, state, onRefresh, onSignOut)
+}
+
+@Composable
+private fun RemoteRequiredPasswordChangeScreen(
+    state: RemoteChatUiState,
+    onChangePassword: (String, String) -> Unit,
+    onSignOut: () -> Unit,
+) {
+    var currentPassword by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var localError by remember { mutableStateOf<String?>(null) }
+    ClearSensitiveInputsOnStop {
+        currentPassword = ""
+        newPassword = ""
+        confirmPassword = ""
+    }
+    fun submit() {
+        if (newPassword != confirmPassword) {
+            localError = "Passwords do not match."
+            return
+        }
+        if (newPassword.length !in 12..128) {
+            localError = "New password must contain 12-128 characters."
+            return
+        }
+        localError = null
+        onChangePassword(currentPassword, newPassword)
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                "Change temporary password",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text("Choose a new private password before using remote chat.")
+            OutlinedTextField(
+                value = currentPassword,
+                onValueChange = { currentPassword = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Temporary password") },
+                visualTransformation = PasswordVisualTransformation(),
+                enabled = !state.isActionRunning,
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = newPassword,
+                onValueChange = { newPassword = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("New password") },
+                visualTransformation = PasswordVisualTransformation(),
+                enabled = !state.isActionRunning,
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = confirmPassword,
+                onValueChange = { confirmPassword = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Confirm new password") },
+                visualTransformation = PasswordVisualTransformation(),
+                enabled = !state.isActionRunning,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+            )
+            (localError ?: state.notice)?.let { notice ->
+                Text(notice, color = MaterialTheme.colorScheme.error)
+            }
+            Button(
+                onClick = ::submit,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = currentPassword.isNotEmpty() &&
+                    newPassword.isNotEmpty() &&
+                    !state.isActionRunning,
+            ) {
+                Text("Change password")
+            }
+            OutlinedButton(
+                onClick = onSignOut,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isActionRunning,
+            ) {
+                Text("Sign out")
+            }
+        }
+    }
 }
 
 @Composable
@@ -457,13 +572,19 @@ private fun RemoteSignedInShell(
     state: RemoteChatUiState,
     remoteViewModel: RemoteChatViewModel,
     localViewModel: SynapseViewModel,
+    ownerAdminViewModel: OwnerAdminViewModel,
+    requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val localState by localViewModel.uiState.collectAsStateWithLifecycle()
     var selectedSection by rememberSaveable { mutableStateOf(RemoteAppSection.CHATS) }
+    val availableSections = availableRemoteAppSections(state.account?.role)
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(state.selectedRoomId) {
         if (state.selectedRoomId != null) selectedSection = RemoteAppSection.CHATS
+    }
+    LaunchedEffect(availableSections) {
+        if (selectedSection !in availableSections) selectedSection = RemoteAppSection.CHATS
     }
     LaunchedEffect(state.notice) {
         state.notice?.let { notice ->
@@ -493,7 +614,7 @@ private fun RemoteSignedInShell(
         },
         bottomBar = {
             NavigationBar {
-                RemoteAppSection.entries.forEach { section ->
+                availableSections.forEach { section ->
                     NavigationBarItem(
                         selected = selectedSection == section,
                         onClick = {
@@ -523,12 +644,16 @@ private fun RemoteSignedInShell(
                     onCheckAppUpdate = { localViewModel.checkForAppUpdate(automatic = false) },
                 )
                 RemoteAppSection.LOCAL_AI -> SynapseApp(viewModel = localViewModel)
+                RemoteAppSection.ADMIN -> OwnerAdminPane(
+                    viewModel = ownerAdminViewModel,
+                    requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
+                )
             }
         }
     }
 }
 
-private enum class RemoteAppSection(
+internal enum class RemoteAppSection(
     val title: String,
     val navigationLabel: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -537,4 +662,10 @@ private enum class RemoteAppSection(
     PEOPLE("People", "People", Icons.Default.Groups),
     PROFILE("Profile & security", "Profile", Icons.Default.Person),
     LOCAL_AI("Synapse Local AI", "Local AI", Icons.Default.SmartToy),
+    ADMIN("Owner administration", "Admin", Icons.Default.AdminPanelSettings),
 }
+
+internal fun availableRemoteAppSections(role: RemoteAccountRole?): List<RemoteAppSection> =
+    RemoteAppSection.entries.filter { section ->
+        section != RemoteAppSection.ADMIN || role == RemoteAccountRole.OWNER
+    }

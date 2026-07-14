@@ -1,11 +1,18 @@
 package app.synapse.localllm
 
+import android.app.KeyguardManager
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.fragment.app.FragmentActivity
+import app.synapse.localllm.ui.OwnerAdminViewModel
+import app.synapse.localllm.ui.OwnerAdminViewModelFactory
 import app.synapse.localllm.ui.RemoteChatApp
 import app.synapse.localllm.ui.RemoteChatViewModel
 import app.synapse.localllm.ui.RemoteChatViewModelFactory
@@ -13,12 +20,15 @@ import app.synapse.localllm.ui.SynapseViewModel
 import app.synapse.localllm.ui.SynapseViewModelFactory
 import app.synapse.localllm.ui.theme.SynapseTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val localViewModel: SynapseViewModel by viewModels {
         SynapseViewModelFactory(requireSynapseApplication().graph)
     }
     private val remoteViewModel: RemoteChatViewModel by viewModels {
         RemoteChatViewModelFactory(requireSynapseApplication().graph)
+    }
+    private val ownerAdminViewModel: OwnerAdminViewModel by viewModels {
+        OwnerAdminViewModelFactory(requireSynapseApplication().graph)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,6 +40,8 @@ class MainActivity : ComponentActivity() {
                 RemoteChatApp(
                     remoteViewModel = remoteViewModel,
                     localViewModel = localViewModel,
+                    ownerAdminViewModel = ownerAdminViewModel,
+                    requestOwnerIdentityConfirmation = ::requestOwnerIdentityConfirmation,
                 )
             }
         }
@@ -65,5 +77,59 @@ class MainActivity : ComponentActivity() {
             .remoteNotificationNavigationCoordinator
             .consumeRoom()
         remoteViewModel.openNotificationRoom(roomId)
+    }
+
+    private fun requestOwnerIdentityConfirmation(onResult: (Boolean) -> Unit) {
+        if (!isLocalOwnerConfirmationAvailable()) {
+            onResult(true)
+            return
+        }
+        var resultDelivered = false
+        fun deliverResult(confirmed: Boolean) {
+            if (resultDelivered) return
+            resultDelivered = true
+            onResult(confirmed)
+        }
+        val prompt = BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    deliverResult(true)
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    deliverResult(false)
+                }
+            },
+        )
+        val promptBuilder = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Confirm owner action")
+            .setSubtitle("Use biometrics or this phone's screen lock")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            promptBuilder.setAllowedAuthenticators(ownerAuthenticators)
+        } else {
+            @Suppress("DEPRECATION")
+            promptBuilder.setDeviceCredentialAllowed(true)
+        }
+        prompt.authenticate(promptBuilder.build())
+    }
+
+    private fun isLocalOwnerConfirmationAvailable(): Boolean {
+        val biometricManager = BiometricManager.from(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return biometricManager.canAuthenticate(ownerAuthenticators) == BiometricManager.BIOMETRIC_SUCCESS
+        }
+        val biometricAvailable = biometricManager.canAuthenticate(
+            BiometricManager.Authenticators.BIOMETRIC_WEAK,
+        ) == BiometricManager.BIOMETRIC_SUCCESS
+        val deviceCredentialAvailable = getSystemService(KeyguardManager::class.java).isDeviceSecure
+        return biometricAvailable || deviceCredentialAvailable
+    }
+
+    private companion object {
+        val ownerAuthenticators =
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
     }
 }

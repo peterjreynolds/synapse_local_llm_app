@@ -39,7 +39,7 @@ class RemoteDeviceRegistrationCoordinator(
     fun handleRefreshedInstallation(installationId: String) {
         val authenticationState = authenticationGateway.authenticationState.value
         val account = (authenticationState as? RemoteAuthenticationState.SignedIn)?.account
-        if (account?.state != RemoteAccountState.ACTIVE) {
+        if (account?.state != RemoteAccountState.ACTIVE || account.mustChangePassword) {
             mutableStatus.value = RemoteDeviceRegistrationStatus.Idle
             return
         }

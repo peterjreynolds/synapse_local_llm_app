@@ -242,7 +242,10 @@ class RemoteChatViewModel(
                     is RemoteAuthenticationState.InvalidSession ->
                         handleInvalidSession(authenticationState)
                     is RemoteAuthenticationState.SignedIn -> {
-                        if (authenticationState.account.state == RemoteAccountState.ACTIVE) {
+                        if (
+                            authenticationState.account.state == RemoteAccountState.ACTIVE &&
+                            !authenticationState.account.mustChangePassword
+                        ) {
                             runSignedInSession(authenticationState.account)
                         } else {
                             runRestrictedAccountSession(authenticationState.account)
@@ -400,6 +403,7 @@ class RemoteChatViewModel(
     private fun requireSignedInAccount(): RemoteAuthenticatedAccount =
         mutableUiState.value.account
             ?.takeIf { account -> account.state == RemoteAccountState.ACTIVE }
+            ?.takeIf { account -> !account.mustChangePassword }
             ?: throw RemoteChatException("An active account is required to use remote chat.")
 
     private fun openPendingNotificationRoomIfAvailable(rooms: List<RemoteCachedDirectRoom>) {

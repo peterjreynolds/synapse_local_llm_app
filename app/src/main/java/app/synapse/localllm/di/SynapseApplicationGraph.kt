@@ -32,6 +32,7 @@ import app.synapse.localllm.data.memory.RecentUserTurnMemoryCandidateResolver
 import app.synapse.localllm.data.memory.RuleBasedMemoryCandidateProposer
 import app.synapse.localllm.data.memory.RoomMemoryRepository
 import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
+import app.synapse.localllm.data.remote.FirebaseOwnerAdminGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteAuthenticationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
@@ -131,6 +132,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         firebaseFunctions = firebaseFunctions,
         applicationScope = applicationScope,
     )
+    val ownerAdminGateway = FirebaseOwnerAdminGateway(firebaseFunctions)
     val remoteDirectoryGateway =
         FirebaseRemoteDirectoryGateway(
             context = applicationContext,
