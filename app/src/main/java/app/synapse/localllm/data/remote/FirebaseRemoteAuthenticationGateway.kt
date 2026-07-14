@@ -141,7 +141,7 @@ class FirebaseRemoteAuthenticationGateway(
     override suspend fun reauthenticate(password: String) {
         require(password.isNotEmpty()) { "Password cannot be empty." }
         val currentUser = firebaseAuth.currentUser
-            ?: throw RemoteChatException("Sign in before confirming owner access.")
+            ?: throw RemoteChatException("Sign in before confirming account access.")
         val email = currentUser.email
             ?: throw RemoteChatException("The signed-in account has no password identity.")
         try {

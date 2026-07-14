@@ -37,6 +37,7 @@ import app.synapse.localllm.data.remote.FirebaseRemoteAuthenticationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDirectoryGateway
+import app.synapse.localllm.data.remote.FirebaseRemotePrivacyGateway
 import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
 import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
 import app.synapse.localllm.data.runtime.AndroidDeviceRuntimeCapabilitiesReader
@@ -133,6 +134,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         applicationScope = applicationScope,
     )
     val ownerAdminGateway = FirebaseOwnerAdminGateway(firebaseFunctions)
+    val remotePrivacyGateway = FirebaseRemotePrivacyGateway(firebaseFunctions)
     val remoteDirectoryGateway =
         FirebaseRemoteDirectoryGateway(
             context = applicationContext,
@@ -151,9 +153,9 @@ class SynapseApplicationGraph private constructor(context: Context) {
     val remoteDeviceRegistrationGateway =
         FirebaseRemoteDeviceRegistrationGateway(
             firebaseAuth = firebaseAuth,
-            firestore = firestore,
             firebaseInstallations = firebaseInstallations,
             firebaseMessaging = firebaseMessaging,
+            firebaseFunctions = firebaseFunctions,
             sessionController = remoteAccountSessionController,
         )
     val remoteDeviceRegistrationCoordinator =

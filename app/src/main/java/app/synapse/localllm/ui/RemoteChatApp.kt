@@ -63,6 +63,7 @@ import app.synapse.localllm.domain.remote.validateRemoteInviteRegistrationComman
 @Composable
 fun RemoteChatApp(
     remoteViewModel: RemoteChatViewModel,
+    remoteAccountViewModel: RemoteAccountViewModel,
     localViewModel: SynapseViewModel,
     ownerAdminViewModel: OwnerAdminViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
@@ -105,6 +106,7 @@ fun RemoteChatApp(
         RemoteSignedInShell(
             state = state,
             remoteViewModel = remoteViewModel,
+            remoteAccountViewModel = remoteAccountViewModel,
             localViewModel = localViewModel,
             ownerAdminViewModel = ownerAdminViewModel,
             requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
@@ -571,11 +573,13 @@ private fun SignedOutLocalApp(
 private fun RemoteSignedInShell(
     state: RemoteChatUiState,
     remoteViewModel: RemoteChatViewModel,
+    remoteAccountViewModel: RemoteAccountViewModel,
     localViewModel: SynapseViewModel,
     ownerAdminViewModel: OwnerAdminViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val localState by localViewModel.uiState.collectAsStateWithLifecycle()
+    val remoteAccountState by remoteAccountViewModel.uiState.collectAsStateWithLifecycle()
     var selectedSection by rememberSaveable { mutableStateOf(RemoteAppSection.CHATS) }
     val availableSections = availableRemoteAppSections(state.account?.role)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -590,6 +594,12 @@ private fun RemoteSignedInShell(
         state.notice?.let { notice ->
             snackbarHostState.showSnackbar(notice)
             remoteViewModel.clearNotice()
+        }
+    }
+    LaunchedEffect(remoteAccountState.notice) {
+        remoteAccountState.notice?.let { notice ->
+            snackbarHostState.showSnackbar(notice)
+            remoteAccountViewModel.clearNotice()
         }
     }
 
@@ -636,10 +646,17 @@ private fun RemoteSignedInShell(
         ) {
             when (selectedSection) {
                 RemoteAppSection.CHATS -> RemoteChatsPane(state, remoteViewModel)
-                RemoteAppSection.PEOPLE -> RemotePeoplePane(state, remoteViewModel::openDirectRoom)
+                RemoteAppSection.PEOPLE -> RemotePeoplePane(
+                    state = state,
+                    accountState = remoteAccountState,
+                    onOpenDirectRoom = remoteViewModel::openDirectRoom,
+                    onSetUserBlocked = remoteAccountViewModel::setUserBlocked,
+                )
                 RemoteAppSection.PROFILE -> RemoteProfilePane(
                     state = state,
                     viewModel = remoteViewModel,
+                    accountState = remoteAccountState,
+                    accountViewModel = remoteAccountViewModel,
                     appUpdate = localState.appUpdate,
                     onCheckAppUpdate = { localViewModel.checkForAppUpdate(automatic = false) },
                 )

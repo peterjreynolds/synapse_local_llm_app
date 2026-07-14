@@ -11,6 +11,7 @@ import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteDeviceMutation
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationReceipt
+import app.synapse.localllm.domain.remote.RemoteRegisteredDevice
 import app.synapse.localllm.domain.remote.RemotePasswordChangeCommand
 import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
 import app.synapse.localllm.domain.remote.RemoteSignInCommand
@@ -139,6 +140,10 @@ class RemoteDeviceRegistrationCoordinatorTest {
     private class RecordingDeviceRegistrationGateway : RemoteDeviceRegistrationGateway {
         var registeredCommand: RegisterRemoteDeviceInstallationCommand? = null
 
+        override suspend fun listOwnDevices(
+            accountUid: RemoteAccountUid,
+        ): List<RemoteRegisteredDevice> = error("Not used by this test.")
+
         override suspend fun registerCurrentDevice(
             accountUid: RemoteAccountUid,
         ): RemoteDeviceRegistrationReceipt = error("Not used by this test.")
@@ -157,6 +162,11 @@ class RemoteDeviceRegistrationCoordinatorTest {
 
         override suspend fun removeCurrentDevice(
             accountUid: RemoteAccountUid,
+        ): RemoteDeviceRegistrationReceipt = error("Not used by this test.")
+
+        override suspend fun removeOwnDevice(
+            accountUid: RemoteAccountUid,
+            deviceId: RemoteDeviceId,
         ): RemoteDeviceRegistrationReceipt = error("Not used by this test.")
     }
 

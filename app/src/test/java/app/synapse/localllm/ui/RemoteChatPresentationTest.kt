@@ -1,8 +1,10 @@
 package app.synapse.localllm.ui
 
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteProfileUid
+import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.update.AvailableAppUpdate
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -40,6 +42,39 @@ class RemoteChatPresentationTest {
         )
     }
 
+    @Test
+    fun peoplePresentationOrdersRecentContactsBeforeRemainingDirectory() {
+        val trish = profile("trish-uid", "Trish")
+        val josh = profile("josh-uid", "Josh")
+        val alex = profile("alex-uid", "Alex")
+        val presentation = buildRemotePeoplePresentation(
+            profiles = listOf(trish, josh, alex),
+            rooms = listOf(
+                room(josh.profileUid, NOW.minusSeconds(60)),
+                room(trish.profileUid, NOW),
+            ),
+            currentAccountUid = "peter-uid",
+            searchQuery = "",
+        )
+
+        assertEquals(listOf(trish, josh), presentation.recentContacts)
+        assertEquals(listOf(alex), presentation.directory)
+    }
+
+    @Test
+    fun peopleSearchReturnsMatchesWithoutRecentContactDuplication() {
+        val trish = profile("trish-uid", "Trish")
+        val presentation = buildRemotePeoplePresentation(
+            profiles = listOf(trish, profile("josh-uid", "Josh")),
+            rooms = listOf(room(trish.profileUid, NOW)),
+            currentAccountUid = "peter-uid",
+            searchQuery = "tri",
+        )
+
+        assertEquals(emptyList<RemoteCachedProfile>(), presentation.recentContacts)
+        assertEquals(listOf(trish), presentation.directory)
+    }
+
     private fun profile(
         isOnline: Boolean,
         lastSeenAt: Instant?,
@@ -54,6 +89,31 @@ class RemoteChatPresentationTest {
         isOnline = isOnline,
         lastSeenAt = lastSeenAt,
         remoteUpdatedAt = NOW,
+    )
+
+    private fun profile(uid: String, displayName: String) = RemoteCachedProfile(
+        accountUid = RemoteAccountUid("peter-uid"),
+        profileUid = RemoteProfileUid(uid),
+        username = displayName.lowercase(),
+        displayName = displayName,
+        bio = "",
+        avatarUrl = null,
+        isAllowed = true,
+        isOnline = false,
+        lastSeenAt = null,
+        remoteUpdatedAt = NOW,
+    )
+
+    private fun room(peerUid: RemoteProfileUid, updatedAt: Instant) = RemoteCachedDirectRoom(
+        accountUid = RemoteAccountUid("peter-uid"),
+        roomId = RemoteRoomId("room-${peerUid.raw}"),
+        directKey = "peter-uid:${peerUid.raw}",
+        peerUid = peerUid,
+        title = peerUid.raw,
+        unreadCount = 0,
+        latestMessagePreview = null,
+        latestMessageSenderUid = null,
+        remoteUpdatedAt = updatedAt,
     )
 
     private companion object {

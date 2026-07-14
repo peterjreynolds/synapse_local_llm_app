@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -287,21 +288,81 @@ private fun RemoteMessageBubble(
 @Composable
 internal fun RemotePeoplePane(
     state: RemoteChatUiState,
+    accountState: RemoteAccountUiState,
     onOpenDirectRoom: (RemoteProfileUid) -> Unit,
+    onSetUserBlocked: (RemoteProfileUid, Boolean) -> Unit,
 ) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedProfileUid by rememberSaveable { mutableStateOf<String?>(null) }
     val currentUid = state.account?.accountUid?.raw
-    val visibleProfiles = remember(state.profiles, searchQuery, currentUid) {
-        val normalizedQuery = searchQuery.trim().lowercase()
-        state.profiles.filter { profile ->
-            profile.profileUid.raw != currentUid &&
-                (
-                    normalizedQuery.isEmpty() ||
-                        profile.displayName.lowercase().contains(normalizedQuery) ||
-                        profile.username.lowercase().contains(normalizedQuery)
-                )
-        }
+    LaunchedEffect(currentUid) {
+        selectedProfileUid = null
+        searchQuery = ""
     }
+    val presentation = remember(state.profiles, state.rooms, searchQuery, currentUid) {
+        buildRemotePeoplePresentation(state.profiles, state.rooms, currentUid, searchQuery)
+    }
+    val selectedProfile = state.profiles.firstOrNull { profile ->
+        profile.profileUid.raw == selectedProfileUid && profile.profileUid.raw != currentUid
+    }
+    if (selectedProfile != null) {
+        val isBlocked = selectedProfile.profileUid in accountState.blockedProfileUids
+        val accountControlsAvailable = accountState.accountUid?.raw == currentUid &&
+            accountState.privacyStateVerified &&
+            !accountState.isRefreshing
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            IconButton(onClick = { selectedProfileUid = null }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to people")
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                RemoteProfileAvatar(selectedProfile, selectedProfile.displayName)
+                Column {
+                    Text(selectedProfile.displayName, style = MaterialTheme.typography.headlineSmall)
+                    Text("@${selectedProfile.username}")
+                    Text(
+                        remotePresenceLabel(selectedProfile),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (selectedProfile.bio.isNotBlank()) Text(selectedProfile.bio)
+            if (isBlocked) {
+                Text(
+                    "You blocked this account. New conversations are unavailable until you unblock it.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Button(
+                onClick = { onOpenDirectRoom(selectedProfile.profileUid) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = accountControlsAvailable &&
+                    !isBlocked &&
+                    !state.isActionRunning &&
+                    !accountState.isActionRunning,
+            ) {
+                Text("Start chat")
+            }
+            OutlinedButton(
+                onClick = { onSetUserBlocked(selectedProfile.profileUid, !isBlocked) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = accountControlsAvailable &&
+                    !state.isActionRunning &&
+                    !accountState.isActionRunning,
+            ) {
+                Text(if (isBlocked) "Unblock account" else "Block account")
+            }
+        }
+        return
+    }
+    val visibleProfiles = presentation.recentContacts + presentation.directory
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = searchQuery,
@@ -319,36 +380,123 @@ internal fun RemotePeoplePane(
             )
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(visibleProfiles, key = { profile -> profile.profileUid.raw }) { profile ->
-                    ListItem(
-                        headlineContent = { Text(profile.displayName, fontWeight = FontWeight.SemiBold) },
-                        supportingContent = {
-                            Column {
-                                Text("@${profile.username}")
-                                if (profile.bio.isNotBlank()) Text(profile.bio)
-                            }
-                        },
-                        leadingContent = {
-                            RemoteProfileAvatar(profile = profile, displayName = profile.displayName)
-                        },
-                        trailingContent = {
-                            Text(
-                                text = remotePresenceLabel(profile),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (profile.isOnline) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        },
-                        modifier = Modifier.clickable { onOpenDirectRoom(profile.profileUid) },
+                if (presentation.recentContacts.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Recent contacts",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+                items(
+                    items = presentation.recentContacts,
+                    key = { profile -> "recent-${profile.profileUid.raw}" },
+                ) { profile ->
+                    RemotePeopleListItem(
+                        profile = profile,
+                        isBlocked = profile.profileUid in accountState.blockedProfileUids,
+                        onSelected = { selectedProfileUid = profile.profileUid.raw },
                     )
-                    HorizontalDivider()
+                }
+                if (presentation.directory.isNotEmpty()) {
+                    item {
+                        Text(
+                            if (presentation.recentContacts.isEmpty()) "People" else "Directory",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+                items(
+                    items = presentation.directory,
+                    key = { profile -> "directory-${profile.profileUid.raw}" },
+                ) { profile ->
+                    RemotePeopleListItem(
+                        profile = profile,
+                        isBlocked = profile.profileUid in accountState.blockedProfileUids,
+                        onSelected = { selectedProfileUid = profile.profileUid.raw },
+                    )
                 }
             }
         }
     }
+}
+
+internal data class RemotePeoplePresentation(
+    val recentContacts: List<RemoteCachedProfile>,
+    val directory: List<RemoteCachedProfile>,
+)
+
+internal fun buildRemotePeoplePresentation(
+    profiles: List<RemoteCachedProfile>,
+    rooms: List<RemoteCachedDirectRoom>,
+    currentAccountUid: String?,
+    searchQuery: String,
+): RemotePeoplePresentation {
+    val normalizedQuery = searchQuery.trim().lowercase()
+    val candidates = profiles.filter { profile ->
+        profile.profileUid.raw != currentAccountUid &&
+            (
+                normalizedQuery.isEmpty() ||
+                    profile.displayName.lowercase().contains(normalizedQuery) ||
+                    profile.username.lowercase().contains(normalizedQuery)
+            )
+    }
+    if (normalizedQuery.isNotEmpty()) {
+        return RemotePeoplePresentation(
+            recentContacts = emptyList(),
+            directory = candidates.sortedBy { profile -> profile.displayName.lowercase() },
+        )
+    }
+    val profilesByUid = candidates.associateBy(RemoteCachedProfile::profileUid)
+    val recentContacts = rooms
+        .sortedByDescending(RemoteCachedDirectRoom::remoteUpdatedAt)
+        .mapNotNull { room -> profilesByUid[room.peerUid] }
+        .distinctBy(RemoteCachedProfile::profileUid)
+    val recentUids = recentContacts.mapTo(mutableSetOf(), RemoteCachedProfile::profileUid)
+    return RemotePeoplePresentation(
+        recentContacts = recentContacts,
+        directory = candidates
+            .filterNot { profile -> profile.profileUid in recentUids }
+            .sortedBy { profile -> profile.displayName.lowercase() },
+    )
+}
+
+@Composable
+private fun RemotePeopleListItem(
+    profile: RemoteCachedProfile,
+    isBlocked: Boolean,
+    onSelected: () -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text(profile.displayName, fontWeight = FontWeight.SemiBold) },
+        supportingContent = {
+            Column {
+                Text("@${profile.username}")
+                if (profile.bio.isNotBlank()) Text(profile.bio)
+                if (isBlocked) Text("Blocked", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        leadingContent = {
+            RemoteProfileAvatar(profile = profile, displayName = profile.displayName)
+        },
+        trailingContent = {
+            Text(
+                text = remotePresenceLabel(profile),
+                style = MaterialTheme.typography.labelMedium,
+                color = if (profile.isOnline) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        },
+        modifier = Modifier.clickable(onClick = onSelected),
+    )
+    HorizontalDivider()
 }
 
 @Composable

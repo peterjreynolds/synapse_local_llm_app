@@ -8,10 +8,9 @@ import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteDeviceMutation
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationReceipt
+import app.synapse.localllm.domain.remote.RemoteRegisteredDevice
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.DocumentSnapshot
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.installations.FirebaseInstallations
 import com.google.firebase.messaging.FirebaseMessaging
 import java.security.MessageDigest
@@ -19,11 +18,27 @@ import kotlinx.coroutines.tasks.await
 
 class FirebaseRemoteDeviceRegistrationGateway(
     private val firebaseAuth: FirebaseAuth,
-    private val firestore: FirebaseFirestore,
     private val firebaseInstallations: FirebaseInstallations,
     private val firebaseMessaging: FirebaseMessaging,
+    private val firebaseFunctions: FirebaseFunctions,
     private val sessionController: RemoteAccountSessionController,
 ) : RemoteDeviceRegistrationGateway {
+    override suspend fun listOwnDevices(
+        accountUid: RemoteAccountUid,
+    ): List<RemoteRegisteredDevice> {
+        requireAuthenticatedUid(accountUid)
+        val currentDeviceId = currentDeviceId()
+        val response = try {
+            firebaseFunctions.getHttpsCallable("listOwnDevices").call(emptyMap<String, Any>()).await().data
+                as? Map<*, *> ?: malformedDeviceResponse()
+        } catch (exception: RemoteChatException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("load registered devices")
+        }
+        return parseRemoteRegisteredDevices(response, currentDeviceId)
+    }
+
     override suspend fun registerCurrentDevice(
         accountUid: RemoteAccountUid,
     ): RemoteDeviceRegistrationReceipt {
@@ -45,43 +60,18 @@ class FirebaseRemoteDeviceRegistrationGateway(
         requireAuthenticatedUid(command.accountUid)
         validateFirebaseInstallationId(command.installationId)
         val deviceId = buildFirebaseDeviceDocumentId(command.installationId)
-        val deviceCollection = firestore.collection(DEVICES_COLLECTION)
-        try {
-            val ownedDeviceDocuments = deviceCollection
-                .whereEqualTo("ownerUid", command.accountUid.raw)
-                .get()
+        val response = try {
+            firebaseFunctions.getHttpsCallable("registerOwnDevice")
+                .call(mapOf("installationId" to command.installationId))
                 .await()
-                .documents
-            val existingDevice = ownedDeviceDocuments.singleOrNull { document ->
-                document.id == deviceId.raw
-            }
-            val deviceReference = deviceCollection.document(deviceId.raw)
-            if (existingDevice == null) {
-                deviceReference.set(
-                    mapOf(
-                        "active" to true,
-                        "createdAt" to FieldValue.serverTimestamp(),
-                        "installationId" to command.installationId,
-                        "ownerUid" to command.accountUid.raw,
-                        "platform" to ANDROID_PLATFORM,
-                        "updatedAt" to FieldValue.serverTimestamp(),
-                    ),
-                ).await()
-            } else {
-                validateOwnedDevice(existingDevice, command.accountUid)
-                deviceReference.update(
-                    mapOf(
-                        "active" to true,
-                        "installationId" to command.installationId,
-                        "platform" to ANDROID_PLATFORM,
-                        "updatedAt" to FieldValue.serverTimestamp(),
-                    ),
-                ).await()
-            }
+                .data as? Map<*, *> ?: malformedDeviceResponse()
         } catch (exception: RemoteChatException) {
             throw exception
         } catch (exception: Exception) {
             throw exception.toRemoteChatFailure("register this device for notifications")
+        }
+        if (response["deviceId"] != deviceId.raw || response["registered"] != true) {
+            malformedDeviceResponse()
         }
         return RemoteDeviceRegistrationReceipt(
             accountUid = command.accountUid,
@@ -102,31 +92,42 @@ class FirebaseRemoteDeviceRegistrationGateway(
         }
         validateFirebaseInstallationId(installationId)
         val deviceId = buildFirebaseDeviceDocumentId(installationId)
-        var affectedDevices = 0
-        try {
-            val existingDevice = firestore.collection(DEVICES_COLLECTION)
-                .whereEqualTo("ownerUid", accountUid.raw)
-                .get()
+        return removeOwnDevice(accountUid, deviceId)
+    }
+
+    override suspend fun removeOwnDevice(
+        accountUid: RemoteAccountUid,
+        deviceId: RemoteDeviceId,
+    ): RemoteDeviceRegistrationReceipt {
+        requireAuthenticatedUid(accountUid)
+        val response = try {
+            firebaseFunctions.getHttpsCallable("removeOwnDevice")
+                .call(mapOf("deviceId" to deviceId.raw))
                 .await()
-                .documents
-                .singleOrNull { document -> document.id == deviceId.raw }
-            if (existingDevice != null) {
-                validateOwnedDevice(existingDevice, accountUid)
-                existingDevice.reference.delete().await()
-                affectedDevices = 1
-            }
-            firebaseMessaging.unregister().await()
+                .data as? Map<*, *> ?: malformedDeviceResponse()
         } catch (exception: RemoteChatException) {
             throw exception
         } catch (exception: Exception) {
-            throw exception.toRemoteChatFailure("remove this device from notifications")
+            throw exception.toRemoteChatFailure("remove this registered device")
+        }
+        if (response["deviceId"] != deviceId.raw || response["removed"] !is Boolean) {
+            malformedDeviceResponse()
         }
         return RemoteDeviceRegistrationReceipt(
             accountUid = accountUid,
             deviceId = deviceId,
             mutation = RemoteDeviceMutation.REMOVED,
-            affectedDevices = affectedDevices,
+            affectedDevices = if (response["removed"] == true) 1 else 0,
         )
+    }
+
+    private suspend fun currentDeviceId(): RemoteDeviceId {
+        val installationId = try {
+            firebaseInstallations.id.await()
+        } catch (exception: Exception) {
+            throw exception.toRemoteChatFailure("identify this device")
+        }
+        return buildFirebaseDeviceDocumentId(installationId)
     }
 
     private fun requireAuthenticatedUid(accountUid: RemoteAccountUid) {
@@ -135,21 +136,53 @@ class FirebaseRemoteDeviceRegistrationGateway(
             throw RemoteChatException("The Firebase account session changed. Sign in again.")
         }
     }
+}
 
-    private fun validateOwnedDevice(
-        deviceDocument: DocumentSnapshot,
-        accountUid: RemoteAccountUid,
-    ) {
-        if (deviceDocument.getString("ownerUid") != accountUid.raw) {
-            throw RemoteChatException("The notification device belongs to another account.")
+internal fun parseRemoteRegisteredDevices(
+    response: Map<*, *>,
+    currentDeviceId: RemoteDeviceId,
+): List<RemoteRegisteredDevice> {
+    if (response.keys != setOf("devices")) malformedDeviceResponse()
+    val devices = response["devices"] as? List<*> ?: malformedDeviceResponse()
+    return devices.map { value ->
+        val device = value as? Map<*, *> ?: malformedDeviceResponse()
+        if (device.keys != REGISTERED_DEVICE_RESPONSE_KEYS) malformedDeviceResponse()
+        if (device["platform"] != "ANDROID") malformedDeviceResponse()
+        val deviceId = RemoteDeviceId(
+            (device["deviceId"] as? String)
+                ?.takeIf { id -> DEVICE_DOCUMENT_ID_PATTERN.matches(id) }
+                ?: malformedDeviceResponse(),
+        )
+        val active = device["active"] as? Boolean ?: malformedDeviceResponse()
+        val updatedAtMillis = when (val timestamp = device["updatedAtMillis"]) {
+            null -> null
+            is Number -> timestamp.toExactDeviceTimestamp()
+            else -> malformedDeviceResponse()
+        }
+        RemoteRegisteredDevice(
+            deviceId = deviceId,
+            active = active,
+            isCurrentDevice = deviceId == currentDeviceId,
+            updatedAtMillis = updatedAtMillis,
+        )
+    }.also { parsed ->
+        if (parsed.map { device -> device.deviceId }.toSet().size != parsed.size) {
+            malformedDeviceResponse()
         }
     }
-
-    private companion object {
-        const val ANDROID_PLATFORM = "ANDROID"
-        const val DEVICES_COLLECTION = "devices"
-    }
 }
+
+private fun Number.toExactDeviceTimestamp(): Long {
+    val serialized = toDouble()
+    val exact = toLong()
+    if (!serialized.isFinite() || serialized != exact.toDouble() || exact < 0L) {
+        malformedDeviceResponse()
+    }
+    return exact
+}
+
+private fun malformedDeviceResponse(): Nothing =
+    throw RemoteChatException("Synapse returned an invalid registered-device response.")
 
 internal fun buildFirebaseDeviceDocumentId(installationId: String): RemoteDeviceId {
     validateFirebaseInstallationId(installationId)
@@ -167,3 +200,6 @@ private fun validateFirebaseInstallationId(installationId: String) {
 
 private const val MINIMUM_FID_LENGTH = 16
 private const val MAXIMUM_FID_LENGTH = 256
+private val DEVICE_DOCUMENT_ID_PATTERN = Regex("^[a-f0-9]{64}$")
+private val REGISTERED_DEVICE_RESPONSE_KEYS =
+    setOf("active", "deviceId", "platform", "updatedAtMillis")

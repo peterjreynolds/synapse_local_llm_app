@@ -449,7 +449,7 @@ private fun OneTimeSecretCard(secret: OneTimeOwnerSecret) {
 }
 
 @Composable
-private fun BlockScreenshotsWhileVisible() {
+internal fun BlockScreenshotsWhileVisible() {
     val view = LocalView.current
     DisposableEffect(view) {
         val window = view.context.findActivity()?.window

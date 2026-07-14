@@ -13,6 +13,8 @@ import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 import app.synapse.localllm.ui.OwnerAdminViewModel
 import app.synapse.localllm.ui.OwnerAdminViewModelFactory
+import app.synapse.localllm.ui.RemoteAccountViewModel
+import app.synapse.localllm.ui.RemoteAccountViewModelFactory
 import app.synapse.localllm.ui.RemoteChatApp
 import app.synapse.localllm.ui.RemoteChatViewModel
 import app.synapse.localllm.ui.RemoteChatViewModelFactory
@@ -27,6 +29,9 @@ class MainActivity : FragmentActivity() {
     private val remoteViewModel: RemoteChatViewModel by viewModels {
         RemoteChatViewModelFactory(requireSynapseApplication().graph)
     }
+    private val remoteAccountViewModel: RemoteAccountViewModel by viewModels {
+        RemoteAccountViewModelFactory(requireSynapseApplication().graph)
+    }
     private val ownerAdminViewModel: OwnerAdminViewModel by viewModels {
         OwnerAdminViewModelFactory(requireSynapseApplication().graph)
     }
@@ -39,6 +44,7 @@ class MainActivity : FragmentActivity() {
             SynapseTheme {
                 RemoteChatApp(
                     remoteViewModel = remoteViewModel,
+                    remoteAccountViewModel = remoteAccountViewModel,
                     localViewModel = localViewModel,
                     ownerAdminViewModel = ownerAdminViewModel,
                     requestOwnerIdentityConfirmation = ::requestOwnerIdentityConfirmation,
