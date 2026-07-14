@@ -4,8 +4,6 @@ export const MESSAGE_BODY_LIMIT = 4_000;
 export const PROFILE_DISPLAY_NAME_LIMIT = 64;
 export const PROFILE_BIO_LIMIT = 160;
 
-export type AllowedUsername = "Peter" | "Trish";
-
 export interface DirectRoomIdentity {
   directKey: string;
   memberIds: readonly [string, string];
@@ -15,18 +13,6 @@ export interface DirectRoomIdentity {
 export interface HumanMessagePayload {
   body: string;
   senderUid: string;
-}
-
-export function normalizeUsername(username: string): string {
-  const normalized = username.normalize("NFKC").trim().toLocaleLowerCase("en-US");
-  if (!/^[a-z][a-z0-9_]{2,31}$/.test(normalized)) {
-    throw new Error("Username must contain 3-32 ASCII letters, digits, or underscores.");
-  }
-  return normalized;
-}
-
-export function buildSyntheticAccountEmail(username: string): string {
-  return `${normalizeUsername(username)}@accounts.synapse.invalid`;
 }
 
 export function buildDirectRoomIdentity(firstUid: string, secondUid: string): DirectRoomIdentity {

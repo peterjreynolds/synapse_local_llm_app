@@ -7,7 +7,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test lib/**/*.test.js",
+    "migrate:identity": "npm run build && node lib/migrateIdentity.js",
+    "test": "npm run build && node --test lib/*.test.js",
     "provision": "npm run build && node lib/provision.js",
     "acceptance:live": "node scripts/liveAcceptance.mjs"
   },

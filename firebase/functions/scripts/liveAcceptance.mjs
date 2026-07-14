@@ -137,7 +137,14 @@ async function createAcceptanceIdentity(adminAuth, adminFirestore, role, runId) 
     password,
   });
   try {
+    await adminAuth.setCustomUserClaims(user.uid, {
+      accountState: "ACTIVE",
+      claimsVersion: 1,
+      mustChangePassword: false,
+      role: "USER",
+    });
     await adminFirestore.doc(`profiles/${user.uid}`).create({
+      accountState: "ACTIVE",
       allowed: true,
       avatarUrl: null,
       bio: "Temporary release acceptance account",
@@ -145,7 +152,9 @@ async function createAcceptanceIdentity(adminAuth, adminFirestore, role, runId) 
       directoryVisible: false,
       displayName,
       lastSeenAt: null,
+      mustChangePassword: false,
       online: false,
+      role: "USER",
       updatedAt: AdminFieldValue.serverTimestamp(),
       username: `acceptance_${role}`,
       usernameNormalized: `acceptance_${role}`,
@@ -216,6 +225,10 @@ async function main() {
     ]);
     assert.equal(provisionedPeter.disabled, false, "Peter must be enabled.");
     assert.equal(provisionedTrish.disabled, false, "Trish must be enabled.");
+    assert.equal(provisionedPeter.customClaims?.accountState, "ACTIVE", "Peter claims must be active.");
+    assert.equal(provisionedPeter.customClaims?.role, "OWNER", "Peter must hold the owner claim.");
+    assert.equal(provisionedTrish.customClaims?.accountState, "ACTIVE", "Trish claims must be active.");
+    assert.equal(provisionedTrish.customClaims?.role, "USER", "Trish must hold the user claim.");
 
     const [peterProfile, trishProfile] = await adminFirestore.getAll(
       adminFirestore.doc(`profiles/${provisionedPeter.uid}`),
@@ -223,6 +236,10 @@ async function main() {
     );
     assert.equal(peterProfile.get("allowed"), true, "Peter must be allowed.");
     assert.equal(trishProfile.get("allowed"), true, "Trish must be allowed.");
+    assert.equal(peterProfile.get("accountState"), "ACTIVE", "Peter profile must be active.");
+    assert.equal(peterProfile.get("role"), "OWNER", "Peter profile must hold the owner role.");
+    assert.equal(trishProfile.get("accountState"), "ACTIVE", "Trish profile must be active.");
+    assert.equal(trishProfile.get("role"), "USER", "Trish profile must hold the user role.");
 
     const peter = await createAcceptanceIdentity(adminAuth, adminFirestore, "peter", runId);
     acceptanceIdentities.push(peter);
@@ -258,8 +275,8 @@ async function main() {
     const [peterRoom, trishRoom, peterRoomList, trishRoomList] = await Promise.all([
       getDoc(peterRoomReference),
       getDoc(trishRoomReference),
-      getDocs(query(collection(peterFirestore, "rooms"), where("memberIds", "array-contains", peter.uid))),
-      getDocs(query(collection(trishFirestore, "rooms"), where("memberIds", "array-contains", trish.uid))),
+      getDocs(query(collection(peterFirestore, "rooms"), where("activeMemberIds", "array-contains", peter.uid))),
+      getDocs(query(collection(trishFirestore, "rooms"), where("activeMemberIds", "array-contains", trish.uid))),
     ]);
     assert(peterRoom.exists() && trishRoom.exists(), "Both clients must read the direct room.");
     assert(peterRoomList.docs.some((snapshot) => snapshot.id === roomId));

@@ -3,21 +3,9 @@ import test from "node:test";
 import {
   buildDirectRoomIdentity,
   buildNotificationReceiptId,
-  buildSyntheticAccountEmail,
-  normalizeUsername,
   parseHumanMessagePayload,
   parseTargetUid,
 } from "./domain.js";
-
-test("normalizes allowed account usernames case-insensitively", () => {
-  assert.equal(normalizeUsername(" Peter "), "peter");
-  assert.equal(buildSyntheticAccountEmail("Trish"), "trish@accounts.synapse.invalid");
-});
-
-test("rejects ambiguous username input", () => {
-  assert.throws(() => normalizeUsername("Pé ter"));
-  assert.throws(() => normalizeUsername("ab"));
-});
 
 test("builds one deterministic room regardless of caller order", () => {
   const peterFirst = buildDirectRoomIdentity("peter-uid", "trish-uid");

@@ -10,15 +10,23 @@ service cloud.firestore {
       return /databases/$(database)/documents/profiles/$(uid);
     }
 
-    function isAllowedUser() {
+    function hasActiveAccountClaims() {
       return signedIn()
+        && request.auth.token.accountState == 'ACTIVE'
+        && request.auth.token.role in ['OWNER', 'ADMIN', 'USER'];
+    }
+
+    function isActiveUser() {
+      return hasActiveAccountClaims()
         && exists(profilePath(request.auth.uid))
-        && get(profilePath(request.auth.uid)).data.allowed == true;
+        && get(profilePath(request.auth.uid)).data.allowed == true
+        && get(profilePath(request.auth.uid)).data.accountState == 'ACTIVE'
+        && get(profilePath(request.auth.uid)).data.role == request.auth.token.role;
     }
 
     function isActiveRoomMember(roomId) {
       let memberPath = /databases/$(database)/documents/rooms/$(roomId)/members/$(request.auth.uid);
-      return isAllowedUser()
+      return isActiveUser()
         && exists(memberPath)
         && get(memberPath).data.active == true;
     }
@@ -59,10 +67,17 @@ service cloud.firestore {
     }
 
     match /profiles/{uid} {
-      allow get: if isAllowedUser() && resource.data.allowed == true;
-      allow list: if isAllowedUser() && resource.data.allowed == true;
+      allow get: if (signedIn() && request.auth.uid == uid)
+        || (isActiveUser()
+          && resource.data.allowed == true
+          && resource.data.accountState == 'ACTIVE'
+          && resource.data.directoryVisible == true);
+      allow list: if isActiveUser()
+        && resource.data.allowed == true
+        && resource.data.accountState == 'ACTIVE'
+        && resource.data.directoryVisible == true;
       allow create, delete: if false;
-      allow update: if isAllowedUser()
+      allow update: if isActiveUser()
         && request.auth.uid == uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'avatarUrl',
@@ -83,8 +98,8 @@ service cloud.firestore {
     }
 
     match /rooms/{roomId} {
-      allow get, list: if isAllowedUser()
-        && request.auth.uid in resource.data.memberIds;
+      allow get, list: if isActiveUser()
+        && request.auth.uid in resource.data.activeMemberIds;
       allow create, update, delete: if false;
 
       match /members/{uid} {
@@ -100,9 +115,9 @@ service cloud.firestore {
     }
 
     match /devices/{deviceId} {
-      allow get, list: if isAllowedUser()
+      allow get, list: if isActiveUser()
         && resource.data.ownerUid == request.auth.uid;
-      allow create: if isAllowedUser()
+      allow create: if isActiveUser()
         && request.resource.data.keys().hasOnly([
           'active',
           'createdAt',
@@ -119,7 +134,7 @@ service cloud.firestore {
         && request.resource.data.installationId.size() <= 256
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
-      allow update: if isAllowedUser()
+      allow update: if isActiveUser()
         && resource.data.ownerUid == request.auth.uid
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.createdAt == resource.data.createdAt
@@ -135,7 +150,7 @@ service cloud.firestore {
         && request.resource.data.installationId.size() >= 16
         && request.resource.data.installationId.size() <= 256
         && request.resource.data.updatedAt == request.time;
-      allow delete: if isAllowedUser() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if isActiveUser() && resource.data.ownerUid == request.auth.uid;
     }
 
     match /notificationDeliveries/{eventId} {

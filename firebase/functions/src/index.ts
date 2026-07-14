@@ -14,13 +14,23 @@ import {
 } from "./firebaseAdmin.js";
 import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js";
 
+export {registerWithInvite} from "./registration.js";
+export {
+  createInvitation,
+  revokeInvitation,
+  setRegistrationApprovalRequired,
+} from "./invitationAdmin.js";
+export {reviewRegistration} from "./registrationReview.js";
+
 const firestore = firebaseAdminFirestore;
 const messaging = firebaseAdminMessaging;
 const REGION = FIREBASE_FUNCTIONS_REGION;
 
 interface ProfileDocument {
+  accountState?: unknown;
   allowed?: unknown;
   displayName?: unknown;
+  role?: unknown;
   username?: unknown;
 }
 
@@ -30,13 +40,21 @@ interface DeviceDocument {
   ownerUid?: unknown;
 }
 
-function requireAllowedProfile(
+function requireActiveProfile(
   profile: ProfileDocument | undefined,
   uid: string,
-): asserts profile is ProfileDocument & {allowed: true; displayName: string; username: string} {
+): asserts profile is ProfileDocument & {
+  accountState: "ACTIVE";
+  allowed: true;
+  displayName: string;
+  role: "OWNER" | "ADMIN" | "USER";
+  username: string;
+} {
   if (
+    profile?.accountState !== "ACTIVE" ||
     profile?.allowed !== true ||
     typeof profile.displayName !== "string" ||
+    (profile.role !== "OWNER" && profile.role !== "ADMIN" && profile.role !== "USER") ||
     typeof profile.username !== "string"
   ) {
     throw new HttpsError("permission-denied", `Account ${uid} is not enabled for Synapse Chat.`);
@@ -67,8 +85,8 @@ export const openDirectRoom = onCall(
     ]);
     const callerProfile = callerSnapshot.data() as ProfileDocument | undefined;
     const targetProfile = targetSnapshot.data() as ProfileDocument | undefined;
-    requireAllowedProfile(callerProfile, callerUid);
-    requireAllowedProfile(targetProfile, targetUid);
+    requireActiveProfile(callerProfile, callerUid);
+    requireActiveProfile(targetProfile, targetUid);
 
     const identity = buildDirectRoomIdentity(callerUid, targetUid);
     const roomReference = firestore.doc(`rooms/${identity.roomId}`);
@@ -86,6 +104,7 @@ export const openDirectRoom = onCall(
 
       const createdAt = FieldValue.serverTimestamp();
       transaction.create(roomReference, {
+        activeMemberIds: identity.memberIds,
         createdAt,
         directKey: identity.directKey,
         kind: "DIRECT",
@@ -135,7 +154,7 @@ export const markRoomRead = onCall(
     if (!profileSnapshot || !membershipSnapshot) {
       throw new HttpsError("internal", "Account authorization could not be resolved.");
     }
-    requireAllowedProfile(profileSnapshot.data() as ProfileDocument | undefined, callerUid);
+    requireActiveProfile(profileSnapshot.data() as ProfileDocument | undefined, callerUid);
     if (!membershipSnapshot.exists || membershipSnapshot.get("active") !== true) {
       throw new HttpsError("permission-denied", "The account is not an active room member.");
     }
@@ -198,7 +217,9 @@ export const notifyRemoteMessage = onDocumentCreated(
       candidateRecipientUids,
       candidateRecipientUids.map((recipientUid, recipientIndex) => ({
         membershipActive: authorizationSnapshots[recipientIndex * 2 + 1]?.get("active") === true,
-        profileAllowed: authorizationSnapshots[recipientIndex * 2]?.get("allowed") === true,
+        profileAllowed:
+          authorizationSnapshots[recipientIndex * 2]?.get("allowed") === true &&
+          authorizationSnapshots[recipientIndex * 2]?.get("accountState") === "ACTIVE",
         uid: recipientUid,
       })),
     );
