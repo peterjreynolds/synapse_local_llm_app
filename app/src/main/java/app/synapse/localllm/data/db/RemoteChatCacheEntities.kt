@@ -101,6 +101,8 @@ data class RemoteMessageCacheEntity(
     val serverCreatedAtEpochMillis: Long?,
     val failureReason: String?,
     val cachedAtEpochMillis: Long,
+    val aiParticipantId: String? = null,
+    val aiProvenance: String? = null,
 )
 
 @Fts4(tokenizer = FtsOptions.TOKENIZER_UNICODE61)

@@ -4,7 +4,7 @@ import {onDocumentCreated} from "firebase-functions/v2/firestore";
 import {
   buildDirectRoomIdentity,
   buildNotificationReceiptId,
-  parseHumanMessagePayload,
+  parseRemoteNotificationMessagePayload,
   parseTargetUid,
 } from "./domain.js";
 import {
@@ -93,6 +93,18 @@ export {
   sendRemoteMessage,
   toggleRemoteReaction,
 } from "./richMessageMutation.js";
+export {
+  getRoomAiConfiguration,
+  heartbeatLocalAiHost,
+  updateRoomAiConfiguration,
+} from "./remoteAiConfiguration.js";
+export {
+  claimNextLocalAiResponse,
+  completeLocalAiResponse,
+  failLocalAiResponse,
+  skipLocalAiResponse,
+} from "./remoteAiLease.js";
+export {queueRemoteLocalAiResponse} from "./remoteAiQueue.js";
 
 const firestore = firebaseAdminFirestore;
 const messaging = firebaseAdminMessaging;
@@ -271,7 +283,7 @@ export const notifyRemoteMessage = onDocumentCreated(
 
     let message;
     try {
-      message = parseHumanMessagePayload(messageSnapshot.data());
+      message = parseRemoteNotificationMessagePayload(messageSnapshot.data());
     } catch {
       return;
     }
@@ -279,7 +291,10 @@ export const notifyRemoteMessage = onDocumentCreated(
     const roomId = event.params.roomId;
     const messageId = event.params.messageId;
     const roomReference = firestore.doc(`rooms/${roomId}`);
-    const roomSnapshot = await roomReference.get();
+    const [roomSnapshot, aiParticipantSnapshot] = await Promise.all([
+      roomReference.get(),
+      roomReference.collection("participants").doc("participant-synapse-local-ai").get(),
+    ]);
     if (!roomSnapshot.exists) {
       return;
     }
@@ -287,16 +302,22 @@ export const notifyRemoteMessage = onDocumentCreated(
     const roomKind = roomSnapshot.get("kind");
     if (
       !Array.isArray(memberIds) ||
-      !memberIds.includes(message.senderUid) ||
       (roomKind !== "DIRECT" && roomKind !== "GROUP")
     ) {
       return;
     }
+    const humanAuthorIsActiveMember = message.authorKind === "HUMAN" && memberIds.includes(message.senderUid);
+    const aiAuthorIsActiveParticipant = message.authorKind === "SYNAPSE_AI" &&
+      aiParticipantSnapshot.get("active") === true &&
+      aiParticipantSnapshot.get("participantId") === message.senderUid &&
+      aiParticipantSnapshot.get("provenance") === message.provenance;
+    if (!humanAuthorIsActiveMember && !aiAuthorIsActiveParticipant) return;
     const candidateRecipientUids = [
       ...new Set(
         memberIds.filter(
           (memberUid): memberUid is string =>
-            typeof memberUid === "string" && memberUid !== message.senderUid,
+            typeof memberUid === "string" &&
+            (message.authorKind === "SYNAPSE_AI" || memberUid !== message.senderUid),
         ),
       ),
     ];

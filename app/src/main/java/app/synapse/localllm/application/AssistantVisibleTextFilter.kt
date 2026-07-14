@@ -9,6 +9,9 @@ class AssistantVisibleTextFilter {
     val visibleCharacterCount: Int
         get() = emittedVisibleText.length
 
+    val visibleText: String
+        get() = emittedVisibleText
+
     val filteredCharacterCount: Int
         get() = (rawAssistantText.length - emittedVisibleText.length).coerceAtLeast(0)
 

@@ -153,6 +153,8 @@ data class RemoteCachedMessage(
     val clientCreatedAt: Instant,
     val serverCreatedAt: Instant?,
     val failureReason: String?,
+    val aiParticipantId: String? = null,
+    val aiProvenance: RemoteAiProvenance? = null,
 ) {
     init {
         require(revision >= 1L) { "Remote message revision must be positive." }
@@ -166,6 +168,19 @@ data class RemoteCachedMessage(
         }
         require(attachments.size <= 8 && attachments.distinctBy(RemoteCachedAttachment::attachmentId).size == attachments.size) {
             "Remote message attachments must be unique and bounded."
+        }
+        when (authorKind) {
+            "HUMAN" -> require(aiParticipantId == null && aiProvenance == null) {
+                "Human messages cannot claim AI provenance."
+            }
+
+            "SYNAPSE_AI" -> require(
+                aiParticipantId == "participant-synapse-local-ai" && aiProvenance != null,
+            ) {
+                "Synapse AI messages require an explicit participant and provenance."
+            }
+
+            else -> error("Remote message author kind is unsupported.")
         }
     }
 }

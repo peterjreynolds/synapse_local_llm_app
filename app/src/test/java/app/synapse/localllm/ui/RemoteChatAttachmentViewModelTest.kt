@@ -201,10 +201,12 @@ class RemoteChatAttachmentViewModelTest {
             attachmentGateway = attachmentGateway,
             directoryGateway = mockk(relaxed = true),
             conversationGateway = mockk(relaxed = true),
+            remoteAiParticipantGateway = NoOpRemoteAiParticipantGateway,
             deviceRegistrationGateway = mockk(relaxed = true),
             cacheRepository = cacheRepository,
             sessionSynchronizer = sessionSynchronizer,
             roomVisibilityTracker = RemoteRoomVisibilityTracker(),
+            remoteLocalAiResponseHost = IdleRemoteLocalAiResponseHost,
             voiceNoteRecorder = voiceNoteRecorder,
             idFactory = SynapseIdFactory(),
             clock = object : SynapseClock {

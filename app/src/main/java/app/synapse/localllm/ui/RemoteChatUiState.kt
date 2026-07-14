@@ -13,6 +13,9 @@ import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
 import app.synapse.localllm.domain.remote.RemoteNotificationPreferences
 import app.synapse.localllm.domain.remote.RemoteProfileUid
+import app.synapse.localllm.domain.remote.RemoteDeviceId
+import app.synapse.localllm.domain.remote.RemoteRoomAiConfiguration
+import app.synapse.localllm.application.RemoteLocalAiHostStatus
 
 data class RemoteChatUiState(
     val authenticationState: RemoteAuthenticationState = RemoteAuthenticationState.SignedOut,
@@ -34,6 +37,9 @@ data class RemoteChatUiState(
     val messageSearchQuery: String = "",
     val messageSearchResults: List<RemoteMessageSearchResult> = emptyList(),
     val notificationPreferences: RemoteNotificationPreferences = RemoteNotificationPreferences(),
+    val currentDeviceId: RemoteDeviceId? = null,
+    val roomAiConfiguration: RemoteRoomAiConfiguration? = null,
+    val localAiHostStatus: RemoteLocalAiHostStatus = RemoteLocalAiHostStatus.Idle,
     val isActionRunning: Boolean = false,
     val notice: String? = null,
 )

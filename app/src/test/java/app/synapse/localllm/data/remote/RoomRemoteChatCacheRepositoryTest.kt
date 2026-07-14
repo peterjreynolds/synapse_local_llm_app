@@ -10,6 +10,7 @@ import app.synapse.localllm.domain.remote.CacheRemoteRoomsCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
 import app.synapse.localllm.domain.remote.RemoteAccountSessionResource
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAiProvenance
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAttachmentKind
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
@@ -324,6 +325,22 @@ class RoomRemoteChatCacheRepositoryTest {
         repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(richMessage)))
 
         assertEquals(richMessage, repository.observeMessages(ROOM_ID).first().single())
+    }
+
+    @Test
+    fun localAiParticipantProvenanceRoundTripsThroughTheAccountCache() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
+        val aiMessage = remoteMessage(PETER_ACCOUNT, "message-ai", "key-ai", FixedClock.now()).copy(
+            senderUid = RemoteProfileUid("participant-synapse-local-ai"),
+            authorKind = "SYNAPSE_AI",
+            aiParticipantId = "participant-synapse-local-ai",
+            aiProvenance = RemoteAiProvenance.PHONE_LOCAL,
+        )
+
+        repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(aiMessage)))
+
+        assertEquals(aiMessage, repository.observeMessages(ROOM_ID).first().single())
     }
 
     @Test

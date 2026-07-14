@@ -5,6 +5,7 @@ import androidx.room.Room
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.application.RemoteDeviceRegistrationCoordinator
 import app.synapse.localllm.application.RemoteChatSessionSynchronizer
+import app.synapse.localllm.application.RemoteLocalAiResponseCoordinator
 import app.synapse.localllm.application.RemoteNotificationNavigationCoordinator
 import app.synapse.localllm.application.RemoteRoomVisibilityTracker
 import app.synapse.localllm.application.SynapseTurnCoordinator
@@ -17,6 +18,7 @@ import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_10_11
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_11_12
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_12_13
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_13_14
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_14_15
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
@@ -39,6 +41,7 @@ import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
 import app.synapse.localllm.data.remote.FirebaseOwnerAdminGateway
 import app.synapse.localllm.data.remote.AndroidRemoteVoiceNoteRecorder
 import app.synapse.localllm.data.remote.FirebaseRemoteAuthenticationGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteAiParticipantGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteAttachmentGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
@@ -127,6 +130,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_11_12,
         SYNAPSE_DATABASE_MIGRATION_12_13,
         SYNAPSE_DATABASE_MIGRATION_13_14,
+        SYNAPSE_DATABASE_MIGRATION_14_15,
     ).build()
 
     val remoteAccountSessionController = RemoteAccountSessionCoordinator()
@@ -159,6 +163,12 @@ class SynapseApplicationGraph private constructor(context: Context) {
             firebaseAuth = firebaseAuth,
             firestore = firestore,
             functions = firebaseFunctions,
+            sessionController = remoteAccountSessionController,
+        )
+    val remoteAiParticipantGateway =
+        FirebaseRemoteAiParticipantGateway(
+            firebaseAuth = firebaseAuth,
+            firebaseFunctions = firebaseFunctions,
             sessionController = remoteAccountSessionController,
         )
     val remoteAttachmentGateway =
@@ -301,6 +311,15 @@ class SynapseApplicationGraph private constructor(context: Context) {
                 idFactory = idFactory,
                 clock = clock,
             ),
+        )
+
+    val remoteLocalAiResponseCoordinator =
+        RemoteLocalAiResponseCoordinator(
+            gateway = remoteAiParticipantGateway,
+            settingsFlow = settingsStore.settingsFlow,
+            localInferenceRuntime = localInferenceRuntime,
+            clock = clock,
+            responseRoutingPolicy = aiResponseRoutingPolicy,
         )
 
     val turnCoordinator =

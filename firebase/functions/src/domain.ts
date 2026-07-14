@@ -15,6 +15,11 @@ export interface HumanMessagePayload {
   senderUid: string;
 }
 
+export interface RemoteNotificationMessagePayload extends HumanMessagePayload {
+  authorKind: "HUMAN" | "SYNAPSE_AI";
+  provenance: "PHONE_LOCAL" | "REMOTE_HOSTED" | null;
+}
+
 export function buildDirectRoomIdentity(firstUid: string, secondUid: string): DirectRoomIdentity {
   if (!firstUid || !secondUid || firstUid === secondUid) {
     throw new Error("A direct room requires two distinct non-empty account identifiers.");
@@ -41,20 +46,41 @@ export function parseTargetUid(input: unknown): string {
 }
 
 export function parseHumanMessagePayload(input: unknown): HumanMessagePayload {
+  const message = parseRemoteNotificationMessagePayload(input);
+  if (message.authorKind !== "HUMAN") {
+    throw new Error("Only human messages can use the human message boundary.");
+  }
+  return {body: message.body, senderUid: message.senderUid};
+}
+
+export function parseRemoteNotificationMessagePayload(input: unknown): RemoteNotificationMessagePayload {
   if (typeof input !== "object" || input === null) {
     throw new Error("Message payload must be an object.");
   }
   const candidate = input as {
+    aiParticipantId?: unknown;
+    aiProvenance?: unknown;
     attachmentIds?: unknown;
     authorKind?: unknown;
     body?: unknown;
     senderUid?: unknown;
   };
-  if (candidate.authorKind !== "HUMAN") {
-    throw new Error("Only human messages trigger remote notifications.");
+  if (candidate.authorKind !== "HUMAN" && candidate.authorKind !== "SYNAPSE_AI") {
+    throw new Error("Message author kind is invalid.");
   }
   if (typeof candidate.senderUid !== "string" || candidate.senderUid.length === 0) {
     throw new Error("Message sender is invalid.");
+  }
+  let provenance: "PHONE_LOCAL" | "REMOTE_HOSTED" | null = null;
+  if (candidate.authorKind === "SYNAPSE_AI") {
+    if (
+      candidate.senderUid !== "participant-synapse-local-ai" ||
+      candidate.aiParticipantId !== "participant-synapse-local-ai" ||
+      (candidate.aiProvenance !== "PHONE_LOCAL" && candidate.aiProvenance !== "REMOTE_HOSTED")
+    ) {
+      throw new Error("AI message provenance is invalid.");
+    }
+    provenance = candidate.aiProvenance;
   }
   const attachmentIds = candidate.attachmentIds ?? [];
   if (!Array.isArray(attachmentIds) || attachmentIds.length > 8 || attachmentIds.some((attachmentId) =>
@@ -68,7 +94,9 @@ export function parseHumanMessagePayload(input: unknown): HumanMessagePayload {
   const body = candidate.body.trim();
   if (body.length === 0 && attachmentIds.length === 0) throw new Error("Message body is invalid.");
   return {
+    authorKind: candidate.authorKind,
     body: body || (attachmentIds.length === 1 ? "Attachment" : `${attachmentIds.length} attachments`),
+    provenance,
     senderUid: candidate.senderUid,
   };
 }

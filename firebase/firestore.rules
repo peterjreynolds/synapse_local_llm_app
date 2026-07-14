@@ -117,6 +117,10 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /participants/{participantId} {
+        allow read, write: if false;
+      }
+
       match /messages/{messageId} {
         allow read: if isActiveRoomMember(roomId);
         allow create: if isActiveRoomMember(roomId) && validHumanMessage(messageId);
@@ -162,6 +166,22 @@ service cloud.firestore {
     }
 
     match /notificationPreferences/{uid} {
+      allow read, write: if false;
+    }
+
+    match /roomAiConfigurations/{roomId} {
+      allow read, write: if false;
+    }
+
+    match /localAiHostQueues/{deviceId}/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /remoteAiAuditEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /remoteAiResponseAudits/{jobId} {
       allow read, write: if false;
     }
 

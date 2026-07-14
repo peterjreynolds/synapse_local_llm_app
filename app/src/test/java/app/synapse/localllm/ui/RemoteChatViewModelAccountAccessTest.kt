@@ -68,10 +68,12 @@ class RemoteChatViewModelAccountAccessTest {
                     attachmentGateway = mockk(relaxed = true),
                     directoryGateway = directoryGateway,
                     conversationGateway = conversationGateway,
+                    remoteAiParticipantGateway = NoOpRemoteAiParticipantGateway,
                     deviceRegistrationGateway = deviceRegistrationGateway,
                     cacheRepository = cacheRepository,
                     sessionSynchronizer = sessionSynchronizer,
                     roomVisibilityTracker = RemoteRoomVisibilityTracker(),
+                    remoteLocalAiResponseHost = IdleRemoteLocalAiResponseHost,
                     voiceNoteRecorder = mockk(relaxed = true),
                     idFactory = SynapseIdFactory(),
                     clock = object : SynapseClock {

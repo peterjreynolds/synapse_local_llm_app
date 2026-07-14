@@ -17,6 +17,7 @@ import {
 } from "firebase/firestore";
 import {connectFunctionsEmulator, getFunctions, httpsCallable} from "firebase/functions";
 import {buildUserBlockDocumentId} from "../functions/lib/privacyAdmin.js";
+import {buildRemoteAiJobId} from "../functions/lib/remoteAiDomain.js";
 
 const PROJECT_ID = "demo-synapse-chat";
 const FUNCTIONS_REGION = "northamerica-northeast1";
@@ -370,4 +371,191 @@ test("group notification fan-out increments unread only for authorized unmuted m
   const joshMembership = await adminFirestore.doc(`rooms/${roomId}/members/${josh.uid}`).get();
   assert.equal(trishMembership.get("unreadCount"), 0);
   assert.equal(joshMembership.get("unreadCount"), 1);
+});
+
+test("one designated host leases and posts one attributed local AI reply", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  const trishClient = await signIn("trish", trish);
+  const created = await call(peterClient, "createGroupRoom")({
+    memberUids: [trish.uid],
+    title: "AI lease",
+  });
+  const roomId = created.data.roomId;
+  const device = await call(peterClient, "registerOwnDevice")({
+    installationId: "ai-host-installation-00001",
+  });
+  const deviceId = device.data.deviceId;
+
+  await assert.rejects(
+    call(trishClient, "updateRoomAiConfiguration")({
+      hostedAiEnabled: false,
+      localAiAutoResponse: false,
+      localAiEnabled: true,
+      localAiHostDeviceId: deviceId,
+      roomId,
+    }),
+    (error) => error.code === "functions/permission-denied",
+  );
+  await call(peterClient, "updateRoomAiConfiguration")({
+    hostedAiEnabled: false,
+    localAiAutoResponse: false,
+    localAiEnabled: true,
+    localAiHostDeviceId: deviceId,
+    roomId,
+  });
+  const configuration = await call(peterClient, "getRoomAiConfiguration")({roomId});
+  assert.equal(configuration.data.localAiEnabled, true);
+  assert.equal(configuration.data.localAiHostAvailable, true);
+  assert.equal(configuration.data.hostedAiStatus, "DISABLED_NO_PROVIDER");
+  assert.equal(configuration.data.hostedExecutionPolicy.maximumMonthlyCostMicrousd, 0);
+  const participant = await adminFirestore.doc(
+    `rooms/${roomId}/participants/participant-synapse-local-ai`,
+  ).get();
+  assert.equal(participant.get("active"), true);
+  assert.equal(participant.get("provenance"), "PHONE_LOCAL");
+  const direct = await call(peterClient, "openDirectRoom")({targetUid: trish.uid});
+  const directConfiguration = await call(peterClient, "updateRoomAiConfiguration")({
+    hostedAiEnabled: false,
+    localAiAutoResponse: true,
+    localAiEnabled: true,
+    localAiHostDeviceId: deviceId,
+    roomId: direct.data.roomId,
+  });
+  assert.equal(directConfiguration.data.localAiEnabled, true);
+  assert.equal(directConfiguration.data.localAiAutoResponse, true);
+  await assert.rejects(
+    call(peterClient, "updateRoomAiConfiguration")({
+      hostedAiEnabled: true,
+      localAiAutoResponse: false,
+      localAiEnabled: true,
+      localAiHostDeviceId: deviceId,
+      roomId,
+    }),
+    (error) => error.code === "functions/failed-precondition",
+  );
+
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "Synapse should not answer this without a mention.",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "human-only-source",
+    replyToMessageId: null,
+    roomId,
+  });
+  const skippedJobId = buildRemoteAiJobId(roomId, "human-only-source");
+  await waitForCondition(async () => (
+    await adminFirestore.doc(`localAiHostQueues/${deviceId}/jobs/${skippedJobId}`).get()
+  ).exists);
+  await assert.rejects(
+    call(trishClient, "claimNextLocalAiResponse")({deviceId}),
+    (error) => error.code === "functions/permission-denied",
+  );
+  const skippedClaim = (await call(peterClient, "claimNextLocalAiResponse")({deviceId})).data.claim;
+  assert.equal(skippedClaim.jobId, skippedJobId);
+  assert.equal(skippedClaim.responsePolicy, "MENTION_ONLY");
+  await call(peterClient, "skipLocalAiResponse")({
+    deviceId,
+    jobId: skippedClaim.jobId,
+    leaseToken: skippedClaim.leaseToken,
+    reason: "MENTION_REQUIRED",
+  });
+  const skippedAudit = await adminFirestore.doc(`remoteAiResponseAudits/${skippedJobId}`).get();
+  assert.equal(skippedAudit.get("completionState"), "SKIPPED");
+
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "@Synapse exercise the bounded retry path.",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "retry-source",
+    replyToMessageId: null,
+    roomId,
+  });
+  const exhaustedJobId = buildRemoteAiJobId(roomId, "retry-source");
+  const exhaustedJobReference = adminFirestore.doc(
+    `localAiHostQueues/${deviceId}/jobs/${exhaustedJobId}`,
+  );
+  await waitForCondition(async () => (await exhaustedJobReference.get()).exists);
+  const firstRetryClaim = (await call(peterClient, "claimNextLocalAiResponse")({deviceId})).data.claim;
+  assert.equal(firstRetryClaim.jobId, exhaustedJobId);
+  const failedAttempt = await call(peterClient, "failLocalAiResponse")({
+    deviceId,
+    failureCode: "MODEL_UNAVAILABLE",
+    jobId: exhaustedJobId,
+    leaseToken: firstRetryClaim.leaseToken,
+    retryable: true,
+  });
+  assert.equal(failedAttempt.data.retryScheduled, true);
+  const secondRetryClaim = (await call(peterClient, "claimNextLocalAiResponse")({deviceId})).data.claim;
+  assert.equal(secondRetryClaim.jobId, exhaustedJobId);
+  await exhaustedJobReference.update({leaseExpiresAt: AdminTimestamp.fromMillis(Date.now() - 1)});
+  assert.equal((await call(peterClient, "claimNextLocalAiResponse")({deviceId})).data.claim, null);
+  assert.equal((await exhaustedJobReference.get()).exists, false);
+  const exhaustedAudit = await adminFirestore.doc(`remoteAiResponseAudits/${exhaustedJobId}`).get();
+  assert.equal(exhaustedAudit.get("completionState"), "FAILED");
+  assert.equal(exhaustedAudit.get("failureCode"), "LEASE_ATTEMPTS_EXHAUSTED");
+
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "@Synapse give us one answer.",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "mentioned-source",
+    replyToMessageId: null,
+    roomId,
+  });
+  const responseJobId = buildRemoteAiJobId(roomId, "mentioned-source");
+  await waitForCondition(async () => (
+    await adminFirestore.doc(`localAiHostQueues/${deviceId}/jobs/${responseJobId}`).get()
+  ).exists);
+  const responseClaim = (await call(peterClient, "claimNextLocalAiResponse")({deviceId})).data.claim;
+  assert.equal(responseClaim.jobId, responseJobId);
+  assert.equal(responseClaim.sourceMessage.authorId, peter.uid);
+  assert.equal(responseClaim.recentMessages.some((message) => message.body.includes("@Synapse")), true);
+  assert.equal((await call(peterClient, "claimNextLocalAiResponse")({deviceId})).data.claim, null);
+
+  const unreadBeforeAi = (await adminFirestore.doc(`rooms/${roomId}/members/${trish.uid}`).get())
+    .get("unreadCount");
+  await adminFirestore.doc(`devices/${deviceId}`).update({active: false});
+  const completion = await call(peterClient, "completeLocalAiResponse")({
+    body: "Exactly one phone-local answer.",
+    deviceId,
+    jobId: responseClaim.jobId,
+    leaseToken: responseClaim.leaseToken,
+  });
+  const repeatedCompletion = await call(peterClient, "completeLocalAiResponse")({
+    body: "Exactly one phone-local answer.",
+    deviceId,
+    jobId: responseClaim.jobId,
+    leaseToken: responseClaim.leaseToken,
+  });
+  assert.deepEqual(repeatedCompletion.data, completion.data);
+  await assert.rejects(
+    call(peterClient, "completeLocalAiResponse")({
+      body: "A conflicting replay must fail.",
+      deviceId,
+      jobId: responseClaim.jobId,
+      leaseToken: responseClaim.leaseToken,
+    }),
+    (error) => error.code === "functions/already-exists",
+  );
+  const aiMessage = await adminFirestore.doc(`rooms/${roomId}/messages/${completion.data.messageId}`).get();
+  assert.equal(aiMessage.get("authorKind"), "SYNAPSE_AI");
+  assert.equal(aiMessage.get("senderUid"), "participant-synapse-local-ai");
+  assert.equal(aiMessage.get("aiProvenance"), "PHONE_LOCAL");
+  assert.equal(aiMessage.get("replyToMessageId"), "mentioned-source");
+  await waitForCondition(async () => (
+    await adminFirestore.doc(`rooms/${roomId}/members/${trish.uid}`).get()
+  ).get("unreadCount") === unreadBeforeAi + 1);
+  assert.equal((await adminFirestore.collection(`rooms/${roomId}/messages`)
+    .where("aiResponseJobId", "==", responseJobId).get()).size, 1);
+  await call(peterClient, "deleteRemoteMessage")({
+    expectedRevision: 1,
+    messageId: completion.data.messageId,
+    mutationId: "delete-local-ai-response-0001",
+    roomId,
+  });
+  const deletedAiMessage = await adminFirestore.doc(`rooms/${roomId}/messages/${completion.data.messageId}`).get();
+  assert.equal(deletedAiMessage.get("body"), "");
+  assert.equal(deletedAiMessage.get("deletedAt") instanceof AdminTimestamp, true);
 });

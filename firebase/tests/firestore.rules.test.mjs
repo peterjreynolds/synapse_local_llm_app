@@ -296,6 +296,18 @@ test("keeps FCM installation IDs server-owned", async () => {
   }));
 });
 
+test("keeps AI participant, configuration, queue, and audit state server-owned", async () => {
+  const peterDb = activeContext(PETER_UID).firestore();
+  await assertFails(setDoc(doc(peterDb, "roomAiConfigurations", ROOM_ID), {localAiEnabled: true}));
+  await assertFails(setDoc(doc(peterDb, "localAiHostQueues", "device", "jobs", "job"), {state: "PENDING"}));
+  await assertFails(setDoc(doc(peterDb, "remoteAiAuditEvents", "event"), {eventType: "forged"}));
+  await assertFails(setDoc(doc(peterDb, "remoteAiResponseAudits", "job"), {completionState: "COMPLETE"}));
+  await assertFails(setDoc(
+    doc(peterDb, "rooms", ROOM_ID, "participants", "participant-synapse-local-ai"),
+    {active: true},
+  ));
+});
+
 test("keeps block and account deletion state server-owned", async () => {
   const peter = activeContext(PETER_UID).firestore();
   await assertFails(getDoc(doc(peter, "blocks", "private-block")));

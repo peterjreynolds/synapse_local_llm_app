@@ -4,6 +4,7 @@ import {
   buildDirectRoomIdentity,
   buildNotificationReceiptId,
   parseHumanMessagePayload,
+  parseRemoteNotificationMessagePayload,
   parseTargetUid,
 } from "./domain.js";
 
@@ -44,6 +45,30 @@ test("narrows human notification messages", () => {
     }),
     {body: "Attachment", senderUid: "peter-uid"},
   );
+});
+
+test("accepts only explicitly attributed AI notification messages", () => {
+  assert.deepEqual(
+    parseRemoteNotificationMessagePayload({
+      aiParticipantId: "participant-synapse-local-ai",
+      aiProvenance: "PHONE_LOCAL",
+      attachmentIds: [],
+      authorKind: "SYNAPSE_AI",
+      body: "Local answer",
+      senderUid: "participant-synapse-local-ai",
+    }),
+    {
+      authorKind: "SYNAPSE_AI",
+      body: "Local answer",
+      provenance: "PHONE_LOCAL",
+      senderUid: "participant-synapse-local-ai",
+    },
+  );
+  assert.throws(() => parseRemoteNotificationMessagePayload({
+    authorKind: "SYNAPSE_AI",
+    body: "Forged answer",
+    senderUid: "peter-uid",
+  }));
 });
 
 test("hashes provider event identifiers into safe receipt ids", () => {

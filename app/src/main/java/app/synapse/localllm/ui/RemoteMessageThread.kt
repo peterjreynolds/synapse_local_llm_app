@@ -63,6 +63,8 @@ import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
+import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
+import app.synapse.localllm.application.RemoteLocalAiHostStatus
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -97,6 +99,8 @@ internal fun RemoteMessageThread(
     onLoadOlder: () -> Unit,
     onJumpToMessage: (RemoteMessageId) -> Unit,
     onMessageRevealed: () -> Unit,
+    onLocalAiConfigurationChanged: (Boolean, Boolean) -> Unit,
+    onMentionSynapse: () -> Unit,
     accountState: RemoteAccountUiState,
     groupState: RemoteGroupUiState,
     groupViewModel: RemoteGroupViewModel,
@@ -183,22 +187,30 @@ internal fun RemoteMessageThread(
         }
         HorizontalDivider()
         if (showRoomMembers) {
-            if (room?.kind == RemoteRoomKind.GROUP) {
-                RemoteGroupDetailsPane(
-                    details = groupState.details?.takeIf { details -> details.roomId == room.roomId },
-                    profiles = state.profiles,
-                    blockedProfileUids = accountState.blockedProfileUids,
-                    isLoading = groupState.isLoading,
-                    isActionRunning = groupState.isActionRunning,
-                    viewModel = groupViewModel,
-                    modifier = Modifier.weight(1f),
+            Column(modifier = Modifier.weight(1f)) {
+                RemoteAiParticipantControls(
+                    state = state,
+                    room = room,
+                    onConfigurationChanged = onLocalAiConfigurationChanged,
                 )
-            } else {
-                RemoteRoomMembers(
-                    profiles = listOfNotNull(currentProfile, peer).distinctBy { profile -> profile.profileUid },
-                    currentAccountUid = state.account?.accountUid?.raw,
-                    modifier = Modifier.weight(1f),
-                )
+                HorizontalDivider()
+                if (room?.kind == RemoteRoomKind.GROUP) {
+                    RemoteGroupDetailsPane(
+                        details = groupState.details?.takeIf { details -> details.roomId == room.roomId },
+                        profiles = state.profiles,
+                        blockedProfileUids = accountState.blockedProfileUids,
+                        isLoading = groupState.isLoading,
+                        isActionRunning = groupState.isActionRunning,
+                        viewModel = groupViewModel,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    RemoteRoomMembers(
+                        profiles = listOfNotNull(currentProfile, peer).distinctBy { profile -> profile.profileUid },
+                        currentAccountUid = state.account?.accountUid?.raw,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         } else if (state.messages.isEmpty()) {
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -243,8 +255,15 @@ internal fun RemoteMessageThread(
                             state.messages.firstOrNull { candidate -> candidate.messageId == replyId }
                         },
                         isCurrentAccount = message.senderUid.raw == state.account?.accountUid?.raw,
+                        canDelete = message.senderUid.raw == state.account?.accountUid?.raw ||
+                            (
+                                message.authorKind == "SYNAPSE_AI" &&
+                                    state.roomAiConfiguration?.localAiHostUid == state.account?.accountUid
+                                ),
                         ownReactions = state.ownReactions[message.messageId].orEmpty(),
-                        senderDisplayName = if (room?.kind == RemoteRoomKind.GROUP) {
+                        senderDisplayName = if (message.authorKind == "SYNAPSE_AI") {
+                            "Synapse • Phone-local AI"
+                        } else if (room?.kind == RemoteRoomKind.GROUP) {
                             state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
                                 ?.displayName
                                 ?: "Group member"
@@ -304,6 +323,11 @@ internal fun RemoteMessageThread(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (state.roomAiConfiguration?.localAiEnabled == true) {
+                    TextButton(onClick = onMentionSynapse, enabled = !state.isActionRunning) {
+                        Text("@Synapse")
+                    }
+                }
                 TextButton(
                     onClick = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -355,10 +379,107 @@ internal fun RemoteMessageThread(
 }
 
 @Composable
+private fun RemoteAiParticipantControls(
+    state: RemoteChatUiState,
+    room: RemoteCachedRoom?,
+    onConfigurationChanged: (Boolean, Boolean) -> Unit,
+) {
+    val configuration = state.roomAiConfiguration
+    val canRetainOrDesignateHost = state.currentDeviceId != null ||
+        configuration?.localAiHostUid == state.account?.accountUid
+    val canManage = room != null && (
+        room.kind == RemoteRoomKind.DIRECT ||
+            room.currentMemberRole == RemoteRoomMemberRole.OWNER ||
+            room.currentMemberRole == RemoteRoomMemberRole.ADMIN
+        )
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("AI participants", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        if (configuration == null) {
+            Text("Loading AI participant settings…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            return@Column
+        }
+        if (configuration.localAiEnabled) {
+            val thisPhoneIsAvailableHost = configuration.localAiHostDeviceId == state.currentDeviceId &&
+                state.localAiHostStatus !is RemoteLocalAiHostStatus.Unavailable
+            val hostAvailable = configuration.localAiHostAvailable || thisPhoneIsAvailableHost
+            Text("Synapse • Phone-local AI", fontWeight = FontWeight.SemiBold)
+            Text(
+                when {
+                    configuration.localAiHostDeviceId == state.currentDeviceId &&
+                        state.localAiHostStatus is RemoteLocalAiHostStatus.Generating ->
+                        "This phone is generating the room's one leased AI reply."
+
+                    hostAvailable ->
+                        "Designated host is online. Exactly one device may post each AI reply."
+
+                    else ->
+                        "Designated host is offline or unavailable. AI messages will wait without duplicate replies."
+                },
+                color = if (hostAvailable) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            )
+            Text(
+                if (configuration.localAiAutoResponse) {
+                    "Response policy: every human message"
+                } else {
+                    "Response policy: explicit @Synapse mentions only"
+                },
+            )
+            if (canManage) {
+                OutlinedButton(
+                    onClick = { onConfigurationChanged(true, !configuration.localAiAutoResponse) },
+                    enabled = !state.isActionRunning && canRetainOrDesignateHost,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (configuration.localAiAutoResponse) "Require @Synapse mention" else "Respond automatically")
+                }
+                OutlinedButton(
+                    onClick = { onConfigurationChanged(false, false) },
+                    enabled = !state.isActionRunning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Remove Synapse from conversation")
+                }
+            }
+        } else {
+            Text("Human-only conversation. Local inference will never run for messages in this room.")
+            if (canManage) {
+                OutlinedButton(
+                    onClick = { onConfigurationChanged(true, false) },
+                    enabled = !state.isActionRunning && state.currentDeviceId != null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Add Synapse using this phone")
+                }
+                if (state.currentDeviceId == null) {
+                    Text(
+                        "This phone must finish device registration before it can become the designated AI host.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+        Text(
+            "Hosted AI is disabled: no provider or paid budget has been approved. Activation requires an approved " +
+                "server provider and a Secret Manager credential; no API key belongs in this app.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
 private fun RemoteMessageBubble(
     message: RemoteCachedMessage,
     repliedMessage: RemoteCachedMessage?,
     isCurrentAccount: Boolean,
+    canDelete: Boolean,
     ownReactions: Set<String>,
     senderDisplayName: String?,
     onReply: () -> Unit,
@@ -452,6 +573,8 @@ private fun RemoteMessageBubble(
                             editText = message.body
                             showEditDialog = true
                         }) { Text("Edit") }
+                    }
+                    if (canDelete && message.deletedAt == null) {
                         TextButton(onClick = { showDeleteDialog = true }) { Text("Delete") }
                     }
                 }

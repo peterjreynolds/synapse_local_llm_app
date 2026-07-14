@@ -341,8 +341,15 @@ async function reviseOwnMessage(
       return;
     }
     const message = requireActiveMessage(messageSnapshot);
-    if (message.senderUid !== actorUid) {
-      throw new HttpsError("permission-denied", "Only the sender can change this message.");
+    const authorKind = messageSnapshot.get("authorKind");
+    const isOwnHumanMessage = authorKind === "HUMAN" && message.senderUid === actorUid;
+    const isOwnHostedLocalAiMessage = mutationName === "DELETE" &&
+      authorKind === "SYNAPSE_AI" &&
+      messageSnapshot.get("aiHostUid") === actorUid &&
+      messageSnapshot.get("aiParticipantId") === "participant-synapse-local-ai" &&
+      messageSnapshot.get("aiProvenance") === "PHONE_LOCAL";
+    if (!isOwnHumanMessage && !isOwnHostedLocalAiMessage) {
+      throw new HttpsError("permission-denied", "Only the message author can change this message.");
     }
     if (message.deletedAt !== null) {
       throw new HttpsError("failed-precondition", "The message is already deleted.");

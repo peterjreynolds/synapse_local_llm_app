@@ -15,6 +15,7 @@ import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteConversationGateway
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageAcknowledgementReceipt
+import app.synapse.localllm.domain.remote.RemoteAiProvenance
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessagePage
@@ -610,6 +611,10 @@ class FirebaseRemoteConversationGateway(
         val body = getString("body") ?: return null
         val senderUid = getString("senderUid") ?: return null
         val authorKind = getString("authorKind") ?: return null
+        val aiParticipantId = getString("aiParticipantId")
+        val aiProvenance = getString("aiProvenance")?.let { provenance ->
+            runCatching { RemoteAiProvenance.valueOf(provenance) }.getOrNull() ?: return null
+        }
         val clientMessageId = getString("clientMessageId") ?: return null
         val clientCreatedAt = getTimestamp("clientCreatedAt") ?: return null
         val deletedAt = getTimestamp("deletedAt")?.toInstant()
@@ -628,6 +633,11 @@ class FirebaseRemoteConversationGateway(
             body.length > MESSAGE_BODY_LIMIT ||
             clientMessageId != id ||
             authorKind !in allowedAuthorKinds ||
+            (authorKind == HUMAN_AUTHOR_KIND && (aiParticipantId != null || aiProvenance != null)) ||
+            (
+                authorKind == "SYNAPSE_AI" &&
+                    (aiParticipantId != "participant-synapse-local-ai" || aiProvenance == null)
+                ) ||
             revision < 1L
         ) return null
         val serverCreatedAt = getTimestamp("createdAt")?.toInstant()
@@ -658,6 +668,8 @@ class FirebaseRemoteConversationGateway(
             clientCreatedAt = clientCreatedAt.toInstant(),
             serverCreatedAt = serverCreatedAt,
             failureReason = null,
+            aiParticipantId = aiParticipantId,
+            aiProvenance = aiProvenance,
         )
     }
 

@@ -34,7 +34,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RemoteMessageDraftEntity::class,
         RemoteSyncCursorEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -888,6 +888,14 @@ val SYNAPSE_DATABASE_MIGRATION_13_14 =
                     "SELECT accountUid, remoteRoomId, remoteMessageId, body " +
                     "FROM remote_message_cache WHERE deletedAtEpochMillis IS NULL AND body != ''",
             )
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_14_15 =
+    object : Migration(14, 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE remote_message_cache ADD COLUMN aiParticipantId TEXT")
+            db.execSQL("ALTER TABLE remote_message_cache ADD COLUMN aiProvenance TEXT")
         }
     }
 

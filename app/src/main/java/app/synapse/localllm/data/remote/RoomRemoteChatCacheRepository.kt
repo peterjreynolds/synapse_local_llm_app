@@ -433,6 +433,8 @@ private fun RemoteCachedMessage.toEntity(cachedAt: Instant): RemoteMessageCacheE
         serverCreatedAtEpochMillis = serverCreatedAt?.toEpochMilli(),
         failureReason = failureReason,
         cachedAtEpochMillis = cachedAt.toEpochMilli(),
+        aiParticipantId = aiParticipantId,
+        aiProvenance = aiProvenance?.name,
     )
 
 private fun RemoteCachedMessage.toSearchEntity(): RemoteMessageSearchEntity? {
@@ -467,6 +469,8 @@ private fun RemoteMessageCacheEntity.toDomain(): RemoteCachedMessage =
         clientCreatedAt = Instant.ofEpochMilli(clientCreatedAtEpochMillis),
         serverCreatedAt = serverCreatedAtEpochMillis?.let(Instant::ofEpochMilli),
         failureReason = failureReason,
+        aiParticipantId = aiParticipantId,
+        aiProvenance = aiProvenance?.let(app.synapse.localllm.domain.remote.RemoteAiProvenance::valueOf),
     )
 
 private fun RemoteMessageOutboxOperation.toEntity(): RemoteMessageOutboxEntity =

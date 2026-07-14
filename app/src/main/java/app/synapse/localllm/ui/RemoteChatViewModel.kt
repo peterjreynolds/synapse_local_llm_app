@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.application.RemoteChatSessionSynchronizer
+import app.synapse.localllm.application.RemoteLocalAiHostStatus
+import app.synapse.localllm.application.RemoteLocalAiResponseHost
 import app.synapse.localllm.application.RemoteRoomVisibilityTracker
 import app.synapse.localllm.di.SynapseApplicationGraph
 import app.synapse.localllm.domain.ids.SynapseIdFactory
@@ -14,6 +16,7 @@ import app.synapse.localllm.domain.remote.LoadRemoteMessagesPageCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAiParticipantGateway
 import app.synapse.localllm.domain.remote.RemoteAttachmentGateway
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
@@ -45,6 +48,7 @@ import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
 import app.synapse.localllm.domain.remote.SearchRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteProfileCommand
+import app.synapse.localllm.domain.remote.UpdateRemoteRoomAiConfigurationCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteRoomPreferencesCommand
 import app.synapse.localllm.domain.remote.UploadRemoteAvatarCommand
 import app.synapse.localllm.domain.time.SynapseClock
@@ -73,10 +77,12 @@ class RemoteChatViewModel(
     private val attachmentGateway: RemoteAttachmentGateway,
     private val directoryGateway: RemoteDirectoryGateway,
     private val conversationGateway: RemoteConversationGateway,
+    private val remoteAiParticipantGateway: RemoteAiParticipantGateway,
     private val deviceRegistrationGateway: RemoteDeviceRegistrationGateway,
     private val cacheRepository: RemoteChatCacheRepository,
     private val sessionSynchronizer: RemoteChatSessionSynchronizer,
     private val roomVisibilityTracker: RemoteRoomVisibilityTracker,
+    private val remoteLocalAiResponseHost: RemoteLocalAiResponseHost,
     private val voiceNoteRecorder: RemoteVoiceNoteRecorder,
     private val idFactory: SynapseIdFactory,
     private val clock: SynapseClock,
@@ -89,6 +95,7 @@ class RemoteChatViewModel(
     private var draftSaveJob: Job? = null
     private var readAcknowledgementJob: Job? = null
     private var messageSearchJob: Job? = null
+    private var roomAiConfigurationJob: Job? = null
     private var typingHeartbeatJob: Job? = null
     private var typingRoomId: RemoteRoomId? = null
     private val attachmentTransferController = RemoteAttachmentTransferController(
@@ -223,6 +230,7 @@ class RemoteChatViewModel(
             stopTyping(previousRoomId)
             draftSaveJob?.cancel()
             readAcknowledgementJob?.cancel()
+            roomAiConfigurationJob?.cancel()
         }
         selectedRoomId.value = roomId
         roomVisibilityTracker.setSelectedRoom(roomId)
@@ -237,10 +245,12 @@ class RemoteChatViewModel(
                 typingParticipantUids = emptyList(),
                 hasReachedMessageStart = false,
                 messageToRevealId = null,
+                roomAiConfiguration = null,
                 notice = null,
             )
         }
         roomId?.let(::markSelectedRoomRead)
+        roomId?.let(::loadRoomAiConfiguration)
     }
 
     fun openNotificationRoom(roomId: RemoteRoomId?) {
@@ -305,6 +315,46 @@ class RemoteChatViewModel(
             val savedPreferences = conversationGateway.updateNotificationPreferences(accountUid, preferences)
             mutableUiState.update { state -> state.copy(notificationPreferences = savedPreferences) }
         }
+
+    fun updateRoomAiConfiguration(
+        localAiEnabled: Boolean,
+        localAiAutoResponse: Boolean,
+    ) = launchAction(successNotice = if (localAiEnabled) "Synapse AI participant updated." else "Synapse AI removed.") {
+        val state = mutableUiState.value
+        val account = requireSignedInAccount()
+        val roomId = state.selectedRoomId ?: throw RemoteChatException("Select a conversation first.")
+        val designatedDeviceId = state.roomAiConfiguration
+            ?.takeIf { configuration -> configuration.localAiHostUid == account.accountUid }
+            ?.localAiHostDeviceId
+            ?: state.currentDeviceId
+        if (localAiEnabled && designatedDeviceId == null) {
+            throw RemoteChatException("Register this device for notifications before making it the local AI host.")
+        }
+        val configuration = remoteAiParticipantGateway.updateRoomConfiguration(
+            UpdateRemoteRoomAiConfigurationCommand(
+                accountUid = account.accountUid,
+                roomId = roomId,
+                localAiEnabled = localAiEnabled,
+                localAiAutoResponse = localAiEnabled && localAiAutoResponse,
+                localAiHostDeviceId = if (localAiEnabled) designatedDeviceId else null,
+            ),
+        )
+        if (selectedRoomId.value == roomId) {
+            mutableUiState.update { current -> current.copy(roomAiConfiguration = configuration) }
+        }
+    }
+
+    fun insertRemoteSynapseMention() {
+        if (mutableUiState.value.roomAiConfiguration?.localAiEnabled != true) {
+            publishFailureMessage("Add Synapse to this conversation before mentioning it.")
+            return
+        }
+        updateComposerText(
+            mutableUiState.value.composerText
+                .takeIf { text -> text.trimStart().startsWith("@Synapse", ignoreCase = true) }
+                ?: "@Synapse ${mutableUiState.value.composerText.trimStart()}",
+        )
+    }
 
     fun sendMessage(body: String) = launchAction {
         val normalizedBody = body.trim()
@@ -695,8 +745,25 @@ class RemoteChatViewModel(
                 launchStartupMutation("Could not update online presence.") {
                     directoryGateway.updatePresence(account.accountUid, online = true)
                 }
-                launchStartupMutation("Could not enable notifications for this device.") {
-                    deviceRegistrationGateway.registerCurrentDevice(account.accountUid)
+                launch {
+                    try {
+                        val registration = deviceRegistrationGateway.registerCurrentDevice(account.accountUid)
+                        mutableUiState.update { state -> state.copy(currentDeviceId = registration.deviceId) }
+                        remoteLocalAiResponseHost.synchronize(
+                            accountUid = account.accountUid,
+                            deviceId = registration.deviceId,
+                            reportStatus = { status ->
+                                mutableUiState.update { state -> state.copy(localAiHostStatus = status) }
+                            },
+                        )
+                    } catch (exception: CancellationException) {
+                        throw exception
+                    } catch (exception: Exception) {
+                        publishFailureMessage(
+                            (exception as? RemoteChatException)?.userMessage
+                                ?: "Could not enable notifications or phone-local AI hosting for this device.",
+                        )
+                    }
                 }
                 launch {
                     try {
@@ -716,6 +783,7 @@ class RemoteChatViewModel(
             stopTyping(selectedRoomId.value)
             draftSaveJob?.cancel()
             messageSearchJob?.cancel()
+            roomAiConfigurationJob?.cancel()
             readAcknowledgementJob?.cancel()
             cacheRepository.clearActiveAccount()
             selectedRoomId.value = null
@@ -736,6 +804,9 @@ class RemoteChatViewModel(
                     messageSearchQuery = "",
                     messageSearchResults = emptyList(),
                     notificationPreferences = RemoteNotificationPreferences(),
+                    currentDeviceId = null,
+                    roomAiConfiguration = null,
+                    localAiHostStatus = RemoteLocalAiHostStatus.Idle,
                     isActionRunning = false,
                 )
             }
@@ -772,6 +843,39 @@ class RemoteChatViewModel(
             throw exception
         } catch (exception: Exception) {
             publishFailureMessage((exception as? RemoteChatException)?.userMessage ?: fallbackMessage)
+        }
+    }
+
+    private fun loadRoomAiConfiguration(roomId: RemoteRoomId) {
+        val accountUid = mutableUiState.value.account?.accountUid ?: return
+        roomAiConfigurationJob?.cancel()
+        roomAiConfigurationJob = viewModelScope.launch {
+            var reportedUnavailable = false
+            while (selectedRoomId.value == roomId) {
+                try {
+                    val configuration = remoteAiParticipantGateway.getRoomConfiguration(accountUid, roomId)
+                    if (selectedRoomId.value == roomId) {
+                        mutableUiState.update { state -> state.copy(roomAiConfiguration = configuration) }
+                    }
+                    reportedUnavailable = false
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    mutableUiState.update { state ->
+                        state.copy(
+                            roomAiConfiguration = state.roomAiConfiguration?.copy(localAiHostAvailable = false),
+                        )
+                    }
+                    if (!reportedUnavailable) {
+                        publishFailureMessage(
+                            (exception as? RemoteChatException)?.userMessage
+                                ?: "Could not refresh this conversation's AI participant status.",
+                        )
+                        reportedUnavailable = true
+                    }
+                }
+                delay(ROOM_AI_CONFIGURATION_REFRESH_MILLIS)
+            }
         }
     }
 
@@ -937,6 +1041,7 @@ class RemoteChatViewModel(
         const val DRAFT_SAVE_DEBOUNCE_MILLIS = 300L
         const val TYPING_HEARTBEAT_MILLIS = 5_000L
         const val REMOTE_LOGOUT_CLEANUP_TIMEOUT_MILLIS = 10_000L
+        private const val ROOM_AI_CONFIGURATION_REFRESH_MILLIS = 60_000L
     }
 }
 
@@ -956,10 +1061,12 @@ class RemoteChatViewModelFactory(
                     attachmentGateway = graph.remoteAttachmentGateway,
                     directoryGateway = graph.remoteDirectoryGateway,
                     conversationGateway = graph.remoteConversationGateway,
+                    remoteAiParticipantGateway = graph.remoteAiParticipantGateway,
                     deviceRegistrationGateway = graph.remoteDeviceRegistrationGateway,
                     cacheRepository = graph.remoteChatCacheRepository,
                     sessionSynchronizer = graph.remoteChatSessionSynchronizer,
                     roomVisibilityTracker = graph.remoteRoomVisibilityTracker,
+                    remoteLocalAiResponseHost = graph.remoteLocalAiResponseCoordinator,
                     voiceNoteRecorder = graph.remoteVoiceNoteRecorder,
                     idFactory = graph.idFactory,
                     clock = graph.clock,

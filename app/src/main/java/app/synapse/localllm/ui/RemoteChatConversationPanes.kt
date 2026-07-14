@@ -106,6 +106,8 @@ internal fun RemoteChatsPane(
             onLoadOlder = viewModel::loadOlderMessages,
             onJumpToMessage = viewModel::jumpToMessage,
             onMessageRevealed = viewModel::consumeMessageReveal,
+            onLocalAiConfigurationChanged = viewModel::updateRoomAiConfiguration,
+            onMentionSynapse = viewModel::insertRemoteSynapseMention,
             accountState = accountState,
             groupState = groupState,
             groupViewModel = groupViewModel,
