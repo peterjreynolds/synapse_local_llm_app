@@ -8,6 +8,8 @@ evidence-backed memory stay in app-local storage.
 
 The active product roadmap is tracked in
 [`docs/canonical-master-plan.md`](docs/canonical-master-plan.md).
+The remote security, App Check, deletion, retention, and operations boundary is
+recorded in [`docs/security-and-operations.md`](docs/security-and-operations.md).
 
 ## Local Rooms And Members
 

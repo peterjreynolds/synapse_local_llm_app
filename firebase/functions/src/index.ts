@@ -130,7 +130,6 @@ interface DeviceDocument {
 
 function requireActiveProfile(
   profile: ProfileDocument | undefined,
-  uid: string,
 ): asserts profile is ProfileDocument & {
   accountState: "ACTIVE";
   allowed: true;
@@ -146,7 +145,7 @@ function requireActiveProfile(
     (profile.role !== "OWNER" && profile.role !== "ADMIN" && profile.role !== "USER") ||
     typeof profile.username !== "string"
   ) {
-    throw new HttpsError("permission-denied", `Account ${uid} is not enabled for Synapse Chat.`);
+    throw new HttpsError("permission-denied", "The selected account is unavailable.");
   }
 }
 
@@ -159,8 +158,8 @@ export const openDirectRoom = onCall(
     let targetUid: string;
     try {
       targetUid = parseTargetUid(request.data);
-    } catch (error) {
-      throw new HttpsError("invalid-argument", (error as Error).message);
+    } catch {
+      throw new HttpsError("invalid-argument", "The selected account is invalid.");
     }
     if (targetUid === callerUid) {
       throw new HttpsError("invalid-argument", "A direct room requires another account.");
@@ -172,8 +171,8 @@ export const openDirectRoom = onCall(
     ]);
     const callerProfile = callerSnapshot.data() as ProfileDocument | undefined;
     const targetProfile = targetSnapshot.data() as ProfileDocument | undefined;
-    requireActiveProfile(callerProfile, callerUid);
-    requireActiveProfile(targetProfile, targetUid);
+    requireActiveProfile(callerProfile);
+    requireActiveProfile(targetProfile);
 
     const identity = buildDirectRoomIdentity(callerUid, targetUid);
     const roomReference = firestore.doc(`rooms/${identity.roomId}`);
@@ -259,7 +258,7 @@ export const markRoomRead = onCall(
     if (!profileSnapshot || !membershipSnapshot) {
       throw new HttpsError("internal", "Account authorization could not be resolved.");
     }
-    requireActiveProfile(profileSnapshot.data() as ProfileDocument | undefined, callerUid);
+    requireActiveProfile(profileSnapshot.data() as ProfileDocument | undefined);
     if (!membershipSnapshot.exists || membershipSnapshot.get("active") !== true) {
       throw new HttpsError("permission-denied", "The account is not an active room member.");
     }
