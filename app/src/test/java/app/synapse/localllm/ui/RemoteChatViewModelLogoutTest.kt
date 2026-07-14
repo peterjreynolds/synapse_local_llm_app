@@ -5,6 +5,8 @@ import app.synapse.localllm.application.RemoteChatSessionSynchronizer
 import app.synapse.localllm.application.RemoteRoomVisibilityTracker
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAccountRole
+import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
@@ -113,7 +115,13 @@ class RemoteChatViewModelLogoutTest {
     ): LogoutHarness {
         val mainDispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(mainDispatcher)
-        val authenticatedAccount = RemoteAuthenticatedAccount(ACCOUNT_UID, "peter")
+        val authenticatedAccount = RemoteAuthenticatedAccount(
+            accountUid = ACCOUNT_UID,
+            usernameNormalized = "peter",
+            role = RemoteAccountRole.OWNER,
+            state = RemoteAccountState.ACTIVE,
+            mustChangePassword = false,
+        )
         val authenticationState = MutableStateFlow<RemoteAuthenticationState>(
             RemoteAuthenticationState.SignedIn(authenticatedAccount),
         )

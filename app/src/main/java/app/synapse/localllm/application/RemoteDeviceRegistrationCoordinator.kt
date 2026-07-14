@@ -3,6 +3,7 @@ package app.synapse.localllm.application
 import app.synapse.localllm.domain.remote.RegisterRemoteDeviceInstallationCommand
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
+import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationReceipt
@@ -38,7 +39,7 @@ class RemoteDeviceRegistrationCoordinator(
     fun handleRefreshedInstallation(installationId: String) {
         val authenticationState = authenticationGateway.authenticationState.value
         val account = (authenticationState as? RemoteAuthenticationState.SignedIn)?.account
-        if (account == null) {
+        if (account?.state != RemoteAccountState.ACTIVE) {
             mutableStatus.value = RemoteDeviceRegistrationStatus.Idle
             return
         }

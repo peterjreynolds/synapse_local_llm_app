@@ -86,7 +86,7 @@ class FirebaseRemoteConversationGateway(
             }
 
             val registration = firestore.collection(ROOMS_COLLECTION)
-                .whereArrayContains("memberIds", accountUid.raw)
+                .whereArrayContains("activeMemberIds", accountUid.raw)
                 .orderBy("updatedAt", Query.Direction.DESCENDING)
                 .addSnapshotListener { snapshot, exception ->
                     if (exception != null) {

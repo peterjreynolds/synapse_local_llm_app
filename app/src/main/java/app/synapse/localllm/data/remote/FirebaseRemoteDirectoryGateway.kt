@@ -40,6 +40,8 @@ class FirebaseRemoteDirectoryGateway(
             requireAuthenticatedUid(accountUid)
             val registration = firestore.collection(PROFILES_COLLECTION)
                 .whereEqualTo("allowed", true)
+                .whereEqualTo("accountState", ACTIVE_ACCOUNT_STATE)
+                .whereEqualTo("directoryVisible", true)
                 .orderBy("usernameNormalized", Query.Direction.ASCENDING)
                 .addSnapshotListener { snapshot, exception ->
                     if (exception != null) {
@@ -151,7 +153,13 @@ class FirebaseRemoteDirectoryGateway(
             val displayName = document.getString("displayName") ?: return@mapNotNull null
             val bio = document.getString("bio") ?: return@mapNotNull null
             val updatedAt = document.getTimestamp("updatedAt") ?: return@mapNotNull null
-            if (username.isBlank() || displayName.isBlank() || document.getBoolean("allowed") != true) {
+            if (
+                username.isBlank() ||
+                displayName.isBlank() ||
+                document.getBoolean("allowed") != true ||
+                document.getString("accountState") != ACTIVE_ACCOUNT_STATE ||
+                document.getBoolean("directoryVisible") != true
+            ) {
                 return@mapNotNull null
             }
             RemoteCachedProfile(
@@ -169,6 +177,7 @@ class FirebaseRemoteDirectoryGateway(
         }
 
     private companion object {
+        const val ACTIVE_ACCOUNT_STATE = "ACTIVE"
         const val DISPLAY_NAME_LIMIT = 64
         const val PROFILE_BIO_LIMIT = 160
         const val PROFILES_COLLECTION = "profiles"

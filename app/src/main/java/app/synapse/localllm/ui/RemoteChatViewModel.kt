@@ -10,6 +10,7 @@ import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
@@ -21,6 +22,7 @@ import app.synapse.localllm.domain.remote.RemoteConversationGateway
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
 import app.synapse.localllm.domain.remote.RemoteDirectoryGateway
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
+import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
@@ -82,13 +84,37 @@ class RemoteChatViewModel(
         authenticationGateway.signIn(RemoteSignInCommand(username, password))
     }
 
+    fun registerWithInvite(
+        username: String,
+        displayName: String,
+        password: String,
+        invitationCode: String,
+    ) = launchAction {
+        authenticationGateway.registerWithInvite(
+            RemoteInviteRegistrationCommand(
+                username = username,
+                displayName = displayName,
+                password = password,
+                invitationCode = invitationCode,
+            ),
+        )
+    }
+
+    fun refreshAccountAccess() = launchAction {
+        authenticationGateway.refreshAccount()
+    }
+
     fun signOut() = launchAction {
-        val accountUid = requireSignedInAccount().accountUid
-        runCatching { directoryGateway.updatePresence(accountUid, online = false) }
+        val account = mutableUiState.value.account
+        if (account?.state != RemoteAccountState.ACTIVE) {
+            authenticationGateway.signOut()
+            return@launchAction
+        }
+        runCatching { directoryGateway.updatePresence(account.accountUid, online = false) }
         try {
             try {
                 withTimeout(remoteLogoutCleanupTimeoutMillis) {
-                    deviceRegistrationGateway.removeCurrentDevice(accountUid)
+                    deviceRegistrationGateway.removeCurrentDevice(account.accountUid)
                 }
             } catch (exception: TimeoutCancellationException) {
                 throw RemoteChatException(
@@ -212,10 +238,34 @@ class RemoteChatViewModel(
             authenticationGateway.authenticationState.collectLatest { authenticationState ->
                 when (authenticationState) {
                     RemoteAuthenticationState.SignedOut -> handleSignedOut()
-                    is RemoteAuthenticationState.SignedIn -> runSignedInSession(authenticationState.account)
+                    RemoteAuthenticationState.Resolving -> handleResolvingAuthentication()
+                    is RemoteAuthenticationState.InvalidSession ->
+                        handleInvalidSession(authenticationState)
+                    is RemoteAuthenticationState.SignedIn -> {
+                        if (authenticationState.account.state == RemoteAccountState.ACTIVE) {
+                            runSignedInSession(authenticationState.account)
+                        } else {
+                            runRestrictedAccountSession(authenticationState.account)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private suspend fun handleResolvingAuthentication() {
+        cacheRepository.clearActiveAccount()
+        mutableUiState.value = RemoteChatUiState(
+            authenticationState = RemoteAuthenticationState.Resolving,
+        )
+    }
+
+    private suspend fun handleInvalidSession(state: RemoteAuthenticationState.InvalidSession) {
+        cacheRepository.clearActiveAccount()
+        mutableUiState.value = RemoteChatUiState(
+            authenticationState = state,
+            notice = state.userMessage,
+        )
     }
 
     private suspend fun handleSignedOut() {
@@ -287,6 +337,26 @@ class RemoteChatViewModel(
         }
     }
 
+    private suspend fun runRestrictedAccountSession(account: RemoteAuthenticatedAccount): Nothing {
+        cacheRepository.clearActiveAccount()
+        selectedRoomId.value = null
+        roomVisibilityTracker.setSelectedRoom(null)
+        mutableUiState.value = RemoteChatUiState(
+            authenticationState = RemoteAuthenticationState.SignedIn(account),
+            account = account,
+        )
+        try {
+            awaitCancellation()
+        } finally {
+            mutableUiState.update { state ->
+                state.copy(
+                    account = null,
+                    isActionRunning = false,
+                )
+            }
+        }
+    }
+
     private fun kotlinx.coroutines.CoroutineScope.launchStartupMutation(
         fallbackMessage: String,
         mutation: suspend () -> Unit,
@@ -328,7 +398,9 @@ class RemoteChatViewModel(
     }
 
     private fun requireSignedInAccount(): RemoteAuthenticatedAccount =
-        mutableUiState.value.account ?: throw RemoteChatException("Sign in before using remote chat.")
+        mutableUiState.value.account
+            ?.takeIf { account -> account.state == RemoteAccountState.ACTIVE }
+            ?: throw RemoteChatException("An active account is required to use remote chat.")
 
     private fun openPendingNotificationRoomIfAvailable(rooms: List<RemoteCachedDirectRoom>) {
         val roomId = resolveAuthorizedNotificationRoom(pendingNotificationRoomId, rooms) ?: return

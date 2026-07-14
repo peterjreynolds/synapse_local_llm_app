@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
@@ -32,10 +34,12 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,7 +49,14 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import app.synapse.localllm.domain.remote.RemoteAccountState
+import app.synapse.localllm.domain.remote.RemoteAuthenticationState
+import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
+import app.synapse.localllm.domain.remote.validateRemoteInviteRegistrationCommand
 
 @Composable
 fun RemoteChatApp(
@@ -54,7 +65,23 @@ fun RemoteChatApp(
 ) {
     val state by remoteViewModel.uiState.collectAsStateWithLifecycle()
     var showLocalWhileSignedOut by rememberSaveable { mutableStateOf(false) }
-    if (state.account == null && showLocalWhileSignedOut) {
+    val authenticationState = state.authenticationState
+    val account = state.account
+    if (authenticationState == RemoteAuthenticationState.Resolving) {
+        RemoteAccountResolvingScreen()
+    } else if (authenticationState is RemoteAuthenticationState.InvalidSession) {
+        RemoteInvalidSessionScreen(
+            state = state,
+            onRefresh = remoteViewModel::refreshAccountAccess,
+            onSignOut = remoteViewModel::signOut,
+        )
+    } else if (account != null && account.state != RemoteAccountState.ACTIVE) {
+        RemoteRestrictedAccountScreen(
+            state = state,
+            onRefresh = remoteViewModel::refreshAccountAccess,
+            onSignOut = remoteViewModel::signOut,
+        )
+    } else if (state.account == null && showLocalWhileSignedOut) {
         SignedOutLocalApp(
             localViewModel = localViewModel,
             onBackToSignIn = { showLocalWhileSignedOut = false },
@@ -63,6 +90,7 @@ fun RemoteChatApp(
         RemoteLoginScreen(
             state = state,
             onSignIn = remoteViewModel::signIn,
+            onRegister = remoteViewModel::registerWithInvite,
             onOpenLocalAi = { showLocalWhileSignedOut = true },
         )
     } else {
@@ -78,13 +106,53 @@ fun RemoteChatApp(
 private fun RemoteLoginScreen(
     state: RemoteChatUiState,
     onSignIn: (String, String) -> Unit,
+    onRegister: (String, String, String, String) -> Unit,
     onOpenLocalAi: () -> Unit,
 ) {
+    var showRegistration by rememberSaveable { mutableStateOf(false) }
     var username by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var displayName by rememberSaveable { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var invitationCode by remember { mutableStateOf("") }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    ClearSensitiveInputsOnStop {
+        password = ""
+        confirmPassword = ""
+        invitationCode = ""
+    }
 
     fun submit() {
-        if (!state.isActionRunning) onSignIn(username, password)
+        if (state.isActionRunning) return
+        localError = null
+        if (!showRegistration) {
+            onSignIn(username, password)
+            return
+        }
+        if (password != confirmPassword) {
+            localError = "Passwords do not match."
+            return
+        }
+        val command = runCatching {
+            validateRemoteInviteRegistrationCommand(
+                RemoteInviteRegistrationCommand(
+                    username = username,
+                    displayName = displayName,
+                    password = password,
+                    invitationCode = invitationCode,
+                ),
+            )
+        }.getOrElse { failure ->
+            localError = failure.message ?: "Check the registration details."
+            return
+        }
+        onRegister(
+            command.username,
+            command.displayName,
+            command.password,
+            command.invitationCode,
+        )
     }
 
     Box(
@@ -94,7 +162,9 @@ private fun RemoteLoginScreen(
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
@@ -103,10 +173,28 @@ private fun RemoteLoginScreen(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Private internet chat for approved accounts. Local AI remains on this phone.",
+                text = if (showRegistration) {
+                    "Create a private-network account with an invitation. New accounts normally wait for owner approval."
+                } else {
+                    "Private internet chat for approved accounts. Local AI remains on this phone."
+                },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (showRegistration) {
+                OutlinedTextField(
+                    value = displayName,
+                    onValueChange = { value -> displayName = value },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Display name") },
+                    singleLine = true,
+                    enabled = !state.isActionRunning,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Next,
+                    ),
+                )
+            }
             OutlinedTextField(
                 value = username,
                 onValueChange = { value -> username = value },
@@ -133,6 +221,41 @@ private fun RemoteLoginScreen(
                 ),
                 keyboardActions = KeyboardActions(onDone = { submit() }),
             )
+            if (showRegistration) {
+                OutlinedTextField(
+                    value = confirmPassword,
+                    onValueChange = { value -> confirmPassword = value },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Confirm password") },
+                    singleLine = true,
+                    enabled = !state.isActionRunning,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Next,
+                    ),
+                )
+                OutlinedTextField(
+                    value = invitationCode,
+                    onValueChange = { value -> invitationCode = value },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Invitation code") },
+                    singleLine = true,
+                    enabled = !state.isActionRunning,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                )
+            }
+            localError?.let { notice ->
+                Text(
+                    text = notice,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+            }
             state.notice?.let { notice ->
                 Text(
                     text = notice,
@@ -151,8 +274,21 @@ private fun RemoteLoginScreen(
                         strokeWidth = 2.dp,
                     )
                 } else {
-                    Text("Sign in")
+                    Text(if (showRegistration) "Create account" else "Sign in")
                 }
+            }
+            OutlinedButton(
+                onClick = {
+                    showRegistration = !showRegistration
+                    password = ""
+                    confirmPassword = ""
+                    invitationCode = ""
+                    localError = null
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isActionRunning,
+            ) {
+                Text(if (showRegistration) "Back to sign in" else "Create account")
             }
             OutlinedButton(
                 onClick = onOpenLocalAi,
@@ -163,10 +299,123 @@ private fun RemoteLoginScreen(
                 Text(" Open Local AI without signing in")
             }
             Text(
-                text = "Accounts are provisioned by the app owner; passwords are never stored in the APK.",
+                text = "Passwords and invitation codes stay in memory only and are cleared when this screen closes or backgrounds.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun ClearSensitiveInputsOnStop(onClear: () -> Unit) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentClear by rememberUpdatedState(onClear)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) currentClear()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            currentClear()
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+}
+
+@Composable
+private fun RemoteAccountResolvingScreen() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Text(
+                text = "Checking account access…",
+                modifier = Modifier.padding(top = 16.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RemoteInvalidSessionScreen(
+    state: RemoteChatUiState,
+    onRefresh: () -> Unit,
+    onSignOut: () -> Unit,
+) {
+    RemoteAccountStatusScreen(
+        title = "Account access unavailable",
+        message = (state.authenticationState as? RemoteAuthenticationState.InvalidSession)
+            ?.userMessage
+            ?: "Synapse could not verify this account.",
+        state = state,
+        onRefresh = onRefresh,
+        onSignOut = onSignOut,
+    )
+}
+
+@Composable
+private fun RemoteRestrictedAccountScreen(
+    state: RemoteChatUiState,
+    onRefresh: () -> Unit,
+    onSignOut: () -> Unit,
+) {
+    val accountState = state.account?.state
+    val (title, message) = when (accountState) {
+        RemoteAccountState.PENDING_APPROVAL ->
+            "Approval pending" to "Your account was created and is waiting for owner approval."
+        RemoteAccountState.REJECTED ->
+            "Registration rejected" to "This account request was not approved."
+        RemoteAccountState.DISABLED ->
+            "Account disabled" to "This account cannot use remote chat."
+        else -> "Account unavailable" to "This account cannot use remote chat."
+    }
+    RemoteAccountStatusScreen(title, message, state, onRefresh, onSignOut)
+}
+
+@Composable
+private fun RemoteAccountStatusScreen(
+    title: String,
+    message: String,
+    state: RemoteChatUiState,
+    onRefresh: () -> Unit,
+    onSignOut: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(message, style = MaterialTheme.typography.bodyLarge)
+            state.account?.let { account ->
+                Text(
+                    text = "@${account.usernameNormalized}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            state.notice?.let { notice ->
+                Text(notice, color = MaterialTheme.colorScheme.error)
+            }
+            Button(
+                onClick = onRefresh,
+                enabled = !state.isActionRunning,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Check status")
+            }
+            OutlinedButton(
+                onClick = onSignOut,
+                enabled = !state.isActionRunning,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Sign out")
+            }
         }
     }
 }

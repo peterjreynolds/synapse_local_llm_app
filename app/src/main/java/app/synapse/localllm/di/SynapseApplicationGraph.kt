@@ -126,7 +126,11 @@ class SynapseApplicationGraph private constructor(context: Context) {
     private val firebaseMessaging = FirebaseMessaging.getInstance()
     private val firebaseStorage = FirebaseStorage.getInstance(firebaseApp)
 
-    val remoteAuthenticationGateway = FirebaseRemoteAuthenticationGateway(firebaseAuth)
+    val remoteAuthenticationGateway = FirebaseRemoteAuthenticationGateway(
+        firebaseAuth = firebaseAuth,
+        firebaseFunctions = firebaseFunctions,
+        applicationScope = applicationScope,
+    )
     val remoteDirectoryGateway =
         FirebaseRemoteDirectoryGateway(
             context = applicationContext,

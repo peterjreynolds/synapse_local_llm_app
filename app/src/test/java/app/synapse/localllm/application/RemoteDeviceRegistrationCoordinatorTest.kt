@@ -2,6 +2,8 @@ package app.synapse.localllm.application
 
 import app.synapse.localllm.domain.remote.RegisterRemoteDeviceInstallationCommand
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAccountRole
+import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
@@ -10,6 +12,7 @@ import app.synapse.localllm.domain.remote.RemoteDeviceMutation
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationReceipt
 import app.synapse.localllm.domain.remote.RemotePasswordChangeCommand
+import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
 import app.synapse.localllm.domain.remote.RemoteSignInCommand
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +29,7 @@ class RemoteDeviceRegistrationCoordinatorTest {
     fun refreshedInstallationIsRegisteredForSignedInAccount() = runTest {
         val authenticationGateway = RecordingAuthenticationGateway(
             RemoteAuthenticationState.SignedIn(
-                RemoteAuthenticatedAccount(PETER_ACCOUNT, "peter"),
+                activeAccount(PETER_ACCOUNT, "peter"),
             ),
         )
         val deviceGateway = RecordingDeviceRegistrationGateway()
@@ -63,12 +66,41 @@ class RemoteDeviceRegistrationCoordinatorTest {
         assertEquals(RemoteDeviceRegistrationStatus.Idle, coordinator.status.value)
     }
 
+    @Test
+    fun refreshedInstallationIsIgnoredWhileApprovalIsPending() = runTest {
+        val deviceGateway = RecordingDeviceRegistrationGateway()
+        val coordinator = RemoteDeviceRegistrationCoordinator(
+            authenticationGateway = RecordingAuthenticationGateway(
+                RemoteAuthenticationState.SignedIn(
+                    activeAccount(PETER_ACCOUNT, "peter").copy(
+                        state = RemoteAccountState.PENDING_APPROVAL,
+                    ),
+                ),
+            ),
+            deviceRegistrationGateway = deviceGateway,
+            applicationScope = this,
+        )
+
+        coordinator.handleRefreshedInstallation(FIREBASE_INSTALLATION_ID)
+        advanceUntilIdle()
+
+        assertNull(deviceGateway.registeredCommand)
+        assertEquals(RemoteDeviceRegistrationStatus.Idle, coordinator.status.value)
+    }
+
     private class RecordingAuthenticationGateway(
         initialState: RemoteAuthenticationState,
     ) : RemoteAuthenticationGateway {
         override val authenticationState: StateFlow<RemoteAuthenticationState> = MutableStateFlow(initialState)
 
         override suspend fun signIn(command: RemoteSignInCommand): RemoteAuthenticatedAccount =
+            error("Not used by this test.")
+
+        override suspend fun registerWithInvite(
+            command: RemoteInviteRegistrationCommand,
+        ): RemoteAuthenticatedAccount = error("Not used by this test.")
+
+        override suspend fun refreshAccount(): RemoteAuthenticatedAccount =
             error("Not used by this test.")
 
         override suspend fun changePassword(command: RemotePasswordChangeCommand) {
@@ -105,6 +137,14 @@ class RemoteDeviceRegistrationCoordinatorTest {
     }
 
     private companion object {
+        fun activeAccount(uid: RemoteAccountUid, username: String) = RemoteAuthenticatedAccount(
+            accountUid = uid,
+            usernameNormalized = username,
+            role = RemoteAccountRole.USER,
+            state = RemoteAccountState.ACTIVE,
+            mustChangePassword = false,
+        )
+
         val PETER_ACCOUNT = RemoteAccountUid("peter-uid")
         const val FIREBASE_INSTALLATION_ID = "firebase-installation-id"
     }
