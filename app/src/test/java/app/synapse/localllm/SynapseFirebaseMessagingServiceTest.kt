@@ -37,6 +37,22 @@ class SynapseFirebaseMessagingServiceTest {
     }
 
     @Test
+    fun notificationPayloadAcceptsServerShapedGroupRoom() {
+        val roomId = "group_${"b".repeat(32)}"
+
+        val payload = parseRemoteNotificationPayload(
+            mapOf(
+                "messageId" to "message-2",
+                "roomId" to roomId,
+                "senderUid" to "trish-uid",
+                "type" to "SYNAPSE_CHAT_MESSAGE",
+            ),
+        )
+
+        assertEquals(roomId, payload?.roomId?.raw)
+    }
+
+    @Test
     fun notificationPayloadRejectsWrongTypeOrInvalidRoom() {
         assertNull(
             parseRemoteNotificationPayload(

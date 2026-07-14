@@ -2,11 +2,6 @@ package app.synapse.localllm.domain.remote
 
 import kotlinx.coroutines.flow.Flow
 
-data class RemoteDirectRoomSnapshot(
-    val room: RemoteCachedDirectRoom,
-    val currentMembership: RemoteCachedMembership,
-)
-
 data class OpenRemoteDirectRoomCommand(
     val accountUid: RemoteAccountUid,
     val targetUid: RemoteProfileUid,
@@ -28,7 +23,7 @@ data class RemoteMessageSendReceipt(
 )
 
 interface RemoteConversationGateway {
-    fun observeDirectRooms(accountUid: RemoteAccountUid): Flow<List<RemoteDirectRoomSnapshot>>
+    fun observeRooms(accountUid: RemoteAccountUid): Flow<List<RemoteCachedRoom>>
 
     fun observeMessages(
         accountUid: RemoteAccountUid,

@@ -51,11 +51,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
-import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteProfileUid
+import app.synapse.localllm.domain.remote.RemoteRoomKind
 import coil3.compose.AsyncImage
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -65,13 +66,27 @@ import java.time.format.FormatStyle
 internal fun RemoteChatsPane(
     state: RemoteChatUiState,
     viewModel: RemoteChatViewModel,
+    accountState: RemoteAccountUiState,
+    groupState: RemoteGroupUiState,
+    groupViewModel: RemoteGroupViewModel,
 ) {
+    var showGroupCreation by rememberSaveable { mutableStateOf(false) }
     val selectedRoomId = state.selectedRoomId
+    LaunchedEffect(groupState.roomToOpen, groupState.roomToClose) {
+        groupState.roomToOpen?.let(viewModel::selectRoom)
+        if (groupState.roomToClose == selectedRoomId) viewModel.selectRoom(null)
+        if (groupState.roomToOpen != null || groupState.roomToClose != null) {
+            showGroupCreation = false
+            groupViewModel.consumeNavigation()
+        }
+    }
     if (selectedRoomId == null) {
         RemoteRoomList(
             rooms = state.rooms,
             profiles = state.profiles,
             onRoomSelected = { room -> viewModel.selectRoom(room.roomId) },
+            onCreateGroup = { showGroupCreation = true },
+            isActionRunning = groupState.isActionRunning,
         )
     } else {
         val room = state.rooms.firstOrNull { candidate -> candidate.roomId == selectedRoomId }
@@ -80,45 +95,82 @@ internal fun RemoteChatsPane(
             room = room,
             onBack = { viewModel.selectRoom(null) },
             onSend = viewModel::sendMessage,
+            accountState = accountState,
+            groupState = groupState,
+            groupViewModel = groupViewModel,
+        )
+    }
+    if (showGroupCreation) {
+        RemoteGroupCreateDialog(
+            profiles = state.profiles,
+            currentAccountUid = state.account?.accountUid?.raw,
+            blockedProfileUids = accountState.blockedProfileUids,
+            isActionRunning = groupState.isActionRunning,
+            onDismiss = { showGroupCreation = false },
+            onCreate = groupViewModel::createGroup,
         )
     }
 }
 
 @Composable
 private fun RemoteRoomList(
-    rooms: List<RemoteCachedDirectRoom>,
+    rooms: List<RemoteCachedRoom>,
     profiles: List<RemoteCachedProfile>,
-    onRoomSelected: (RemoteCachedDirectRoom) -> Unit,
+    onRoomSelected: (RemoteCachedRoom) -> Unit,
+    onCreateGroup: () -> Unit,
+    isActionRunning: Boolean,
 ) {
-    if (rooms.isEmpty()) {
-        EmptyRemotePane(
-            title = "No synced conversations yet",
-            detail = "Open People and choose an approved account to start a private chat.",
-        )
-        return
-    }
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        items(rooms, key = { room -> room.roomId.raw }) { room ->
+    Column(modifier = Modifier.fillMaxSize()) {
+        Button(
+            onClick = onCreateGroup,
+            enabled = !isActionRunning,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+        ) {
+            Text("New group")
+        }
+        if (rooms.isEmpty()) {
+            EmptyRemotePane(
+                title = "No synced conversations yet",
+                detail = "Start a private chat from People or create a group.",
+            )
+            return@Column
+        }
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(orderRemoteRoomsForList(rooms), key = { room -> room.roomId.raw }) { room ->
             val peer = profiles.firstOrNull { profile -> profile.profileUid == room.peerUid }
+            val displayName = if (room.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room.title
             ListItem(
                 headlineContent = {
-                    Text(peer?.displayName ?: room.title, fontWeight = FontWeight.SemiBold)
+                    Text(displayName, fontWeight = FontWeight.SemiBold)
                 },
                 supportingContent = {
-                    Text(room.latestMessagePreview ?: "Private synced conversation")
+                    Text(
+                        room.latestMessagePreview ?: if (room.kind == RemoteRoomKind.GROUP) {
+                            "Group conversation"
+                        } else {
+                            "Private synced conversation"
+                        },
+                    )
                 },
                 leadingContent = {
                     RemoteProfileAvatar(
-                        profile = peer,
-                        displayName = peer?.displayName ?: room.title,
+                        profile = if (room.kind == RemoteRoomKind.DIRECT) peer else null,
+                        displayName = displayName,
                     )
                 },
                 trailingContent = {
-                    if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
+                    Column(horizontalAlignment = Alignment.End) {
+                        if (room.isPinned) Text("Pinned", style = MaterialTheme.typography.labelSmall)
+                        if (room.isArchived) Text("Archived", style = MaterialTheme.typography.labelSmall)
+                        if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
+                    }
                 },
                 modifier = Modifier.clickable { onRoomSelected(room) },
             )
             HorizontalDivider()
+            }
         }
     }
 }
@@ -126,9 +178,12 @@ private fun RemoteRoomList(
 @Composable
 private fun RemoteMessageThread(
     state: RemoteChatUiState,
-    room: RemoteCachedDirectRoom?,
+    room: RemoteCachedRoom?,
     onBack: () -> Unit,
     onSend: (String) -> Unit,
+    accountState: RemoteAccountUiState,
+    groupState: RemoteGroupUiState,
+    groupViewModel: RemoteGroupViewModel,
 ) {
     var composerText by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf("") }
     var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
@@ -137,7 +192,13 @@ private fun RemoteMessageThread(
     val currentProfile = state.profiles.firstOrNull { profile ->
         profile.profileUid.raw == state.account?.accountUid?.raw
     }
-    val title = peer?.displayName ?: room?.title ?: "Private conversation"
+    val title = if (room?.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room?.title ?: "Private conversation"
+
+    LaunchedEffect(showRoomMembers, room?.roomId) {
+        if (showRoomMembers && room?.kind == RemoteRoomKind.GROUP) {
+            groupViewModel.loadGroupDetails(room.roomId)
+        }
+    }
 
     fun submit() {
         if (composerText.isNotBlank() && !state.isActionRunning) {
@@ -169,7 +230,7 @@ private fun RemoteMessageThread(
             Column {
                 Text(title, fontWeight = FontWeight.SemiBold)
                 Text(
-                    text = remotePresenceLabel(peer),
+                    text = if (room?.kind == RemoteRoomKind.GROUP) "Group conversation" else remotePresenceLabel(peer),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -184,11 +245,23 @@ private fun RemoteMessageThread(
         }
         HorizontalDivider()
         if (showRoomMembers) {
-            RemoteRoomMembers(
-                profiles = listOfNotNull(currentProfile, peer).distinctBy { profile -> profile.profileUid },
-                currentAccountUid = state.account?.accountUid?.raw,
-                modifier = Modifier.weight(1f),
-            )
+            if (room?.kind == RemoteRoomKind.GROUP) {
+                RemoteGroupDetailsPane(
+                    details = groupState.details?.takeIf { details -> details.roomId == room.roomId },
+                    profiles = state.profiles,
+                    blockedProfileUids = accountState.blockedProfileUids,
+                    isLoading = groupState.isLoading,
+                    isActionRunning = groupState.isActionRunning,
+                    viewModel = groupViewModel,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                RemoteRoomMembers(
+                    profiles = listOfNotNull(currentProfile, peer).distinctBy { profile -> profile.profileUid },
+                    currentAccountUid = state.account?.accountUid?.raw,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         } else if (state.messages.isEmpty()) {
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Text(
@@ -207,6 +280,13 @@ private fun RemoteMessageThread(
                     RemoteMessageBubble(
                         message = message,
                         isCurrentAccount = message.senderUid.raw == state.account?.accountUid?.raw,
+                        senderDisplayName = if (room?.kind == RemoteRoomKind.GROUP) {
+                            state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
+                                ?.displayName
+                                ?: "Group member"
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -248,6 +328,7 @@ private fun RemoteMessageThread(
 private fun RemoteMessageBubble(
     message: RemoteCachedMessage,
     isCurrentAccount: Boolean,
+    senderDisplayName: String?,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -263,6 +344,14 @@ private fun RemoteMessageBubble(
             modifier = Modifier.fillMaxWidth(0.82f),
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                if (!isCurrentAccount && senderDisplayName != null) {
+                    Text(
+                        senderDisplayName,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                }
                 Text(message.body)
                 if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
                     Spacer(Modifier.height(4.dp))
@@ -432,7 +521,7 @@ internal data class RemotePeoplePresentation(
 
 internal fun buildRemotePeoplePresentation(
     profiles: List<RemoteCachedProfile>,
-    rooms: List<RemoteCachedDirectRoom>,
+    rooms: List<RemoteCachedRoom>,
     currentAccountUid: String?,
     searchQuery: String,
 ): RemotePeoplePresentation {
@@ -453,7 +542,7 @@ internal fun buildRemotePeoplePresentation(
     }
     val profilesByUid = candidates.associateBy(RemoteCachedProfile::profileUid)
     val recentContacts = rooms
-        .sortedByDescending(RemoteCachedDirectRoom::remoteUpdatedAt)
+        .sortedByDescending(RemoteCachedRoom::remoteUpdatedAt)
         .mapNotNull { room -> profilesByUid[room.peerUid] }
         .distinctBy(RemoteCachedProfile::profileUid)
     val recentUids = recentContacts.mapTo(mutableSetOf(), RemoteCachedProfile::profileUid)
@@ -464,6 +553,13 @@ internal fun buildRemotePeoplePresentation(
             .sortedBy { profile -> profile.displayName.lowercase() },
     )
 }
+
+internal fun orderRemoteRoomsForList(rooms: List<RemoteCachedRoom>): List<RemoteCachedRoom> =
+    rooms.sortedWith(
+        compareByDescending<RemoteCachedRoom> { room -> room.isPinned }
+            .thenBy { room -> room.isArchived }
+            .thenByDescending { room -> room.remoteUpdatedAt },
+    )
 
 @Composable
 private fun RemotePeopleListItem(

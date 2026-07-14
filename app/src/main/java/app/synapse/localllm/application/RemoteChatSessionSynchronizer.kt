@@ -45,12 +45,11 @@ class RemoteChatSessionSynchronizer(
             }
         }
         launchBoundary("keep remote conversations synchronized", reportFailure) {
-            conversationGateway.observeDirectRooms(accountUid).collect { snapshots ->
+            conversationGateway.observeRooms(accountUid).collect { rooms ->
                 cacheRepository.cacheRooms(
                     CacheRemoteRoomsCommand(
                         accountUid = accountUid,
-                        rooms = snapshots.map { snapshot -> snapshot.room },
-                        memberships = snapshots.map { snapshot -> snapshot.currentMembership },
+                        rooms = rooms,
                     ),
                 )
             }

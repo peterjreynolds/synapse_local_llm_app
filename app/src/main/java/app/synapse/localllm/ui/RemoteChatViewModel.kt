@@ -14,7 +14,7 @@ import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
-import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteChatException
@@ -294,8 +294,13 @@ class RemoteChatViewModel(
                 launch { cacheRepository.observeProfiles().collect { profiles ->
                     mutableUiState.update { state -> state.copy(profiles = profiles) }
                 } }
-                launch { cacheRepository.observeDirectRooms().collect { rooms ->
+                launch { cacheRepository.observeRooms().collect { rooms ->
+                    val currentSelectedRoomId = selectedRoomId.value
+                    val selectedRoomWasRemoved = currentSelectedRoomId != null &&
+                        mutableUiState.value.rooms.any { room -> room.roomId == currentSelectedRoomId } &&
+                        rooms.none { room -> room.roomId == currentSelectedRoomId }
                     mutableUiState.update { state -> state.copy(rooms = rooms) }
+                    if (selectedRoomWasRemoved) selectRoom(null)
                     openPendingNotificationRoomIfAvailable(rooms)
                     rooms.firstOrNull { room ->
                         room.roomId == selectedRoomId.value && room.unreadCount > 0
@@ -406,7 +411,7 @@ class RemoteChatViewModel(
             ?.takeIf { account -> !account.mustChangePassword }
             ?: throw RemoteChatException("An active account is required to use remote chat.")
 
-    private fun openPendingNotificationRoomIfAvailable(rooms: List<RemoteCachedDirectRoom>) {
+    private fun openPendingNotificationRoomIfAvailable(rooms: List<RemoteCachedRoom>) {
         val roomId = resolveAuthorizedNotificationRoom(pendingNotificationRoomId, rooms) ?: return
         pendingNotificationRoomId = null
         selectRoom(roomId)
@@ -447,7 +452,7 @@ class RemoteChatViewModel(
 
 internal fun resolveAuthorizedNotificationRoom(
     pendingRoomId: RemoteRoomId?,
-    rooms: List<RemoteCachedDirectRoom>,
+    rooms: List<RemoteCachedRoom>,
 ): RemoteRoomId? = pendingRoomId?.takeIf { roomId -> rooms.any { room -> room.roomId == roomId } }
 
 class RemoteChatViewModelFactory(

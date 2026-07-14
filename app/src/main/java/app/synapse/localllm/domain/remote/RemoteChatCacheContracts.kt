@@ -25,6 +25,15 @@ value class RemoteRoomId(val raw: String) {
     }
 }
 
+fun isValidRemoteDirectRoomId(rawRoomId: String): Boolean =
+    REMOTE_DIRECT_ROOM_ID_PATTERN.matches(rawRoomId)
+
+fun isValidRemoteGroupRoomId(rawRoomId: String): Boolean =
+    REMOTE_GROUP_ROOM_ID_PATTERN.matches(rawRoomId)
+
+fun isValidRemoteConversationRoomId(rawRoomId: String): Boolean =
+    isValidRemoteDirectRoomId(rawRoomId) || isValidRemoteGroupRoomId(rawRoomId)
+
 @JvmInline
 value class RemoteMessageId(val raw: String) {
     init {
@@ -52,6 +61,17 @@ enum class RemoteOutboxState {
     COMPLETE,
 }
 
+enum class RemoteRoomKind {
+    DIRECT,
+    GROUP,
+}
+
+enum class RemoteRoomMemberRole {
+    OWNER,
+    ADMIN,
+    MEMBER,
+}
+
 data class RemoteCachedProfile(
     val accountUid: RemoteAccountUid,
     val profileUid: RemoteProfileUid,
@@ -65,27 +85,42 @@ data class RemoteCachedProfile(
     val remoteUpdatedAt: Instant,
 )
 
-data class RemoteCachedDirectRoom(
+data class RemoteCachedRoom(
     val accountUid: RemoteAccountUid,
     val roomId: RemoteRoomId,
-    val directKey: String,
-    val peerUid: RemoteProfileUid,
+    val kind: RemoteRoomKind,
+    val directKey: String?,
+    val peerUid: RemoteProfileUid?,
     val title: String,
+    val avatarObjectPath: String?,
     val unreadCount: Int,
     val latestMessagePreview: String?,
     val latestMessageSenderUid: RemoteProfileUid?,
-    val remoteUpdatedAt: Instant,
-)
-
-data class RemoteCachedMembership(
-    val accountUid: RemoteAccountUid,
-    val roomId: RemoteRoomId,
-    val memberUid: RemoteProfileUid,
-    val role: String,
-    val isActive: Boolean,
+    val currentMemberRole: RemoteRoomMemberRole,
+    val notificationsEnabled: Boolean,
+    val isMuted: Boolean,
+    val isArchived: Boolean,
+    val isPinned: Boolean,
     val joinedAt: Instant,
     val lastReadAt: Instant?,
-)
+    val remoteUpdatedAt: Instant,
+) {
+    init {
+        require(unreadCount >= 0) { "Remote room unread count cannot be negative." }
+        when (kind) {
+            RemoteRoomKind.DIRECT -> {
+                require(!directKey.isNullOrBlank()) { "Direct rooms require a direct key." }
+                require(peerUid != null) { "Direct rooms require a peer UID." }
+                require(avatarObjectPath == null) { "Direct rooms cannot own a group avatar." }
+            }
+
+            RemoteRoomKind.GROUP -> {
+                require(directKey == null) { "Group rooms cannot have a direct key." }
+                require(peerUid == null) { "Group rooms cannot have a direct peer." }
+            }
+        }
+    }
+}
 
 data class RemoteCachedMessage(
     val accountUid: RemoteAccountUid,
@@ -132,8 +167,7 @@ data class CacheRemoteProfilesCommand(
 
 data class CacheRemoteRoomsCommand(
     val accountUid: RemoteAccountUid,
-    val rooms: List<RemoteCachedDirectRoom>,
-    val memberships: List<RemoteCachedMembership>,
+    val rooms: List<RemoteCachedRoom>,
 )
 
 data class CacheRemoteMessagesCommand(
@@ -171,7 +205,7 @@ interface RemoteChatCacheRepository {
 
     fun observeProfiles(): Flow<List<RemoteCachedProfile>>
 
-    fun observeDirectRooms(): Flow<List<RemoteCachedDirectRoom>>
+    fun observeRooms(): Flow<List<RemoteCachedRoom>>
 
     fun observeMessages(roomId: RemoteRoomId): Flow<List<RemoteCachedMessage>>
 
@@ -202,3 +236,6 @@ interface RemoteChatCacheRepository {
         scopeId: String,
     ): RemoteSyncCursor?
 }
+
+private val REMOTE_DIRECT_ROOM_ID_PATTERN = Regex("^direct_[a-f0-9]{64}$")
+private val REMOTE_GROUP_ROOM_ID_PATTERN = Regex("^group_[a-f0-9]{32}$")

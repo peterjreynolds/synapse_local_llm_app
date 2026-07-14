@@ -11,10 +11,9 @@ import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
 import app.synapse.localllm.domain.remote.RemoteAccountSessionResource
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
-import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
-import app.synapse.localllm.domain.remote.RemoteCachedMembership
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
@@ -22,6 +21,8 @@ import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
 import app.synapse.localllm.domain.remote.RemoteOutboxState
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteRoomKind
+import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
@@ -92,15 +93,15 @@ class RoomRemoteChatCacheRepositoryTest {
         cacheRoom(TRISH_ACCOUNT, PETER_PROFILE)
 
         assertEquals(listOf("Peter"), repository.observeProfiles().first().map { profile -> profile.username })
-        assertEquals(PETER_PROFILE, repository.observeDirectRooms().first().single().peerUid)
+        assertEquals(PETER_PROFILE, repository.observeRooms().first().single().peerUid)
 
         repository.activateAccount(PETER_ACCOUNT)
         assertEquals(listOf("Trish"), repository.observeProfiles().first().map { profile -> profile.username })
-        assertEquals(TRISH_PROFILE, repository.observeDirectRooms().first().single().peerUid)
+        assertEquals(TRISH_PROFILE, repository.observeRooms().first().single().peerUid)
 
         repository.clearActiveAccount()
         assertTrue(repository.observeProfiles().first().isEmpty())
-        assertTrue(repository.observeDirectRooms().first().isEmpty())
+        assertTrue(repository.observeRooms().first().isEmpty())
 
         repository.activateAccount(TRISH_ACCOUNT)
         assertEquals(listOf("Peter"), repository.observeProfiles().first().map { profile -> profile.username })
@@ -146,6 +147,20 @@ class RoomRemoteChatCacheRepositoryTest {
     }
 
     @Test
+    fun authoritativeRoomRemovalCascadesCachedMessagesAndOutbox() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
+        repository.enqueueMessage(enqueueMessageCommand(PETER_ACCOUNT, "message-1", "idempotency-1"))
+
+        val receipt = repository.cacheRooms(CacheRemoteRoomsCommand(PETER_ACCOUNT, emptyList()))
+
+        assertEquals(1, receipt.affectedRows)
+        assertTrue(repository.observeRooms().first().isEmpty())
+        assertTrue(repository.observeMessages(ROOM_ID).first().isEmpty())
+        assertTrue(repository.observePendingOutbox().first().isEmpty())
+    }
+
+    @Test
     fun accountSwitchAndLogoutCancelRegisteredSessionResources() = runTest {
         val peterResource = RecordingSessionResource()
         val peterToken = sessionCoordinator.beginSession(PETER_ACCOUNT)
@@ -176,27 +191,25 @@ class RoomRemoteChatCacheRepositoryTest {
             CacheRemoteRoomsCommand(
                 accountUid = accountUid,
                 rooms = listOf(
-                    RemoteCachedDirectRoom(
+                    RemoteCachedRoom(
                         accountUid = accountUid,
                         roomId = ROOM_ID,
+                        kind = RemoteRoomKind.DIRECT,
                         directKey = "peter-uid:trish-uid",
                         peerUid = peerUid,
                         title = "Peter, Trish",
+                        avatarObjectPath = null,
                         unreadCount = 0,
                         latestMessagePreview = null,
                         latestMessageSenderUid = null,
-                        remoteUpdatedAt = FixedClock.now(),
-                    ),
-                ),
-                memberships = listOf(
-                    RemoteCachedMembership(
-                        accountUid = accountUid,
-                        roomId = ROOM_ID,
-                        memberUid = RemoteProfileUid(accountUid.raw),
-                        role = "MEMBER",
-                        isActive = true,
+                        currentMemberRole = RemoteRoomMemberRole.MEMBER,
+                        notificationsEnabled = true,
+                        isMuted = false,
+                        isArchived = false,
+                        isPinned = false,
                         joinedAt = FixedClock.now(),
                         lastReadAt = null,
+                        remoteUpdatedAt = FixedClock.now(),
                     ),
                 ),
             ),

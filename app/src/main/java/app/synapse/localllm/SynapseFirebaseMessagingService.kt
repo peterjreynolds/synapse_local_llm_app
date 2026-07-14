@@ -10,6 +10,7 @@ import androidx.core.app.NotificationManagerCompat
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.isValidRemoteConversationRoomId
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
@@ -44,7 +45,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
         val notification = NotificationCompat.Builder(this, REMOTE_CHAT_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle("Synapse Chat")
-            .setContentText("New private message")
+            .setContentText("New message")
             .setContentIntent(openRoomPendingIntent(payload.roomId))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
@@ -80,7 +81,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
                 "Synapse Chat messages",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Alerts for private Synapse Chat messages."
+                description = "Alerts for Synapse Chat messages."
             },
         )
     }
@@ -114,7 +115,7 @@ internal data class RemoteNotificationPayload(
 
 internal fun parseRemoteNotificationPayload(data: Map<String, String>): RemoteNotificationPayload? {
     if (data["type"] != REMOTE_CHAT_MESSAGE_TYPE) return null
-    val roomId = data["roomId"]?.takeIf(REMOTE_DIRECT_ROOM_PATTERN::matches) ?: return null
+    val roomId = data["roomId"]?.takeIf(::isValidRemoteConversationRoomId) ?: return null
     val messageId = data["messageId"]?.takeIf { value ->
         value.isNotBlank() && value.length <= MAXIMUM_REMOTE_NOTIFICATION_IDENTIFIER_LENGTH
     } ?: return null
@@ -131,4 +132,3 @@ internal fun parseRemoteNotificationPayload(data: Map<String, String>): RemoteNo
 const val EXTRA_REMOTE_ROOM_ID = "app.synapse.localllm.extra.REMOTE_ROOM_ID"
 private const val REMOTE_CHAT_MESSAGE_TYPE = "SYNAPSE_CHAT_MESSAGE"
 private const val MAXIMUM_REMOTE_NOTIFICATION_IDENTIFIER_LENGTH = 512
-private val REMOTE_DIRECT_ROOM_PATTERN = Regex("^direct_[a-f0-9]{64}$")

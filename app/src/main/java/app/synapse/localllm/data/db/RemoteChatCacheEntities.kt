@@ -28,7 +28,7 @@ data class RemoteProfileCacheEntity(
 )
 
 @Entity(
-    tableName = "remote_direct_room_cache",
+    tableName = "remote_room_cache",
     primaryKeys = ["accountUid", "remoteRoomId"],
     indices = [
         Index("accountUid"),
@@ -36,43 +36,25 @@ data class RemoteProfileCacheEntity(
         Index(value = ["accountUid", "remoteUpdatedAtEpochMillis"]),
     ],
 )
-data class RemoteDirectRoomCacheEntity(
+data class RemoteRoomCacheEntity(
     val accountUid: String,
     val remoteRoomId: String,
-    val directKey: String,
-    val peerUid: String,
+    val roomKind: String,
+    val directKey: String?,
+    val peerUid: String?,
     val title: String,
+    val avatarObjectPath: String?,
     val unreadCount: Int,
     val latestMessagePreview: String?,
     val latestMessageSenderUid: String?,
-    val remoteUpdatedAtEpochMillis: Long,
-    val cachedAtEpochMillis: Long,
-)
-
-@Entity(
-    tableName = "remote_room_membership_cache",
-    primaryKeys = ["accountUid", "remoteRoomId", "memberUid"],
-    foreignKeys = [
-        ForeignKey(
-            entity = RemoteDirectRoomCacheEntity::class,
-            parentColumns = ["accountUid", "remoteRoomId"],
-            childColumns = ["accountUid", "remoteRoomId"],
-            onDelete = ForeignKey.CASCADE,
-        ),
-    ],
-    indices = [
-        Index(value = ["accountUid", "remoteRoomId"]),
-        Index(value = ["accountUid", "memberUid"]),
-    ],
-)
-data class RemoteRoomMembershipCacheEntity(
-    val accountUid: String,
-    val remoteRoomId: String,
-    val memberUid: String,
-    val role: String,
-    val isActive: Boolean,
+    val currentMemberRole: String,
+    val notificationsEnabled: Boolean,
+    val isMuted: Boolean,
+    val isArchived: Boolean,
+    val isPinned: Boolean,
     val joinedAtEpochMillis: Long,
     val lastReadAtEpochMillis: Long?,
+    val remoteUpdatedAtEpochMillis: Long,
     val cachedAtEpochMillis: Long,
 )
 
@@ -81,7 +63,7 @@ data class RemoteRoomMembershipCacheEntity(
     primaryKeys = ["accountUid", "remoteRoomId", "remoteMessageId"],
     foreignKeys = [
         ForeignKey(
-            entity = RemoteDirectRoomCacheEntity::class,
+            entity = RemoteRoomCacheEntity::class,
             parentColumns = ["accountUid", "remoteRoomId"],
             childColumns = ["accountUid", "remoteRoomId"],
             onDelete = ForeignKey.CASCADE,
@@ -113,7 +95,7 @@ data class RemoteMessageCacheEntity(
     primaryKeys = ["accountUid", "operationId"],
     foreignKeys = [
         ForeignKey(
-            entity = RemoteDirectRoomCacheEntity::class,
+            entity = RemoteRoomCacheEntity::class,
             parentColumns = ["accountUid", "remoteRoomId"],
             childColumns = ["accountUid", "remoteRoomId"],
             onDelete = ForeignKey.CASCADE,

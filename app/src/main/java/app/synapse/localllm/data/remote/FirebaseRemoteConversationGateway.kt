@@ -4,19 +4,21 @@ import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomReceipt
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
 import app.synapse.localllm.domain.remote.RemoteAccountUid
-import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
-import app.synapse.localllm.domain.remote.RemoteCachedMembership
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteConversationGateway
-import app.synapse.localllm.domain.remote.RemoteDirectRoomSnapshot
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageSendReceipt
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteRoomKind
+import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
 import app.synapse.localllm.domain.remote.SendRemoteMessageCommand
+import app.synapse.localllm.domain.remote.isValidRemoteDirectRoomId
+import app.synapse.localllm.domain.remote.isValidRemoteGroupRoomId
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -38,7 +40,7 @@ class FirebaseRemoteConversationGateway(
     private val functions: FirebaseFunctions,
     private val sessionController: RemoteAccountSessionController,
 ) : RemoteConversationGateway {
-    override fun observeDirectRooms(accountUid: RemoteAccountUid): Flow<List<RemoteDirectRoomSnapshot>> =
+    override fun observeRooms(accountUid: RemoteAccountUid): Flow<List<RemoteCachedRoom>> =
         callbackFlow {
             val token = sessionController.requireActiveToken(accountUid)
             requireAuthenticatedUid(accountUid)
@@ -49,6 +51,9 @@ class FirebaseRemoteConversationGateway(
 
             fun emitRoomSnapshots() {
                 val rooms = synchronized(listenerLock) {
+                    if (roomDocuments.any { roomDocument -> roomDocument.id !in membershipDocuments }) {
+                        return
+                    }
                     roomDocuments.mapNotNull { roomDocument ->
                         membershipDocuments[roomDocument.id]?.let { membershipDocument ->
                             roomDocument.toRoomSnapshot(accountUid, membershipDocument)
@@ -171,6 +176,9 @@ class FirebaseRemoteConversationGateway(
                 ?: throw RemoteChatException("Firebase returned an invalid room receipt.")
             val roomId = resultMap["roomId"] as? String
                 ?: throw RemoteChatException("Firebase returned an invalid room identifier.")
+            if (!isValidRemoteDirectRoomId(roomId)) {
+                throw RemoteChatException("Firebase returned an invalid direct room identifier.")
+            }
             return OpenRemoteDirectRoomReceipt(command.accountUid, RemoteRoomId(roomId))
         } catch (exception: RemoteChatException) {
             throw exception
@@ -237,18 +245,36 @@ class FirebaseRemoteConversationGateway(
     private fun DocumentSnapshot.toRoomSnapshot(
         accountUid: RemoteAccountUid,
         membershipDocument: DocumentSnapshot,
-    ): RemoteDirectRoomSnapshot? {
-        if (getString("kind") != DIRECT_ROOM_KIND) return null
-        val memberIds = (get("memberIds") as? List<*>)
-            ?.filterIsInstance<String>()
-            ?.distinct()
+    ): RemoteCachedRoom? {
+        val roomKind = getString("kind")
+            ?.let { rawKind -> runCatching { RemoteRoomKind.valueOf(rawKind) }.getOrNull() }
             ?: return null
-        val peerUid = memberIds.singleOrNull { uid -> uid != accountUid.raw } ?: return null
-        val directKey = getString("directKey") ?: return null
-        val title = getString("title") ?: return null
+        if (
+            (roomKind == RemoteRoomKind.DIRECT && !isValidRemoteDirectRoomId(id)) ||
+            (roomKind == RemoteRoomKind.GROUP && !isValidRemoteGroupRoomId(id))
+        ) {
+            return null
+        }
+        val directIdentity = when (roomKind) {
+            RemoteRoomKind.DIRECT -> {
+                val memberIds = (get("memberIds") as? List<*>)
+                    ?.filterIsInstance<String>()
+                    ?.distinct()
+                    ?: return null
+                val peerUid = memberIds.singleOrNull { uid -> uid != accountUid.raw } ?: return null
+                (getString("directKey") ?: return null) to RemoteProfileUid(peerUid)
+            }
+
+            RemoteRoomKind.GROUP -> null to null
+        }
+        val title = getString("title")?.takeIf(String::isNotBlank) ?: return null
         val updatedAt = getTimestamp("updatedAt") ?: return null
         if (!membershipDocument.exists() || membershipDocument.getBoolean("active") != true) return null
         val joinedAt = membershipDocument.getTimestamp("joinedAt") ?: return null
+        val memberRole = membershipDocument.getString("role")
+            ?.let { rawRole -> runCatching { RemoteRoomMemberRole.valueOf(rawRole) }.getOrNull() }
+            ?: return null
+        if (roomKind == RemoteRoomKind.DIRECT && memberRole != RemoteRoomMemberRole.MEMBER) return null
         val latestMessage = get("latestMessage") as? Map<*, *>
         val latestBody = latestMessage?.get("body") as? String
         val latestSenderUid = latestMessage?.get("senderUid") as? String
@@ -256,27 +282,34 @@ class FirebaseRemoteConversationGateway(
             ?.coerceIn(0L, Int.MAX_VALUE.toLong())
             ?.toInt()
             ?: 0
-        return RemoteDirectRoomSnapshot(
-            room = RemoteCachedDirectRoom(
-                accountUid = accountUid,
-                roomId = RemoteRoomId(id),
-                directKey = directKey,
-                peerUid = RemoteProfileUid(peerUid),
-                title = title,
-                unreadCount = unreadCount,
-                latestMessagePreview = latestBody,
-                latestMessageSenderUid = latestSenderUid?.let(::RemoteProfileUid),
-                remoteUpdatedAt = updatedAt.toInstant(),
-            ),
-            currentMembership = RemoteCachedMembership(
-                accountUid = accountUid,
-                roomId = RemoteRoomId(id),
-                memberUid = RemoteProfileUid(accountUid.raw),
-                role = membershipDocument.getString("role") ?: MEMBER_ROLE,
-                isActive = true,
-                joinedAt = joinedAt.toInstant(),
-                lastReadAt = membershipDocument.getTimestamp("lastReadAt")?.toInstant(),
-            ),
+        val avatarObjectPathValue = get("avatarObjectPath")
+        if (roomKind == RemoteRoomKind.GROUP && avatarObjectPathValue != null && avatarObjectPathValue !is String) {
+            return null
+        }
+        val isMuted = membershipDocument.getBoolean("muted") ?: false
+        return RemoteCachedRoom(
+            accountUid = accountUid,
+            roomId = RemoteRoomId(id),
+            kind = roomKind,
+            directKey = directIdentity.first,
+            peerUid = directIdentity.second,
+            title = title,
+            avatarObjectPath = if (roomKind == RemoteRoomKind.GROUP) {
+                avatarObjectPathValue as? String
+            } else {
+                null
+            },
+            unreadCount = unreadCount,
+            latestMessagePreview = latestBody,
+            latestMessageSenderUid = latestSenderUid?.let(::RemoteProfileUid),
+            currentMemberRole = memberRole,
+            notificationsEnabled = !isMuted,
+            isMuted = isMuted,
+            isArchived = membershipDocument.getBoolean("archived") ?: false,
+            isPinned = membershipDocument.getBoolean("pinned") ?: false,
+            joinedAt = joinedAt.toInstant(),
+            lastReadAt = membershipDocument.getTimestamp("lastReadAt")?.toInstant(),
+            remoteUpdatedAt = updatedAt.toInstant(),
         )
     }
 
@@ -335,9 +368,7 @@ class FirebaseRemoteConversationGateway(
     }
 
     private companion object {
-        const val DIRECT_ROOM_KIND = "DIRECT"
         const val HUMAN_AUTHOR_KIND = "HUMAN"
-        const val MEMBER_ROLE = "MEMBER"
         const val MEMBERS_COLLECTION = "members"
         const val MESSAGES_COLLECTION = "messages"
         const val MESSAGE_BODY_LIMIT = 4_000

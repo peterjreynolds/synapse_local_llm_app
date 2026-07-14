@@ -13,6 +13,7 @@ import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
 import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_10_11
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
@@ -37,6 +38,7 @@ import app.synapse.localllm.data.remote.FirebaseRemoteAuthenticationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDirectoryGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteGroupGateway
 import app.synapse.localllm.data.remote.FirebaseRemotePrivacyGateway
 import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
 import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
@@ -116,6 +118,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_7_8,
         SYNAPSE_DATABASE_MIGRATION_8_9,
         SYNAPSE_DATABASE_MIGRATION_9_10,
+        SYNAPSE_DATABASE_MIGRATION_10_11,
     ).build()
 
     val remoteAccountSessionController = RemoteAccountSessionCoordinator()
@@ -148,6 +151,14 @@ class SynapseApplicationGraph private constructor(context: Context) {
             firebaseAuth = firebaseAuth,
             firestore = firestore,
             functions = firebaseFunctions,
+            sessionController = remoteAccountSessionController,
+        )
+    val remoteGroupGateway =
+        FirebaseRemoteGroupGateway(
+            context = applicationContext,
+            firebaseAuth = firebaseAuth,
+            functions = firebaseFunctions,
+            storage = firebaseStorage,
             sessionController = remoteAccountSessionController,
         )
     val remoteDeviceRegistrationGateway =

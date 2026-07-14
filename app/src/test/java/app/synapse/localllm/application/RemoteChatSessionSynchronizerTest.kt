@@ -9,12 +9,11 @@ import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomReceipt
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
 import app.synapse.localllm.domain.remote.RemoteCacheMutationReceipt
-import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteConversationGateway
-import app.synapse.localllm.domain.remote.RemoteDirectRoomSnapshot
 import app.synapse.localllm.domain.remote.RemoteDirectoryGateway
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
@@ -95,9 +94,9 @@ class RemoteChatSessionSynchronizerTest {
     private class RecordingConversationGateway : RemoteConversationGateway {
         val sentCommands = mutableListOf<SendRemoteMessageCommand>()
 
-        override fun observeDirectRooms(
+        override fun observeRooms(
             accountUid: RemoteAccountUid,
-        ): Flow<List<RemoteDirectRoomSnapshot>> = emptyFlow()
+        ): Flow<List<RemoteCachedRoom>> = emptyFlow()
 
         override fun observeMessages(
             accountUid: RemoteAccountUid,
@@ -135,7 +134,7 @@ class RemoteChatSessionSynchronizerTest {
 
         override fun observeProfiles(): Flow<List<RemoteCachedProfile>> = emptyFlow()
 
-        override fun observeDirectRooms(): Flow<List<RemoteCachedDirectRoom>> = emptyFlow()
+        override fun observeRooms(): Flow<List<RemoteCachedRoom>> = emptyFlow()
 
         override fun observeMessages(roomId: RemoteRoomId): Flow<List<RemoteCachedMessage>> = emptyFlow()
 

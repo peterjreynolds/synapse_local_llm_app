@@ -18,6 +18,16 @@ class RemoteNotificationNavigationCoordinatorTest {
     }
 
     @Test
+    fun validGroupRoomIsQueuedAsOneShotTrustedCommand() {
+        val coordinator = RemoteNotificationNavigationCoordinator()
+        val roomId = "group_${"b".repeat(32)}"
+
+        assertTrue(coordinator.queueRoom(roomId))
+        assertEquals(roomId, coordinator.consumeRoom()?.raw)
+        assertNull(coordinator.consumeRoom())
+    }
+
+    @Test
     fun malformedRoomNeverBecomesNavigationCommand() {
         val coordinator = RemoteNotificationNavigationCoordinator()
 

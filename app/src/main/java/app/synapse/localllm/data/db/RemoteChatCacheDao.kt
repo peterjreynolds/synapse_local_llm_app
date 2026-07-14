@@ -23,18 +23,29 @@ interface RemoteChatCacheDao {
 
     @Query(
         """
-        SELECT * FROM remote_direct_room_cache
+        SELECT * FROM remote_room_cache
         WHERE accountUid = :accountUid
         ORDER BY remoteUpdatedAtEpochMillis DESC, remoteRoomId ASC
         """,
     )
-    fun observeDirectRooms(accountUid: String): Flow<List<RemoteDirectRoomCacheEntity>>
+    fun observeRooms(accountUid: String): Flow<List<RemoteRoomCacheEntity>>
 
     @Upsert
-    suspend fun upsertDirectRooms(rooms: List<RemoteDirectRoomCacheEntity>)
+    suspend fun upsertRooms(rooms: List<RemoteRoomCacheEntity>)
 
-    @Upsert
-    suspend fun upsertMemberships(memberships: List<RemoteRoomMembershipCacheEntity>)
+    @Query("DELETE FROM remote_room_cache WHERE accountUid = :accountUid")
+    suspend fun deleteAllRooms(accountUid: String): Int
+
+    @Query(
+        """
+        DELETE FROM remote_room_cache
+        WHERE accountUid = :accountUid AND remoteRoomId NOT IN (:authorizedRoomIds)
+        """,
+    )
+    suspend fun deleteRoomsNotIn(
+        accountUid: String,
+        authorizedRoomIds: List<String>,
+    ): Int
 
     @Query(
         """

@@ -64,6 +64,7 @@ import app.synapse.localllm.domain.remote.validateRemoteInviteRegistrationComman
 fun RemoteChatApp(
     remoteViewModel: RemoteChatViewModel,
     remoteAccountViewModel: RemoteAccountViewModel,
+    remoteGroupViewModel: RemoteGroupViewModel,
     localViewModel: SynapseViewModel,
     ownerAdminViewModel: OwnerAdminViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
@@ -107,6 +108,7 @@ fun RemoteChatApp(
             state = state,
             remoteViewModel = remoteViewModel,
             remoteAccountViewModel = remoteAccountViewModel,
+            remoteGroupViewModel = remoteGroupViewModel,
             localViewModel = localViewModel,
             ownerAdminViewModel = ownerAdminViewModel,
             requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
@@ -574,12 +576,14 @@ private fun RemoteSignedInShell(
     state: RemoteChatUiState,
     remoteViewModel: RemoteChatViewModel,
     remoteAccountViewModel: RemoteAccountViewModel,
+    remoteGroupViewModel: RemoteGroupViewModel,
     localViewModel: SynapseViewModel,
     ownerAdminViewModel: OwnerAdminViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val localState by localViewModel.uiState.collectAsStateWithLifecycle()
     val remoteAccountState by remoteAccountViewModel.uiState.collectAsStateWithLifecycle()
+    val remoteGroupState by remoteGroupViewModel.uiState.collectAsStateWithLifecycle()
     var selectedSection by rememberSaveable { mutableStateOf(RemoteAppSection.CHATS) }
     val availableSections = availableRemoteAppSections(state.account?.role)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -600,6 +604,12 @@ private fun RemoteSignedInShell(
         remoteAccountState.notice?.let { notice ->
             snackbarHostState.showSnackbar(notice)
             remoteAccountViewModel.clearNotice()
+        }
+    }
+    LaunchedEffect(remoteGroupState.notice) {
+        remoteGroupState.notice?.let { notice ->
+            snackbarHostState.showSnackbar(notice)
+            remoteGroupViewModel.clearNotice()
         }
     }
 
@@ -645,7 +655,13 @@ private fun RemoteSignedInShell(
                 .padding(contentPadding),
         ) {
             when (selectedSection) {
-                RemoteAppSection.CHATS -> RemoteChatsPane(state, remoteViewModel)
+                RemoteAppSection.CHATS -> RemoteChatsPane(
+                    state = state,
+                    viewModel = remoteViewModel,
+                    accountState = remoteAccountState,
+                    groupState = remoteGroupState,
+                    groupViewModel = remoteGroupViewModel,
+                )
                 RemoteAppSection.PEOPLE -> RemotePeoplePane(
                     state = state,
                     accountState = remoteAccountState,

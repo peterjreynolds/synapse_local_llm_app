@@ -2,11 +2,10 @@ package app.synapse.localllm.data.remote
 
 import androidx.room.withTransaction
 import app.synapse.localllm.data.db.RemoteChatCacheDao
-import app.synapse.localllm.data.db.RemoteDirectRoomCacheEntity
 import app.synapse.localllm.data.db.RemoteMessageCacheEntity
 import app.synapse.localllm.data.db.RemoteMessageOutboxEntity
 import app.synapse.localllm.data.db.RemoteProfileCacheEntity
-import app.synapse.localllm.data.db.RemoteRoomMembershipCacheEntity
+import app.synapse.localllm.data.db.RemoteRoomCacheEntity
 import app.synapse.localllm.data.db.RemoteSyncCursorEntity
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
@@ -17,8 +16,7 @@ import app.synapse.localllm.domain.remote.RemoteAccountSessionController
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
 import app.synapse.localllm.domain.remote.RemoteCacheMutationReceipt
-import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
-import app.synapse.localllm.domain.remote.RemoteCachedMembership
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
@@ -29,6 +27,8 @@ import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
 import app.synapse.localllm.domain.remote.RemoteOutboxState
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteRoomKind
+import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
 import app.synapse.localllm.domain.remote.RemoteSyncCursor
 import app.synapse.localllm.domain.time.SynapseClock
 import java.time.Instant
@@ -74,13 +74,13 @@ class RoomRemoteChatCacheRepository(
             }
         }
 
-    override fun observeDirectRooms(): Flow<List<RemoteCachedDirectRoom>> =
+    override fun observeRooms(): Flow<List<RemoteCachedRoom>> =
         sessionController.activeSession.flatMapLatest { session ->
             if (session == null) {
                 flowOf(emptyList())
             } else {
-                remoteChatCacheDao.observeDirectRooms(session.accountUid.raw).map { rooms ->
-                    rooms.map(RemoteDirectRoomCacheEntity::toDomain)
+                remoteChatCacheDao.observeRooms(session.accountUid.raw).map { rooms ->
+                    rooms.map(RemoteRoomCacheEntity::toDomain)
                 }
             }
         }
@@ -121,20 +121,20 @@ class RoomRemoteChatCacheRepository(
         require(command.rooms.all { room -> room.accountUid == command.accountUid }) {
             "Every cached room must belong to the active account scope."
         }
-        require(command.memberships.all { membership -> membership.accountUid == command.accountUid }) {
-            "Every cached membership must belong to the active account scope."
-        }
         val cachedAt = clock.now()
-        database.withTransaction {
-            remoteChatCacheDao.upsertDirectRooms(command.rooms.map { room -> room.toEntity(cachedAt) })
-            remoteChatCacheDao.upsertMemberships(
-                command.memberships.map { membership -> membership.toEntity(cachedAt) },
-            )
+        val removedRooms = database.withTransaction {
+            remoteChatCacheDao.upsertRooms(command.rooms.map { room -> room.toEntity(cachedAt) })
+            val authorizedRoomIds = command.rooms.map { room -> room.roomId.raw }
+            if (authorizedRoomIds.isEmpty()) {
+                remoteChatCacheDao.deleteAllRooms(command.accountUid.raw)
+            } else {
+                remoteChatCacheDao.deleteRoomsNotIn(command.accountUid.raw, authorizedRoomIds)
+            }
         }
         return receipt(
             command.accountUid,
             RemoteCacheMutation.ROOMS_CACHED,
-            command.rooms.size + command.memberships.size,
+            command.rooms.size + removedRooms,
         )
     }
 
@@ -273,43 +273,49 @@ private fun RemoteProfileCacheEntity.toDomain(): RemoteCachedProfile =
         remoteUpdatedAt = Instant.ofEpochMilli(remoteUpdatedAtEpochMillis),
     )
 
-private fun RemoteCachedDirectRoom.toEntity(cachedAt: Instant): RemoteDirectRoomCacheEntity =
-    RemoteDirectRoomCacheEntity(
+private fun RemoteCachedRoom.toEntity(cachedAt: Instant): RemoteRoomCacheEntity =
+    RemoteRoomCacheEntity(
         accountUid = accountUid.raw,
         remoteRoomId = roomId.raw,
+        roomKind = kind.name,
         directKey = directKey,
-        peerUid = peerUid.raw,
+        peerUid = peerUid?.raw,
         title = title,
+        avatarObjectPath = avatarObjectPath,
         unreadCount = unreadCount,
         latestMessagePreview = latestMessagePreview,
         latestMessageSenderUid = latestMessageSenderUid?.raw,
+        currentMemberRole = currentMemberRole.name,
+        notificationsEnabled = notificationsEnabled,
+        isMuted = isMuted,
+        isArchived = isArchived,
+        isPinned = isPinned,
+        joinedAtEpochMillis = joinedAt.toEpochMilli(),
+        lastReadAtEpochMillis = lastReadAt?.toEpochMilli(),
         remoteUpdatedAtEpochMillis = remoteUpdatedAt.toEpochMilli(),
         cachedAtEpochMillis = cachedAt.toEpochMilli(),
     )
 
-private fun RemoteDirectRoomCacheEntity.toDomain(): RemoteCachedDirectRoom =
-    RemoteCachedDirectRoom(
+private fun RemoteRoomCacheEntity.toDomain(): RemoteCachedRoom =
+    RemoteCachedRoom(
         accountUid = RemoteAccountUid(accountUid),
         roomId = RemoteRoomId(remoteRoomId),
+        kind = RemoteRoomKind.valueOf(roomKind),
         directKey = directKey,
-        peerUid = RemoteProfileUid(peerUid),
+        peerUid = peerUid?.let(::RemoteProfileUid),
         title = title,
+        avatarObjectPath = avatarObjectPath,
         unreadCount = unreadCount,
         latestMessagePreview = latestMessagePreview,
         latestMessageSenderUid = latestMessageSenderUid?.let(::RemoteProfileUid),
+        currentMemberRole = RemoteRoomMemberRole.valueOf(currentMemberRole),
+        notificationsEnabled = notificationsEnabled,
+        isMuted = isMuted,
+        isArchived = isArchived,
+        isPinned = isPinned,
+        joinedAt = Instant.ofEpochMilli(joinedAtEpochMillis),
+        lastReadAt = lastReadAtEpochMillis?.let(Instant::ofEpochMilli),
         remoteUpdatedAt = Instant.ofEpochMilli(remoteUpdatedAtEpochMillis),
-    )
-
-private fun RemoteCachedMembership.toEntity(cachedAt: Instant): RemoteRoomMembershipCacheEntity =
-    RemoteRoomMembershipCacheEntity(
-        accountUid = accountUid.raw,
-        remoteRoomId = roomId.raw,
-        memberUid = memberUid.raw,
-        role = role,
-        isActive = isActive,
-        joinedAtEpochMillis = joinedAt.toEpochMilli(),
-        lastReadAtEpochMillis = lastReadAt?.toEpochMilli(),
-        cachedAtEpochMillis = cachedAt.toEpochMilli(),
     )
 
 private fun RemoteCachedMessage.toEntity(cachedAt: Instant): RemoteMessageCacheEntity =

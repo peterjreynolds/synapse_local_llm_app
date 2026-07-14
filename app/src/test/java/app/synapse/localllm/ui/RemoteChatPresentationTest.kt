@@ -1,10 +1,12 @@
 package app.synapse.localllm.ui
 
 import app.synapse.localllm.domain.remote.RemoteAccountUid
-import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteRoomKind
+import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
 import app.synapse.localllm.domain.update.AvailableAppUpdate
 import java.time.Instant
 import org.junit.Assert.assertEquals
@@ -75,6 +77,18 @@ class RemoteChatPresentationTest {
         assertEquals(listOf(trish), presentation.directory)
     }
 
+    @Test
+    fun roomListPrioritizesPinnedThenActiveBeforeArchived() {
+        val activeRoom = groupRoom("active", 'a', isPinned = false, isArchived = false)
+        val archivedRoom = groupRoom("archived", 'b', isPinned = false, isArchived = true)
+        val pinnedRoom = groupRoom("pinned", 'c', isPinned = true, isArchived = false)
+
+        assertEquals(
+            listOf(pinnedRoom, activeRoom, archivedRoom),
+            orderRemoteRoomsForList(listOf(archivedRoom, activeRoom, pinnedRoom)),
+        )
+    }
+
     private fun profile(
         isOnline: Boolean,
         lastSeenAt: Instant?,
@@ -104,16 +118,51 @@ class RemoteChatPresentationTest {
         remoteUpdatedAt = NOW,
     )
 
-    private fun room(peerUid: RemoteProfileUid, updatedAt: Instant) = RemoteCachedDirectRoom(
+    private fun room(peerUid: RemoteProfileUid, updatedAt: Instant) = RemoteCachedRoom(
         accountUid = RemoteAccountUid("peter-uid"),
         roomId = RemoteRoomId("room-${peerUid.raw}"),
+        kind = RemoteRoomKind.DIRECT,
         directKey = "peter-uid:${peerUid.raw}",
         peerUid = peerUid,
         title = peerUid.raw,
+        avatarObjectPath = null,
         unreadCount = 0,
         latestMessagePreview = null,
         latestMessageSenderUid = null,
+        currentMemberRole = RemoteRoomMemberRole.MEMBER,
+        notificationsEnabled = true,
+        isMuted = false,
+        isArchived = false,
+        isPinned = false,
+        joinedAt = updatedAt,
+        lastReadAt = null,
         remoteUpdatedAt = updatedAt,
+    )
+
+    private fun groupRoom(
+        title: String,
+        identifierCharacter: Char,
+        isPinned: Boolean,
+        isArchived: Boolean,
+    ) = RemoteCachedRoom(
+        accountUid = RemoteAccountUid("peter-uid"),
+        roomId = RemoteRoomId("group_${identifierCharacter.toString().repeat(32)}"),
+        kind = RemoteRoomKind.GROUP,
+        directKey = null,
+        peerUid = null,
+        title = title,
+        avatarObjectPath = null,
+        unreadCount = 0,
+        latestMessagePreview = null,
+        latestMessageSenderUid = null,
+        currentMemberRole = RemoteRoomMemberRole.MEMBER,
+        notificationsEnabled = true,
+        isMuted = false,
+        isArchived = isArchived,
+        isPinned = isPinned,
+        joinedAt = NOW,
+        lastReadAt = null,
+        remoteUpdatedAt = NOW,
     )
 
     private companion object {

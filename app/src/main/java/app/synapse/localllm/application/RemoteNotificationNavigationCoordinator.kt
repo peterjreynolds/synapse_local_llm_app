@@ -1,6 +1,7 @@
 package app.synapse.localllm.application
 
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.isValidRemoteConversationRoomId
 import java.util.concurrent.atomic.AtomicReference
 
 class RemoteNotificationNavigationCoordinator {
@@ -17,7 +18,5 @@ class RemoteNotificationNavigationCoordinator {
 
 internal fun parseRemoteNotificationRoomId(rawRoomId: String?): RemoteRoomId? =
     rawRoomId
-        ?.takeIf(REMOTE_DIRECT_ROOM_PATTERN::matches)
+        ?.takeIf(::isValidRemoteConversationRoomId)
         ?.let(::RemoteRoomId)
-
-private val REMOTE_DIRECT_ROOM_PATTERN = Regex("^direct_[a-f0-9]{64}$")

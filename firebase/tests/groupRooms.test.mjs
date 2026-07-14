@@ -92,6 +92,15 @@ function call(client, name) {
   return httpsCallable(client.functions, name);
 }
 
+async function waitForCondition(condition, timeoutMillis = 10_000) {
+  const deadline = Date.now() + timeoutMillis;
+  while (Date.now() < deadline) {
+    if (await condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail("Timed out waiting for the group notification authorization receipt.");
+}
+
 before(async () => {
   testEnvironment = await initializeTestEnvironment({
     firestore: {rules: fs.readFileSync(new URL("../firestore.rules", import.meta.url), "utf8")},
@@ -229,4 +238,43 @@ test("member preferences, role permissions, and deletion confirmation fail close
     call(trishClient, "getGroupRoomDetails")({roomId}),
     (error) => error.code === "functions/failed-precondition",
   );
+});
+
+test("group notification fan-out increments unread only for authorized unmuted members", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const josh = await seedActiveAccount("josh");
+  const peterClient = await signIn("peter", peter);
+  const trishClient = await signIn("trish", trish);
+  const created = await call(peterClient, "createGroupRoom")({
+    memberUids: [trish.uid, josh.uid],
+    title: "Notifications",
+  });
+  const roomId = created.data.roomId;
+  await call(trishClient, "updateGroupPreferences")({
+    archived: false,
+    muted: true,
+    pinned: false,
+    roomId,
+  });
+  await setDoc(doc(peterClient.firestore, "rooms", roomId, "messages", "notification-message"), {
+    authorKind: "HUMAN",
+    body: "Only unmuted members should receive this.",
+    clientCreatedAt: Timestamp.now(),
+    clientMessageId: "notification-message",
+    createdAt: serverTimestamp(),
+    deletedAt: null,
+    editedAt: null,
+    replyToMessageId: null,
+    senderUid: peter.uid,
+  });
+
+  await waitForCondition(async () => {
+    const joshMembership = await adminFirestore.doc(`rooms/${roomId}/members/${josh.uid}`).get();
+    return joshMembership.get("unreadCount") === 1;
+  });
+  const trishMembership = await adminFirestore.doc(`rooms/${roomId}/members/${trish.uid}`).get();
+  const joshMembership = await adminFirestore.doc(`rooms/${roomId}/members/${josh.uid}`).get();
+  assert.equal(trishMembership.get("unreadCount"), 0);
+  assert.equal(joshMembership.get("unreadCount"), 1);
 });

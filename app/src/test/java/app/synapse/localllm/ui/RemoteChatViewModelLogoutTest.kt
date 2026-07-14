@@ -137,7 +137,7 @@ class RemoteChatViewModelLogoutTest {
         }
         val cacheRepository = mockk<RemoteChatCacheRepository>(relaxed = true) {
             every { observeProfiles() } returns emptyFlow()
-            every { observeDirectRooms() } returns emptyFlow()
+            every { observeRooms() } returns emptyFlow()
             every { observeMessages(any()) } returns emptyFlow()
             every { observePendingOutbox() } returns emptyFlow()
         }
