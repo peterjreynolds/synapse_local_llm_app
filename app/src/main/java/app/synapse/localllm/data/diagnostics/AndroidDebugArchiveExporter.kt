@@ -2,7 +2,6 @@ package app.synapse.localllm.data.diagnostics
 
 import android.content.Context
 import android.content.res.Configuration
-import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Rect
 import android.net.Uri
@@ -17,6 +16,7 @@ import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.domain.storage.StorageHealthSnapshot
 import app.synapse.localllm.domain.time.SynapseClock
 import java.io.File
+import java.net.URI
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.zip.ZipEntry
@@ -36,13 +36,14 @@ class AndroidDebugArchiveExporter(
     ): DebugArchiveReceipt {
         val createdAt = clock.now()
         val archiveDirectory = File(applicationContext.cacheDir, "diagnostics")
-        archiveDirectory.mkdirs()
+        check(archiveDirectory.exists() || archiveDirectory.mkdirs()) {
+            "Debug archive directory could not be prepared."
+        }
         val archiveFile = File(
             archiveDirectory,
             "synapse-debug-${DateTimeFormatter.ISO_INSTANT.format(createdAt).sanitizeForFilename()}.zip",
         )
 
-        val appStateFiles = listAppStateFiles()
         val metadataEntries = listOf(
             DebugArchiveTextEntry("README.txt", buildReadme(createdAt)),
             DebugArchiveTextEntry(
@@ -54,19 +55,16 @@ class AndroidDebugArchiveExporter(
             DebugArchiveTextEntry("metadata/ui-state.txt", buildUiStateMetadata(uiSnapshot)),
             DebugArchiveTextEntry("metadata/model.txt", buildModelMetadata(settings)),
             DebugArchiveTextEntry("metadata/database-summary.txt", buildDatabaseSummary()),
-            DebugArchiveTextEntry("metadata/app-state-files.txt", buildAppStateFileManifest(appStateFiles)),
+            DebugArchiveTextEntry("metadata/app-state-summary.txt", buildAppStateSummary()),
         )
         val textEntries = metadataEntries + DebugArchiveTextEntry(
             "metadata/archive-manifest.txt",
-            buildArchiveManifest(metadataEntries, appStateFiles),
+            buildArchiveManifest(metadataEntries),
         )
 
         ZipOutputStream(archiveFile.outputStream().buffered()).use { archive ->
             textEntries.forEach { metadataEntry ->
                 archive.writeTextEntry(metadataEntry.path, metadataEntry.text)
-            }
-            appStateFiles.forEach { appStateFile ->
-                archive.writeFileEntry(appStateFile.entryName, appStateFile.file)
             }
         }
 
@@ -82,34 +80,17 @@ class AndroidDebugArchiveExporter(
         )
     }
 
-    private fun listAppStateFiles(): List<DebugArchiveFile> {
-        val databaseFiles = listOf(
-            applicationContext.getDatabasePath(DATABASE_NAME),
-            applicationContext.getDatabasePath("$DATABASE_NAME-wal"),
-            applicationContext.getDatabasePath("$DATABASE_NAME-shm"),
-        ).map { file -> DebugArchiveFile("database/${file.name}", file) }
-
-        val settingsFiles = File(applicationContext.filesDir, "datastore")
-            .listFiles()
-            .orEmpty()
-            .filter { file -> file.isFile }
-            .map { file -> DebugArchiveFile("datastore/${file.name}", file) }
-
-        return (databaseFiles + settingsFiles)
-            .filter { archiveFile -> archiveFile.file.isFile }
-    }
-
     private fun buildReadme(createdAt: Instant): String =
         """
-        Synapse Chat debug archive
+        Synapse Chat redacted debug archive
 
         Created at: $createdAt
 
-        This archive intentionally includes private app state: chats, memory database,
-        prompt configuration, settings, runtime metadata, UI state, device/window metrics,
-        database summaries, generation timing traces, and app-state file manifests.
+        This archive contains bounded operational metadata only. It excludes chat and memory
+        content, prompts and custom instructions, phone numbers and SMS content, account data,
+        credentials and tokens, absolute filesystem paths, raw Room/DataStore files, and model weights.
 
-        It intentionally excludes the imported GGUF model file.
+        Review this archive before sharing it. Operational metadata can still reveal app usage.
         """.trimIndent()
 
     private fun buildRuntimeMetadata(
@@ -119,24 +100,23 @@ class AndroidDebugArchiveExporter(
     ): String =
         buildString {
             appendLine("runtimeBackend=${settings.runtimeBackend}")
-            appendLine("baseUrl=${settings.baseUrl}")
-            appendLine("modelName=${settings.modelName}")
+            appendLine("endpointClass=${settings.baseUrl.toEndpointClass()}")
             appendLine("modelPromptProfile=${settings.modelPromptProfile}")
             appendLine("temperature=${settings.temperature}")
             appendLine("maxTokens=${settings.maxTokens}")
             appendLine("memoryWritesEnabled=${settings.memoryWritesEnabled}")
             appendLine("speechPlaybackEnabled=${settings.speechPlaybackEnabled}")
-            appendLine("runtimeStatus=$runtimeStatus")
-            appendLine("storageHealth=$storageHealthSnapshot")
-            appendLine()
-            appendLine("persona:")
-            appendLine(settings.persona)
-            appendLine()
-            appendLine("customInstructions:")
-            appendLine(settings.customInstructions)
-            appendLine()
-            appendLine("composedSystemPrompt:")
-            appendLine(settings.systemPrompt)
+            appendLine("smsAutoReplyEnabled=${settings.smsAutoReplyEnabled}")
+            appendLine("runtimeStatus=${runtimeStatus.toRedactedStatus()}")
+            if (storageHealthSnapshot == null) {
+                appendLine("storageHealthAvailable=false")
+            } else {
+                appendLine("storageHealthAvailable=true")
+                appendLine("storageHealthState=${storageHealthSnapshot.state}")
+                appendLine("availableBytes=${storageHealthSnapshot.availableBytes}")
+                appendLine("memoryDatabaseBytes=${storageHealthSnapshot.memoryDatabaseBytes}")
+                appendLine("attachmentCacheBytes=${storageHealthSnapshot.attachmentCacheBytes}")
+            }
         }
 
     private fun buildDeviceMetadata(): String =
@@ -147,12 +127,7 @@ class AndroidDebugArchiveExporter(
             appendLine("buildType=${BuildConfig.BUILD_TYPE}")
             appendLine("buildGitSha=${BuildConfig.SYNAPSE_BUILD_GIT_SHA}")
             appendLine("apkChannel=${BuildConfig.SYNAPSE_APK_CHANNEL}")
-            appendLine("device=${Build.MANUFACTURER} ${Build.MODEL}")
-            appendLine("brand=${Build.BRAND}")
-            appendLine("product=${Build.PRODUCT}")
-            appendLine("hardware=${Build.HARDWARE}")
             appendLine("sdk=${Build.VERSION.SDK_INT}")
-            appendLine("release=${Build.VERSION.RELEASE}")
             appendLine("supportedAbis=${Build.SUPPORTED_ABIS.joinToString()}")
         }
 
@@ -201,85 +176,73 @@ class AndroidDebugArchiveExporter(
         buildString {
             appendLine("activePanel=${uiSnapshot.activePanel}")
             appendLine("isRoomDrawerOpen=${uiSnapshot.isThreadDrawerOpen}")
-            appendLine("currentRoomId=${uiSnapshot.currentThreadId ?: "none"}")
-            appendLine("currentRoomTitle=${uiSnapshot.currentThreadTitle ?: "none"}")
+            appendLine("hasCurrentRoom=${uiSnapshot.currentThreadId != null}")
             appendLine("visibleRoomCount=${uiSnapshot.visibleThreadCount}")
             appendLine("visibleMessageCount=${uiSnapshot.visibleMessageCount}")
             appendLine("composerCharacterCount=${uiSnapshot.composerCharacterCount}")
             appendLine("pendingAttachmentCount=${uiSnapshot.pendingAttachmentCount}")
             appendLine("isSending=${uiSnapshot.isSending}")
             appendLine("isImportingModel=${uiSnapshot.isImportingModel}")
-            appendLine("lastNotice=${uiSnapshot.lastNotice ?: "none"}")
+            appendLine("hasNotice=${uiSnapshot.lastNotice != null}")
         }
 
-    private fun buildModelMetadata(settings: SynapseSettings): String =
-        buildString {
-            appendLine("displayName=${settings.embeddedModelDisplayName ?: "none"}")
+    private fun buildModelMetadata(settings: SynapseSettings): String {
+        val modelFile = settings.embeddedModelPath?.let(::File)
+        return buildString {
+            appendLine("configured=${settings.embeddedModelPath != null}")
             appendLine("promptProfile=${settings.modelPromptProfile}")
-            appendLine("byteCount=${settings.embeddedModelByteCount ?: "unknown"}")
-            appendLine("path=${settings.embeddedModelPath ?: "none"}")
-            val modelPath = settings.embeddedModelPath
-            if (modelPath != null) {
-                val modelFile = File(modelPath)
-                appendLine("exists=${modelFile.isFile}")
-                appendLine("actualByteCount=${modelFile.takeIf { file -> file.isFile }?.length() ?: "unknown"}")
-                appendLine("includedInArchive=false")
-            }
+            appendLine("declaredByteCount=${settings.embeddedModelByteCount ?: "unknown"}")
+            appendLine("exists=${modelFile?.isFile == true}")
+            appendLine("actualByteCount=${modelFile?.takeIf(File::isFile)?.length() ?: "unknown"}")
+            appendLine("includedInArchive=false")
         }
+    }
 
     private fun buildDatabaseSummary(): String {
         val databaseFile = applicationContext.getDatabasePath(DATABASE_NAME)
         if (!databaseFile.isFile) {
-            return "databasePresent=false\n"
+            return "databasePresent=false\ndatabaseSummaryAvailable=false\n"
         }
 
         return runCatching {
             SQLiteDatabase.openDatabase(databaseFile.path, null, SQLiteDatabase.OPEN_READONLY).use { database ->
                 buildString {
                     appendLine("databasePresent=true")
-                    appendLine("databasePath=${databaseFile.path}")
+                    appendLine("databaseSummaryAvailable=true")
                     appendLine("databaseBytes=${databaseFile.length()}")
-                    appendLine()
-                    appendSection("tableCounts", database.queryText(TABLE_COUNTS_SQL))
-                    appendSection("activeStreamingMessages", database.queryText(ACTIVE_STREAMING_MESSAGES_SQL))
-                    appendSection("recentRooms", database.queryText(RECENT_ROOMS_SQL))
-                    appendSection("recentRoomMembers", database.queryText(RECENT_ROOM_MEMBERS_SQL))
-                    appendSection("recentMessages", database.queryText(RECENT_MESSAGES_SQL))
-                    appendSection("smsSenderRooms", database.queryText(SMS_SENDER_ROOMS_SQL))
-                    appendSection("recentSmsAutoReplyReceipts", database.queryText(RECENT_SMS_RECEIPTS_SQL))
-                    appendSection("assistantGenerationTraces", database.queryText(GENERATION_TRACES_SQL))
-                    appendSection("recentLibraryArtifacts", database.queryText(RECENT_LIBRARY_ARTIFACTS_SQL))
-                    appendSection("recentMemoryVersions", database.queryText(RECENT_MEMORY_VERSIONS_SQL))
-                    appendSection("recentStorageHealth", database.queryText(RECENT_STORAGE_HEALTH_SQL))
-                    appendSection("recentMemoryWriteReceipts", database.queryText(RECENT_MEMORY_WRITES_SQL))
-                    appendSection("recentRetrievalReceipts", database.queryText(RECENT_RETRIEVAL_RECEIPTS_SQL))
-                    appendSection("recentRetrievedMemoryReceipts", database.queryText(RECENT_RETRIEVED_MEMORY_RECEIPTS_SQL))
+                    database.rawQuery(TABLE_COUNTS_SQL, null).use { cursor ->
+                        while (cursor.moveToNext()) {
+                            appendLine("table.${cursor.getString(0)}.rows=${cursor.getLong(1)}")
+                        }
+                    }
                 }
             }
-        }.getOrElse { exception ->
-            "databaseSummaryError=${exception::class.java.name}: ${exception.message}\n"
+        }.getOrElse {
+            "databasePresent=true\ndatabaseSummaryAvailable=false\ndatabaseBytes=${databaseFile.length()}\n"
         }
     }
 
-    private fun buildAppStateFileManifest(appStateFiles: List<DebugArchiveFile>): String =
-        buildString {
-            appendLine("dataDir=${applicationContext.dataDir.path}")
-            appendLine("filesDir=${applicationContext.filesDir.path}")
-            appendLine("cacheDir=${applicationContext.cacheDir.path}")
-            appendLine()
-            appStateFiles.forEach { appStateFile ->
-                appendLine(
-                    "${appStateFile.entryName} | " +
-                        "bytes=${appStateFile.file.length()} | " +
-                        "lastModified=${Instant.ofEpochMilli(appStateFile.file.lastModified())}",
-                )
-            }
-        }
+    private fun buildAppStateSummary(): String {
+        val databaseFiles = listOf(
+            applicationContext.getDatabasePath(DATABASE_NAME),
+            applicationContext.getDatabasePath("$DATABASE_NAME-wal"),
+            applicationContext.getDatabasePath("$DATABASE_NAME-shm"),
+        ).filter(File::isFile)
+        val settingsFiles = File(applicationContext.filesDir, "datastore")
+            .listFiles()
+            .orEmpty()
+            .filter(File::isFile)
 
-    private fun buildArchiveManifest(
-        metadataEntries: List<DebugArchiveTextEntry>,
-        appStateFiles: List<DebugArchiveFile>,
-    ): String =
+        return buildString {
+            appendLine("databaseFileCount=${databaseFiles.size}")
+            appendLine("databaseTotalBytes=${databaseFiles.sumOf(File::length)}")
+            appendLine("dataStoreFileCount=${settingsFiles.size}")
+            appendLine("dataStoreTotalBytes=${settingsFiles.sumOf(File::length)}")
+            appendLine("rawAppStateIncluded=false")
+        }
+    }
+
+    private fun buildArchiveManifest(metadataEntries: List<DebugArchiveTextEntry>): String =
         buildString {
             appendLine("metadataEntries:")
             metadataEntries.forEach { metadataEntry ->
@@ -287,51 +250,40 @@ class AndroidDebugArchiveExporter(
             }
             appendLine("metadata/archive-manifest.txt | bytes=this file is generated last")
             appendLine()
-            appendLine("appStateFiles:")
-            appStateFiles.forEach { appStateFile ->
-                appendLine("${appStateFile.entryName} | bytes=${appStateFile.file.length()}")
-            }
-            appendLine()
-            appendLine("excludedFiles:")
-            appendLine("GGUF model weights are intentionally excluded.")
+            appendLine("excludedContent:")
+            appendLine("raw Room and DataStore files")
+            appendLine("chat, memory, prompt, SMS, account, credential, token, and filesystem-path content")
+            appendLine("GGUF model weights")
         }
 
-    private fun StringBuilder.appendSection(title: String, body: String) {
-        appendLine("[$title]")
-        append(body.ifBlank { "(none)\n" })
-        if (!endsWith("\n")) {
-            appendLine()
+    private fun RuntimeStatus.toRedactedStatus(): String =
+        when (this) {
+            is RuntimeStatus.Ready -> "READY"
+            is RuntimeStatus.Starting -> "STARTING_${receipt.status}"
+            is RuntimeStatus.Unreachable -> "UNREACHABLE"
+            RuntimeStatus.Unknown -> "UNKNOWN"
         }
-        appendLine()
+
+    private fun String.toEndpointClass(): EndpointClass {
+        val uri = runCatching { URI(trim()) }.getOrNull() ?: return EndpointClass.INVALID
+        if (uri.scheme?.lowercase() !in setOf("http", "https")) return EndpointClass.INVALID
+        val host = uri.host?.lowercase() ?: return EndpointClass.INVALID
+        return when {
+            host == "localhost" || host == "::1" || host.startsWith("127.") -> EndpointClass.LOOPBACK
+            host.isPrivateNetworkHost() -> EndpointClass.PRIVATE_NETWORK
+            else -> EndpointClass.REMOTE_NETWORK
+        }
     }
 
-    private fun SQLiteDatabase.queryText(sql: String): String =
-        runCatching {
-            rawQuery(sql, null).use { cursor ->
-                if (!cursor.moveToFirst()) {
-                    return@use "(none)\n"
-                }
-                buildString {
-                    do {
-                        appendLine(
-                            cursor.columnNames.joinToString(separator = " | ") { columnName ->
-                                "$columnName=${cursor.readDebugColumn(columnName)}"
-                            },
-                        )
-                    } while (cursor.moveToNext())
-                }
-            }
-        }.getOrElse { exception ->
-            "queryError=${exception::class.java.name}: ${exception.message}\n"
+    private fun String.isPrivateNetworkHost(): Boolean {
+        if (startsWith("10.") || startsWith("192.168.") || startsWith("169.254.")) return true
+        if (startsWith("fc") || startsWith("fd") || startsWith("fe8") || startsWith("fe9") ||
+            startsWith("fea") || startsWith("feb")
+        ) {
+            return true
         }
-
-    private fun Cursor.readDebugColumn(columnName: String): String {
-        val columnIndex = getColumnIndex(columnName)
-        if (columnIndex < 0 || isNull(columnIndex)) return "null"
-        return getString(columnIndex)
-            .replace("\r", " ")
-            .replace("\n", " ")
-            .take(MAX_DATABASE_PREVIEW_CHARS)
+        val secondOctet = split('.').getOrNull(1)?.toIntOrNull()
+        return startsWith("172.") && secondOctet in 16..31
     }
 
     private fun Int.toOrientationLabel(): String =
@@ -351,23 +303,11 @@ class AndroidDebugArchiveExporter(
         closeEntry()
     }
 
-    private fun ZipOutputStream.writeFileEntry(path: String, file: File) {
-        putNextEntry(ZipEntry(path))
-        file.inputStream().buffered().use { input -> input.copyTo(this) }
-        closeEntry()
-    }
-
-    private fun String.sanitizeForFilename(): String =
-        replace(":", "-")
+    private fun String.sanitizeForFilename(): String = replace(":", "-")
 
     private data class DebugArchiveTextEntry(
         val path: String,
         val text: String,
-    )
-
-    private data class DebugArchiveFile(
-        val entryName: String,
-        val file: File,
     )
 
     private data class DebugWindowBounds(
@@ -375,9 +315,15 @@ class AndroidDebugArchiveExporter(
         val maximum: Rect?,
     )
 
+    private enum class EndpointClass {
+        LOOPBACK,
+        PRIVATE_NETWORK,
+        REMOTE_NETWORK,
+        INVALID,
+    }
+
     private companion object {
         const val DATABASE_NAME = "synapse.db"
-        const val MAX_DATABASE_PREVIEW_CHARS = 400
 
         val TABLE_COUNTS_SQL =
             """
@@ -400,155 +346,6 @@ class AndroidDebugArchiveExporter(
             UNION ALL SELECT 'storage_health_snapshots', COUNT(*) FROM storage_health_snapshots
             UNION ALL SELECT 'sms_sender_threads', COUNT(*) FROM sms_sender_threads
             UNION ALL SELECT 'sms_auto_reply_receipts', COUNT(*) FROM sms_auto_reply_receipts
-            """.trimIndent()
-
-        val ACTIVE_STREAMING_MESSAGES_SQL =
-            """
-            SELECT message.id, message.threadId AS roomId, message.role, message.deliveryState,
-                   author.authorParticipantId, participant.kind AS authorKind,
-                   participant.displayName AS authorDisplayName, length(message.body) AS bodyChars,
-                   message.createdAtEpochMillis, message.completedAtEpochMillis, message.failureReason
-            FROM chat_messages AS message
-            LEFT JOIN chat_message_authors AS author ON author.messageId = message.id
-            LEFT JOIN chat_participants AS participant ON participant.id = author.authorParticipantId
-            WHERE message.deliveryState = 'STREAMING'
-            ORDER BY message.createdAtEpochMillis DESC
-            LIMIT 40
-            """.trimIndent()
-
-        val RECENT_ROOMS_SQL =
-            """
-            SELECT id, title, roomKind, pinnedAtEpochMillis, archivedAtEpochMillis,
-                   titleEditedByUser, remoteId, revision, syncState,
-                   createdAtEpochMillis, updatedAtEpochMillis
-            FROM chat_threads
-            ORDER BY updatedAtEpochMillis DESC
-            LIMIT 40
-            """.trimIndent()
-
-        val RECENT_ROOM_MEMBERS_SQL =
-            """
-            SELECT membership.roomId, membership.participantId,
-                   participant.kind AS participantKind,
-                   participant.displayName AS participantDisplayName,
-                   membership.role, membership.canPost, membership.aiResponsePolicy,
-                   membership.joinedAtEpochMillis, membership.leftAtEpochMillis,
-                   membership.remoteId, membership.revision, membership.syncState
-            FROM room_memberships AS membership
-            LEFT JOIN chat_participants AS participant ON participant.id = membership.participantId
-            ORDER BY membership.joinedAtEpochMillis DESC
-            LIMIT 120
-            """.trimIndent()
-
-        val RECENT_MESSAGES_SQL =
-            """
-            SELECT message.id, message.threadId AS roomId, message.role, message.deliveryState,
-                   author.authorParticipantId, participant.kind AS authorKind,
-                   participant.displayName AS authorDisplayName, length(message.body) AS bodyChars,
-                   substr(replace(replace(message.body, char(10), ' '), char(13), ' '), 1, 220) AS bodyPreview,
-                   message.remoteId, message.revision, message.syncState,
-                   message.createdAtEpochMillis, message.completedAtEpochMillis, message.failureReason
-            FROM chat_messages AS message
-            LEFT JOIN chat_message_authors AS author ON author.messageId = message.id
-            LEFT JOIN chat_participants AS participant ON participant.id = author.authorParticipantId
-            ORDER BY message.createdAtEpochMillis DESC
-            LIMIT 80
-            """.trimIndent()
-
-        val SMS_SENDER_ROOMS_SQL =
-            """
-            SELECT senderAddress, threadId AS roomId, participantId,
-                   createdAtEpochMillis, updatedAtEpochMillis
-            FROM sms_sender_threads
-            ORDER BY updatedAtEpochMillis DESC
-            LIMIT 40
-            """.trimIndent()
-
-        val RECENT_SMS_RECEIPTS_SQL =
-            """
-            SELECT id, inboundMessageKey, senderAddress, inboundBodySha256,
-                   inboundCharacterCount, inboundReceivedAtEpochMillis,
-                   threadId AS roomId, userMessageId, assistantMessageId, state,
-                   replyBodySha256, replyCharacterCount, smsPartCount,
-                   queuedAtEpochMillis, decidedAtEpochMillis, failureReason
-            FROM sms_auto_reply_receipts
-            ORDER BY decidedAtEpochMillis DESC
-            LIMIT 40
-            """.trimIndent()
-
-        val GENERATION_TRACES_SQL =
-            """
-            SELECT id, assistantMessageId, backend, modelName,
-                   promptMessageCount, promptCharacterCount, retrievedMemoryCount,
-                   maxTokens, temperature, startedAtEpochMillis, completedAtEpochMillis,
-                   completedAtEpochMillis - startedAtEpochMillis AS durationMillis,
-                   firstRawTokenAtEpochMillis - startedAtEpochMillis AS firstRawTokenMillis,
-                   firstVisibleTokenAtEpochMillis - startedAtEpochMillis AS firstVisibleTokenMillis,
-                   rawTokenEvents, rawCharacterCount, visibleCharacterCount,
-                   filteredCharacterCount, stopReason, failureReason
-            FROM assistant_generation_traces
-            ORDER BY startedAtEpochMillis DESC
-            LIMIT 80
-            """.trimIndent()
-
-        val RECENT_LIBRARY_ARTIFACTS_SQL =
-            """
-            SELECT id, title, displayName, relativePath, mimeType, artifactKind,
-                   sourceKind, byteCount, sha256, catalogSummary, tagsCsv,
-                   createdAtEpochMillis, updatedAtEpochMillis
-            FROM library_artifacts
-            ORDER BY updatedAtEpochMillis DESC
-            LIMIT 40
-            """.trimIndent()
-
-        val RECENT_STORAGE_HEALTH_SQL =
-            """
-            SELECT state, checkedAtEpochMillis, availableBytes, memoryDatabaseBytes,
-                   attachmentCacheBytes, reason
-            FROM storage_health_snapshots
-            ORDER BY checkedAtEpochMillis DESC
-            LIMIT 20
-            """.trimIndent()
-
-        val RECENT_MEMORY_VERSIONS_SQL =
-            """
-            SELECT v.id, v.memoryObjectId, o.kind, o.status, o.claimKey, v.scope, v.domain,
-                   v.subject, v.predicate, v.valueText, v.writeIntent, v.sensitivity,
-                   v.durabilityScore, v.futureUsefulnessScore,
-                   substr(replace(replace(v.text, char(10), ' '), char(13), ' '), 1, 220) AS textPreview,
-                   substr(replace(replace(v.sourceQuote, char(10), ' '), char(13), ' '), 1, 220) AS sourceQuotePreview,
-                   v.confidence, v.surfacePolicy, v.keywordsCsv, v.createdAtEpochMillis
-            FROM memory_versions v
-            INNER JOIN memory_objects o ON o.id = v.memoryObjectId
-            ORDER BY v.createdAtEpochMillis DESC
-            LIMIT 80
-            """.trimIndent()
-
-        val RECENT_MEMORY_WRITES_SQL =
-            """
-            SELECT id, outcome, traceEventId, memoryObjectId, memoryVersionId,
-                   decidedAtEpochMillis, reason
-            FROM memory_write_receipts
-            ORDER BY decidedAtEpochMillis DESC
-            LIMIT 40
-            """.trimIndent()
-
-        val RECENT_RETRIEVAL_RECEIPTS_SQL =
-            """
-            SELECT id, retrievalIntent,
-                   substr(replace(replace(query, char(10), ' '), char(13), ' '), 1, 180) AS queryPreview,
-                   length(promptBlock) AS promptBlockChars,
-                   retrievedAtEpochMillis
-            FROM retrieval_receipts
-            ORDER BY retrievedAtEpochMillis DESC
-            LIMIT 40
-            """.trimIndent()
-
-        val RECENT_RETRIEVED_MEMORY_RECEIPTS_SQL =
-            """
-            SELECT retrievalReceiptId, memoryObjectId, memoryVersionId, reasonCodes, rankScore
-            FROM retrieved_memory_receipts
-            LIMIT 80
             """.trimIndent()
     }
 }

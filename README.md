@@ -215,8 +215,10 @@ Synapse pauses memory writes and keeps chat usable.
 ## Debug Archives
 
 Settings > Diagnostics > `Export Debug ZIP` creates a private troubleshooting
-archive that excludes GGUF model weights. It includes raw Room/DataStore state,
-including room/member/authorship rows, readable database summaries, generation
-timing traces, runtime/model metadata, UI state, window metrics, and app-state
-file manifests. AI routing returns an explicit decision reason, and generation
-diagnostics are created only when an AI response actually starts.
+archive with bounded app version, runtime state, storage health, UI counts,
+window metrics, and Room/DataStore aggregate counts. It excludes raw app state,
+chat and memory content, prompts, SMS and account data, credentials, tokens,
+private filesystem paths, and GGUF model weights. Review the archive before
+sharing it because aggregate usage metadata can still be sensitive. AI routing
+returns an explicit decision reason, and generation diagnostics are created only
+when an AI response actually starts.

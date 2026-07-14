@@ -61,7 +61,8 @@ governance runtime, or an external sidecar.
 - One-shot Android speech input through the system speech recognizer.
 - Voice Mode state-machine foundation; see
   [`voice-mode-architecture.md`](voice-mode-architecture.md).
-- Full app-state debug ZIP export, excluding GGUF model files.
+- Redacted metadata-only debug ZIP export, excluding raw app state, content,
+  private paths, credentials, tokens, and GGUF model files.
 - Persisted generation timing traces for diagnosing slow or blank local model responses.
 - Explicit SMS auto-reply toggle that receives inbound SMS, submits it through
   the local LLM turn coordinator, and queues the finalized assistant reply back
@@ -112,9 +113,9 @@ second APK or resetting app-private state.
   required.
 - Generation rows and generation diagnostics start only after routing approves
   an AI response. Human-only turns do not manufacture empty streaming rows.
-- Existing generation timing traces, stale-stream cleanup, SMS receipts, and
-  full-state debug ZIP behavior remain in place. Raw Room state includes the new
-  room/member/authorship tables.
+- Existing generation timing traces, stale-stream cleanup, and SMS receipts
+  remain in place. The debug ZIP reports only bounded table counts and excludes
+  raw Room/DataStore state and content-bearing rows.
 
 ### Identity and delivery
 

@@ -228,9 +228,9 @@ requires an empty `PRAGMA foreign_key_check` result.
   messages.
 - Startup cleanup still closes interrupted streaming rows while protecting
   recent active SMS work.
-- The debug ZIP continues to include raw Room/DataStore state, so v9
-  room/member/authorship rows are present in the archive. Model weights remain
-  excluded.
+- The debug ZIP contains bounded Room/DataStore counts and health metadata only.
+  Raw state, content-bearing rows, private paths, prompt configuration, account
+  data, credentials, tokens, and model weights remain excluded.
 
 ## Android And Update Identity
 
