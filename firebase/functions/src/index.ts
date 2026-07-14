@@ -53,6 +53,19 @@ export {
   requestAccountDeletion,
   setUserBlocked,
 } from "./privacyAdmin.js";
+export {
+  addGroupMembers,
+  createGroupRoom,
+  deleteGroupRoom,
+  leaveGroupRoom,
+  removeGroupMember,
+  renameGroupRoom,
+  setGroupAvatar,
+  setGroupMemberRole,
+  transferGroupOwnership,
+  updateGroupPreferences,
+} from "./groupRoomMutation.js";
+export {getGroupRoomDetails} from "./groupRoomQuery.js";
 
 const firestore = firebaseAdminFirestore;
 const messaging = firebaseAdminMessaging;
@@ -144,19 +157,27 @@ export const openDirectRoom = onCall(
       const createdAt = FieldValue.serverTimestamp();
       transaction.create(roomReference, {
         activeMemberIds: identity.memberIds,
+        avatarObjectPath: null,
         createdAt,
+        deletedAt: null,
         directKey: identity.directKey,
         kind: "DIRECT",
         latestMessage: null,
         memberIds: identity.memberIds,
+        ownerUid: null,
+        revision: 1,
         title: `${callerProfile.displayName}, ${targetProfile.displayName}`,
         updatedAt: createdAt,
       });
       for (const uid of identity.memberIds) {
         transaction.create(roomReference.collection("members").doc(uid), {
           active: true,
+          archived: false,
           joinedAt: createdAt,
           lastReadAt: null,
+          leftAt: null,
+          muted: false,
+          pinned: false,
           role: "MEMBER",
           uid,
           unreadCount: 0,
@@ -179,7 +200,10 @@ export const markRoomRead = onCall(
       typeof request.data === "object" && request.data !== null && "roomId" in request.data
         ? (request.data as {roomId?: unknown}).roomId
         : null;
-    if (typeof roomId !== "string" || !/^direct_[a-f0-9]{64}$/.test(roomId)) {
+    if (
+      typeof roomId !== "string" ||
+      !/^(direct_[a-f0-9]{64}|group_[a-f0-9]{32})$/.test(roomId)
+    ) {
       throw new HttpsError("invalid-argument", "roomId is invalid.");
     }
     const profileReference = firestore.doc(`profiles/${callerUid}`);
@@ -256,6 +280,7 @@ export const notifyRemoteMessage = onDocumentCreated(
       candidateRecipientUids,
       candidateRecipientUids.map((recipientUid, recipientIndex) => ({
         membershipActive: authorizationSnapshots[recipientIndex * 2 + 1]?.get("active") === true,
+        notificationsEnabled: authorizationSnapshots[recipientIndex * 2 + 1]?.get("muted") !== true,
         profileAllowed:
           authorizationSnapshots[recipientIndex * 2]?.get("allowed") === true &&
           authorizationSnapshots[recipientIndex * 2]?.get("accountState") === "ACTIVE",

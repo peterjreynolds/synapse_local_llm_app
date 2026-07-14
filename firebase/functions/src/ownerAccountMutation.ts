@@ -189,6 +189,16 @@ export const deleteOwnerAccount = onCall(
     ) {
       throw new HttpsError("failed-precondition", "Account deletion confirmation did not match.");
     }
+    const ownedGroups = await firebaseAdminFirestore.collection("rooms")
+      .where("ownerUid", "==", command.targetUid)
+      .limit(1)
+      .get();
+    if (!ownedGroups.empty) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Transfer or delete groups owned by this account before deleting it.",
+      );
+    }
 
     await profileReference.update({
       accountState: "DISABLED",

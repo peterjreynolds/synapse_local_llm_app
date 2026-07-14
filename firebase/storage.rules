@@ -21,6 +21,19 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.directoryVisible == true;
     }
 
+    function isActiveRoomMember(roomId) {
+      let membershipPath = /databases/(default)/documents/rooms/$(roomId)/members/$(request.auth.uid);
+      return isActiveUser()
+        && firestore.exists(membershipPath)
+        && firestore.get(membershipPath).data.active == true;
+    }
+
+    function isGroupAdministrator(roomId) {
+      let membershipPath = /databases/(default)/documents/rooms/$(roomId)/members/$(request.auth.uid);
+      return isActiveRoomMember(roomId)
+        && firestore.get(membershipPath).data.role in ['OWNER', 'ADMIN'];
+    }
+
     match /avatars/{uid}/{fileName} {
       allow read: if isActiveUser() && isVisibleProfile(uid);
       allow create, update: if isActiveUser()
@@ -29,6 +42,16 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
       allow delete: if isActiveUser() && request.auth.uid == uid;
+    }
+
+    match /groupAvatars/{roomId}/{fileName} {
+      allow read: if isActiveRoomMember(roomId);
+      allow create, update: if isGroupAdministrator(roomId)
+        && roomId.matches('group_[a-f0-9]{32}')
+        && fileName.matches('avatar_[a-f0-9]{32}\\.(jpg|png|webp)')
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isGroupAdministrator(roomId);
     }
 
     match /{allPaths=**} {

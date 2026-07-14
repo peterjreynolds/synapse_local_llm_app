@@ -13,6 +13,7 @@ const BUCKET = `gs://${PROJECT_ID}.appspot.com`;
 const PETER_UID = "peter-uid";
 const TRISH_UID = "trish-uid";
 const MALLORY_UID = "mallory-uid";
+const GROUP_ROOM_ID = `group_${"a".repeat(32)}`;
 const storageRules = fs.readFileSync(new URL("../storage.rules", import.meta.url), "utf8");
 
 let testEnvironment;
@@ -42,6 +43,20 @@ async function seedProfiles() {
         usernameNormalized: uid,
       });
     }
+    await setDoc(doc(firestore, "rooms", GROUP_ROOM_ID), {
+      activeMemberIds: [PETER_UID, TRISH_UID],
+      kind: "GROUP",
+    });
+    await setDoc(doc(firestore, "rooms", GROUP_ROOM_ID, "members", PETER_UID), {
+      active: true,
+      role: "OWNER",
+      uid: PETER_UID,
+    });
+    await setDoc(doc(firestore, "rooms", GROUP_ROOM_ID, "members", TRISH_UID), {
+      active: true,
+      role: "MEMBER",
+      uid: TRISH_UID,
+    });
   });
 }
 
@@ -124,4 +139,38 @@ test("denies avatar access while a password change is required", async () => {
       {contentType: "image/jpeg"},
     ),
   );
+});
+
+test("allows bounded group avatars only for active group administrators", async () => {
+  const avatarPath = `groupAvatars/${GROUP_ROOM_ID}/avatar_${"b".repeat(32)}.webp`;
+  const peterStorage = activeContext(PETER_UID).storage(BUCKET);
+  await assertSucceeds(
+    uploadBytes(ref(peterStorage, avatarPath), new Uint8Array([1, 2, 3]), {
+      contentType: "image/webp",
+    }),
+  );
+
+  const trishStorage = activeContext(TRISH_UID).storage(BUCKET);
+  await assertSucceeds(getMetadata(ref(trishStorage, avatarPath)));
+  await assertFails(
+    uploadBytes(ref(trishStorage, avatarPath), new Uint8Array([4, 5, 6]), {
+      contentType: "image/webp",
+    }),
+  );
+  await assertFails(
+    uploadBytes(
+      ref(peterStorage, `groupAvatars/${GROUP_ROOM_ID}/avatar_${"c".repeat(32)}.apk`),
+      new Uint8Array([1, 2, 3]),
+      {contentType: "application/vnd.android.package-archive"},
+    ),
+  );
+
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(
+      doc(context.firestore(), "rooms", GROUP_ROOM_ID, "members", TRISH_UID),
+      {active: false},
+      {merge: true},
+    );
+  });
+  await assertFails(getMetadata(ref(trishStorage, avatarPath)));
 });
