@@ -13,7 +13,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [36])
 class RemoteNotificationRoutingTest {
     @Test
     @Suppress("DEPRECATION")

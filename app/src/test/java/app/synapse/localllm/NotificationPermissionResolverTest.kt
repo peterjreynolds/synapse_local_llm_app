@@ -21,8 +21,8 @@ class NotificationPermissionResolverTest {
     }
 
     @Test
-    @Config(sdk = [33])
-    fun api33DenialAndGrantRemainVisibleToPermissionPolicy() {
+    @Config(sdk = [36])
+    fun currentApiDenialAndGrantRemainVisibleToPermissionPolicy() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val application = context.applicationContext as android.app.Application
         shadowOf(application).denyPermissions(POST_NOTIFICATIONS_PERMISSION)
