@@ -36,6 +36,7 @@ data class RemoteChatUiState(
     val messageToRevealId: RemoteMessageId? = null,
     val messageSearchQuery: String = "",
     val messageSearchResults: List<RemoteMessageSearchResult> = emptyList(),
+    val isSearchingMessages: Boolean = false,
     val notificationPreferences: RemoteNotificationPreferences = RemoteNotificationPreferences(),
     val currentDeviceId: RemoteDeviceId? = null,
     val roomAiConfiguration: RemoteRoomAiConfiguration? = null,

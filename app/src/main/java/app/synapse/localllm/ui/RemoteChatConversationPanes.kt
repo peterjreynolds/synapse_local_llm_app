@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +24,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
+import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMuteDuration
@@ -130,7 +133,7 @@ private fun RemoteRoomList(
     state: RemoteChatUiState,
     onRoomSelected: (RemoteCachedRoom) -> Unit,
     onMessageSearchChanged: (String) -> Unit,
-    onMessageSearchResultSelected: (app.synapse.localllm.domain.remote.RemoteMessageSearchResult) -> Unit,
+    onMessageSearchResultSelected: (RemoteMessageSearchResult) -> Unit,
     onRoomPreferencesChanged: (RemoteCachedRoom, Boolean, Boolean, RemoteRoomMuteDuration?) -> Unit,
     onCreateGroup: () -> Unit,
     isActionRunning: Boolean,
@@ -183,22 +186,56 @@ private fun RemoteRoomList(
                 Text(if (showArchived) "Hide archived" else "Show archived")
             }
         }
-        if (state.messageSearchQuery.isNotBlank() && state.messageSearchResults.isNotEmpty()) {
-            Text(
-                "Message results",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        when (
+            remoteMessageSearchPresentationState(
+                query = state.messageSearchQuery,
+                isSearching = state.isSearchingMessages,
+                results = state.messageSearchResults,
             )
-            state.messageSearchResults.forEach { result ->
-                val room = state.rooms.firstOrNull { candidate -> candidate.roomId == result.roomId }
-                ListItem(
-                    headlineContent = { Text(room?.title ?: "Conversation") },
-                    supportingContent = { Text(result.excerpt, maxLines = 2) },
-                    modifier = Modifier.clickable { onMessageSearchResultSelected(result) },
+        ) {
+            RemoteMessageSearchPresentationState.HIDDEN -> Unit
+            RemoteMessageSearchPresentationState.SEARCHING -> {
+                Text(
+                    "Searching downloaded messages…",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            RemoteMessageSearchPresentationState.EMPTY -> {
+                Text(
+                    "No downloaded messages match.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
-            HorizontalDivider()
+            RemoteMessageSearchPresentationState.RESULTS -> {
+                Text(
+                    "Message results",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 240.dp),
+                ) {
+                    items(
+                        items = state.messageSearchResults,
+                        key = { result -> "${result.roomId.raw}:${result.messageId.raw}" },
+                    ) { result ->
+                        val room = state.rooms.firstOrNull { candidate -> candidate.roomId == result.roomId }
+                        ListItem(
+                            headlineContent = { Text(room?.title ?: "Conversation") },
+                            supportingContent = { Text(result.excerpt, maxLines = 2) },
+                            modifier = Modifier.clickable { onMessageSearchResultSelected(result) },
+                        )
+                    }
+                }
+                HorizontalDivider()
+            }
         }
         if (state.rooms.isEmpty()) {
             EmptyRemotePane(
@@ -263,6 +300,24 @@ private fun RemoteRoomList(
             },
         )
     }
+}
+
+internal enum class RemoteMessageSearchPresentationState {
+    HIDDEN,
+    SEARCHING,
+    EMPTY,
+    RESULTS,
+}
+
+internal fun remoteMessageSearchPresentationState(
+    query: String,
+    isSearching: Boolean,
+    results: List<RemoteMessageSearchResult>,
+): RemoteMessageSearchPresentationState = when {
+    query.isBlank() -> RemoteMessageSearchPresentationState.HIDDEN
+    isSearching -> RemoteMessageSearchPresentationState.SEARCHING
+    results.isEmpty() -> RemoteMessageSearchPresentationState.EMPTY
+    else -> RemoteMessageSearchPresentationState.RESULTS
 }
 
 @Composable

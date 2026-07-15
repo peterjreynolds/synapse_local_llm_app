@@ -231,9 +231,13 @@ private fun RemoteLoginScreen(
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Done,
+                    imeAction = if (showRegistration) ImeAction.Next else ImeAction.Done,
                 ),
-                keyboardActions = KeyboardActions(onDone = { submit() }),
+                keyboardActions = if (showRegistration) {
+                    KeyboardActions.Default
+                } else {
+                    KeyboardActions(onDone = { submit() })
+                },
             )
             if (showRegistration) {
                 OutlinedTextField(
@@ -280,7 +284,15 @@ private fun RemoteLoginScreen(
             Button(
                 onClick = ::submit,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = username.isNotBlank() && password.isNotEmpty() && !state.isActionRunning,
+                enabled = remoteLoginSubmissionEnabled(
+                    showRegistration = showRegistration,
+                    username = username,
+                    displayName = displayName,
+                    password = password,
+                    confirmPassword = confirmPassword,
+                    invitationCode = invitationCode,
+                    isActionRunning = state.isActionRunning,
+                ),
             ) {
                 if (state.isActionRunning) {
                     CircularProgressIndicator(
@@ -623,7 +635,7 @@ private fun RemoteSignedInShell(
                             text = if (selectedSection == RemoteAppSection.LOCAL_AI) {
                                 "Local-only workspace"
                             } else {
-                                "Synced as @${state.account?.usernameNormalized.orEmpty()}"
+                                "Signed in as @${state.account?.usernameNormalized.orEmpty()}"
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -684,6 +696,23 @@ private fun RemoteSignedInShell(
             }
         }
     }
+}
+
+internal fun remoteLoginSubmissionEnabled(
+    showRegistration: Boolean,
+    username: String,
+    displayName: String,
+    password: String,
+    confirmPassword: String,
+    invitationCode: String,
+    isActionRunning: Boolean,
+): Boolean {
+    if (isActionRunning || username.isBlank() || password.isEmpty()) return false
+    return !showRegistration || (
+        displayName.isNotBlank() &&
+            confirmPassword.isNotEmpty() &&
+            invitationCode.isNotBlank()
+        )
 }
 
 internal enum class RemoteAppSection(

@@ -265,11 +265,16 @@ class RemoteChatViewModel(
         mutableUiState.update { state ->
             state.copy(
                 messageSearchQuery = boundedQuery,
-                messageSearchResults = if (boundedQuery.isBlank()) emptyList() else state.messageSearchResults,
+                messageSearchResults = emptyList(),
+                isSearchingMessages = boundedQuery.isNotBlank(),
             )
         }
         if (boundedQuery.isBlank()) return
-        val accountUid = mutableUiState.value.account?.accountUid ?: return
+        val accountUid = mutableUiState.value.account?.accountUid
+        if (accountUid == null) {
+            mutableUiState.update { state -> state.copy(isSearchingMessages = false) }
+            return
+        }
         messageSearchJob = viewModelScope.launch {
             delay(MESSAGE_SEARCH_DEBOUNCE_MILLIS)
             try {
@@ -277,12 +282,20 @@ class RemoteChatViewModel(
                     SearchRemoteMessagesCommand(accountUid, boundedQuery),
                 )
                 if (mutableUiState.value.messageSearchQuery == boundedQuery) {
-                    mutableUiState.update { state -> state.copy(messageSearchResults = results) }
+                    mutableUiState.update { state ->
+                        state.copy(
+                            messageSearchResults = results,
+                            isSearchingMessages = false,
+                        )
+                    }
                 }
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
-                publishFailure(exception)
+                if (mutableUiState.value.messageSearchQuery == boundedQuery) {
+                    mutableUiState.update { state -> state.copy(isSearchingMessages = false) }
+                    publishFailure(exception)
+                }
             }
         }
     }
@@ -803,6 +816,7 @@ class RemoteChatViewModel(
                     typingParticipantUids = emptyList(),
                     messageSearchQuery = "",
                     messageSearchResults = emptyList(),
+                    isSearchingMessages = false,
                     notificationPreferences = RemoteNotificationPreferences(),
                     currentDeviceId = null,
                     roomAiConfiguration = null,

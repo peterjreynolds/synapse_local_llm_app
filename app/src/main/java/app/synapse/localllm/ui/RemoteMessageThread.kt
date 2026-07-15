@@ -316,62 +316,73 @@ internal fun RemoteMessageThread(
                     TextButton(onClick = onFinishVoiceNote) { Text("Finish") }
                 }
             }
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(10.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                if (state.roomAiConfiguration?.localAiEnabled == true) {
-                    TextButton(onClick = onMentionSynapse, enabled = !state.isActionRunning) {
-                        Text("@Synapse")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (state.roomAiConfiguration?.localAiEnabled == true) {
+                        TextButton(onClick = onMentionSynapse, enabled = !state.isActionRunning) {
+                            Text("@Synapse")
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                PackageManager.PERMISSION_GRANTED
+                            ) {
+                                onStartVoiceNote()
+                            } else {
+                                microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        enabled = !state.isRecordingVoiceNote && !state.isActionRunning,
+                    ) { Text("Voice") }
+                    IconButton(
+                        onClick = { attachmentPicker.launch(REMOTE_ATTACHMENT_MIME_TYPES) },
+                        enabled = !state.isActionRunning && state.pendingAttachments.size < 8,
+                    ) {
+                        Icon(Icons.Default.AttachFile, contentDescription = "Attach image, document, or audio")
                     }
                 }
-                TextButton(
-                    onClick = {
-                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                            PackageManager.PERMISSION_GRANTED
-                        ) {
-                            onStartVoiceNote()
-                        } else {
-                            microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    },
-                    enabled = !state.isRecordingVoiceNote && !state.isActionRunning,
-                ) { Text("Voice") }
-                IconButton(
-                    onClick = { attachmentPicker.launch(REMOTE_ATTACHMENT_MIME_TYPES) },
-                    enabled = !state.isActionRunning && state.pendingAttachments.size < 8,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Default.AttachFile, contentDescription = "Attach image, document, or audio")
-                }
-                OutlinedTextField(
-                    value = state.composerText,
-                    onValueChange = onComposerChanged,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message") },
-                    maxLines = 5,
-                    enabled = !state.isActionRunning,
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Sentences,
-                        imeAction = ImeAction.Send,
-                    ),
-                    keyboardActions = KeyboardActions(onSend = { submit() }),
-                )
-                FilledIconButton(
-                    onClick = ::submit,
-                    enabled = (
-                        state.composerText.isNotBlank() ||
-                            (
-                                state.pendingAttachments.isNotEmpty() &&
-                                    state.pendingAttachments.all { attachment ->
-                                        attachment.state == RemoteAttachmentTransferState.READY
-                                    }
-                            )
-                        ) && !state.isActionRunning,
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
+                    OutlinedTextField(
+                        value = state.composerText,
+                        onValueChange = onComposerChanged,
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Message") },
+                        maxLines = 5,
+                        enabled = !state.isActionRunning,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Sentences,
+                            imeAction = ImeAction.Send,
+                        ),
+                        keyboardActions = KeyboardActions(onSend = { submit() }),
+                    )
+                    FilledIconButton(
+                        onClick = ::submit,
+                        enabled = (
+                            state.composerText.isNotBlank() ||
+                                (
+                                    state.pendingAttachments.isNotEmpty() &&
+                                        state.pendingAttachments.all { attachment ->
+                                            attachment.state == RemoteAttachmentTransferState.READY
+                                        }
+                                )
+                            ) && !state.isActionRunning,
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
+                    }
                 }
             }
         }

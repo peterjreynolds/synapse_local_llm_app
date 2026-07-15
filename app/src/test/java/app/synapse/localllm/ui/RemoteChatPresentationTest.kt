@@ -8,12 +8,14 @@ import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
+import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
 import app.synapse.localllm.domain.update.AvailableAppUpdate
 import java.time.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -132,6 +134,69 @@ class RemoteChatPresentationTest {
                 unreadOnly = false,
                 showArchived = true,
             ),
+        )
+    }
+
+    @Test
+    fun loginSubmissionRequiresEveryVisibleRegistrationField() {
+        assertTrue(
+            remoteLoginSubmissionEnabled(
+                showRegistration = false,
+                username = "peter",
+                displayName = "",
+                password = "password",
+                confirmPassword = "",
+                invitationCode = "",
+                isActionRunning = false,
+            ),
+        )
+        assertFalse(
+            remoteLoginSubmissionEnabled(
+                showRegistration = true,
+                username = "peter",
+                displayName = "Peter",
+                password = "password",
+                confirmPassword = "password",
+                invitationCode = "",
+                isActionRunning = false,
+            ),
+        )
+        assertTrue(
+            remoteLoginSubmissionEnabled(
+                showRegistration = true,
+                username = "peter",
+                displayName = "Peter",
+                password = "password",
+                confirmPassword = "password",
+                invitationCode = "invite-code",
+                isActionRunning = false,
+            ),
+        )
+    }
+
+    @Test
+    fun messageSearchPresentationDistinguishesHiddenLoadingEmptyAndResults() {
+        val result = RemoteMessageSearchResult(
+            roomId = RemoteRoomId("room-1"),
+            messageId = RemoteMessageId("message-1"),
+            excerpt = "Matching text",
+        )
+
+        assertEquals(
+            RemoteMessageSearchPresentationState.HIDDEN,
+            remoteMessageSearchPresentationState("", isSearching = false, results = emptyList()),
+        )
+        assertEquals(
+            RemoteMessageSearchPresentationState.SEARCHING,
+            remoteMessageSearchPresentationState("match", isSearching = true, results = emptyList()),
+        )
+        assertEquals(
+            RemoteMessageSearchPresentationState.EMPTY,
+            remoteMessageSearchPresentationState("match", isSearching = false, results = emptyList()),
+        )
+        assertEquals(
+            RemoteMessageSearchPresentationState.RESULTS,
+            remoteMessageSearchPresentationState("match", isSearching = false, results = listOf(result)),
         )
     }
 
