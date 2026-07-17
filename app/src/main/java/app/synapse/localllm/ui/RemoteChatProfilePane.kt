@@ -97,12 +97,14 @@ internal fun RemoteProfilePane(
         newPassword = ""
         confirmNewPassword = ""
         deletionPassword = ""
+        accountViewModel.clearGeneratedInvitation()
     }
     if (
         currentPassword.isNotEmpty() ||
         newPassword.isNotEmpty() ||
         confirmNewPassword.isNotEmpty() ||
-        deletionPassword.isNotEmpty()
+        deletionPassword.isNotEmpty() ||
+        accountState.generatedInvitation != null
     ) {
         BlockScreenshotsWhileVisible()
     }
@@ -178,6 +180,12 @@ internal fun RemoteProfilePane(
                 Text(" Photo")
             }
         }
+
+        HorizontalDivider()
+        RemoteInvitationControls(
+            state = accountState,
+            onCreateInvitation = accountViewModel::createInvitation,
+        )
 
         HorizontalDivider()
         Text("Notifications", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

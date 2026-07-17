@@ -1,6 +1,7 @@
 package app.synapse.localllm.ui
 
 import androidx.lifecycle.viewModelScope
+import app.synapse.localllm.domain.remote.CreateRemoteInvitationCommand
 import app.synapse.localllm.domain.remote.RemoteAccountRole
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
 import app.synapse.localllm.domain.remote.RemoteAccountSessionToken
@@ -12,6 +13,8 @@ import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteBlockMutationReceipt
 import app.synapse.localllm.domain.remote.RemoteDeletionRequestReceipt
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
+import app.synapse.localllm.domain.remote.RemoteInvitationCreatedReceipt
+import app.synapse.localllm.domain.remote.RemoteInvitationGateway
 import app.synapse.localllm.domain.remote.RemotePrivacyGateway
 import app.synapse.localllm.domain.remote.RemotePrivacyState
 import app.synapse.localllm.domain.remote.RemoteProfileUid
@@ -59,6 +62,7 @@ class RemoteAccountViewModelTest {
             authenticationGateway = authenticationGateway,
             privacyGateway = privacyGateway,
             deviceRegistrationGateway = emptyDeviceGateway(),
+            invitationGateway = emptyInvitationGateway(),
             sessionController = activeSessionController(PETER_UID),
         )
         val password = "private account password"
@@ -96,6 +100,7 @@ class RemoteAccountViewModelTest {
             },
             privacyGateway = privacyGateway,
             deviceRegistrationGateway = emptyDeviceGateway(),
+            invitationGateway = emptyInvitationGateway(),
             sessionController = activeSessionController(PETER_UID),
         )
 
@@ -131,6 +136,7 @@ class RemoteAccountViewModelTest {
             authenticationGateway = authenticationGateway,
             privacyGateway = privacyGateway,
             deviceRegistrationGateway = emptyDeviceGateway(),
+            invitationGateway = emptyInvitationGateway(),
             sessionController = activeSessionController(PETER_UID),
         )
 
@@ -152,9 +158,68 @@ class RemoteAccountViewModelTest {
         }
     }
 
+    @Test
+    fun activeUserCreatesOneUseInvitationWithoutRetainingItAfterClearOrSignOut() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val authenticationState = MutableStateFlow<RemoteAuthenticationState>(
+            signedInState(TRISH_ACCOUNT_UID, "trish"),
+        )
+        val receipt = RemoteInvitationCreatedReceipt(
+            invitationId = "a".repeat(64),
+            invitationCode = "one-use-invitation-code",
+            expiresAtMillis = 123_456L,
+            maximumUses = 1,
+        )
+        val invitationGateway = mockk<RemoteInvitationGateway> {
+            coEvery { createInvitation(any()) } returns receipt
+        }
+        val viewModel = RemoteAccountViewModel(
+            authenticationGateway = mockk {
+                every { this@mockk.authenticationState } returns authenticationState
+            },
+            privacyGateway = mockk {
+                coEvery { getOwnPrivacyState() } returns RemotePrivacyState(emptySet(), false)
+            },
+            deviceRegistrationGateway = emptyDeviceGateway(),
+            invitationGateway = invitationGateway,
+            sessionController = activeSessionController(TRISH_ACCOUNT_UID),
+        )
+
+        try {
+            advanceUntilIdle()
+            viewModel.createInvitation()
+            advanceUntilIdle()
+
+            assertEquals(receipt, viewModel.uiState.value.generatedInvitation)
+            coVerify(exactly = 1) {
+                invitationGateway.createInvitation(
+                    CreateRemoteInvitationCommand(
+                        intendedLabel = null,
+                        lifetimeHours = 168,
+                        maximumUses = 1,
+                    ),
+                )
+            }
+
+            viewModel.clearGeneratedInvitation()
+            assertEquals(null, viewModel.uiState.value.generatedInvitation)
+
+            viewModel.createInvitation()
+            advanceUntilIdle()
+            authenticationState.value = RemoteAuthenticationState.SignedOut
+            advanceUntilIdle()
+            assertEquals(RemoteAccountUiState(), viewModel.uiState.value)
+        } finally {
+            viewModel.viewModelScope.cancel()
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun emptyDeviceGateway() = mockk<RemoteDeviceRegistrationGateway> {
         coEvery { listOwnDevices(any()) } returns emptyList()
     }
+
+    private fun emptyInvitationGateway() = mockk<RemoteInvitationGateway>()
 
     private fun activeSessionController(accountUid: RemoteAccountUid) =
         mockk<RemoteAccountSessionController>(relaxed = true) {

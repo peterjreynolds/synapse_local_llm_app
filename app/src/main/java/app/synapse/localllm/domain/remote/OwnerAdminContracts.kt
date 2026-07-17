@@ -76,12 +76,6 @@ data class CreateOwnerAccountCommand(
     val requirePasswordChange: Boolean,
 )
 
-data class CreateOwnerInvitationCommand(
-    val intendedLabel: String?,
-    val lifetimeHours: Int,
-    val maximumUses: Int,
-)
-
 data class ResetOwnerAccountPasswordCommand(
     val targetUid: RemoteAccountUid,
     val temporaryPassword: String,
@@ -90,13 +84,6 @@ data class ResetOwnerAccountPasswordCommand(
 
 data class OwnerAccountMutationReceipt(
     val targetUid: RemoteAccountUid,
-)
-
-data class OwnerInvitationCreatedReceipt(
-    val invitationId: String,
-    val invitationCode: String,
-    val expiresAtMillis: Long,
-    val maximumUses: Int,
 )
 
 interface OwnerAdminGateway {
@@ -126,8 +113,6 @@ interface OwnerAdminGateway {
     suspend fun resetAccountPassword(command: ResetOwnerAccountPasswordCommand): OwnerAccountMutationReceipt
 
     suspend fun listInvitations(): List<OwnerInvitationSummary>
-
-    suspend fun createInvitation(command: CreateOwnerInvitationCommand): OwnerInvitationCreatedReceipt
 
     suspend fun revokeInvitation(invitationId: String)
 

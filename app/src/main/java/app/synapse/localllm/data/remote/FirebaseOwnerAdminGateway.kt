@@ -1,7 +1,6 @@
 package app.synapse.localllm.data.remote
 
 import app.synapse.localllm.domain.remote.CreateOwnerAccountCommand
-import app.synapse.localllm.domain.remote.CreateOwnerInvitationCommand
 import app.synapse.localllm.domain.remote.OwnerAccountMutationReceipt
 import app.synapse.localllm.domain.remote.OwnerAccountSummary
 import app.synapse.localllm.domain.remote.OwnerAdminGateway
@@ -9,7 +8,6 @@ import app.synapse.localllm.domain.remote.OwnerAuditEventSummary
 import app.synapse.localllm.domain.remote.OwnerCleanupJobSummary
 import app.synapse.localllm.domain.remote.OwnerCleanupState
 import app.synapse.localllm.domain.remote.OwnerDeviceSummary
-import app.synapse.localllm.domain.remote.OwnerInvitationCreatedReceipt
 import app.synapse.localllm.domain.remote.OwnerInvitationSummary
 import app.synapse.localllm.domain.remote.OwnerOperationsSummary
 import app.synapse.localllm.domain.remote.OwnerRoomIntegritySummary
@@ -126,26 +124,6 @@ class FirebaseOwnerAdminGateway(
         parseOwnerInvitationSummaries(
             call("listOwnerInvitations", emptyMap(), "load invitations"),
         )
-
-    override suspend fun createInvitation(
-        command: CreateOwnerInvitationCommand,
-    ): OwnerInvitationCreatedReceipt {
-        val response = call(
-            functionName = "createInvitation",
-            payload = mapOf(
-                "intendedLabel" to command.intendedLabel,
-                "lifetimeHours" to command.lifetimeHours,
-                "maximumUses" to command.maximumUses,
-            ),
-            operation = "create the invitation",
-        )
-        return OwnerInvitationCreatedReceipt(
-            invitationId = response.requireString("invitationId"),
-            invitationCode = response.requireString("invitationCode"),
-            expiresAtMillis = response.requireLong("expiresAtMillis"),
-            maximumUses = response.requireInt("maximumUses"),
-        )
-    }
 
     override suspend fun revokeInvitation(invitationId: String) {
         val response = call(

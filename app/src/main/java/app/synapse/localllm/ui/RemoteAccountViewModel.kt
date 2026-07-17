@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.di.SynapseApplicationGraph
+import app.synapse.localllm.domain.remote.CreateRemoteInvitationCommand
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAccountUid
@@ -12,6 +13,8 @@ import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
+import app.synapse.localllm.domain.remote.RemoteInvitationCreatedReceipt
+import app.synapse.localllm.domain.remote.RemoteInvitationGateway
 import app.synapse.localllm.domain.remote.RemotePrivacyGateway
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRegisteredDevice
@@ -32,6 +35,7 @@ data class RemoteAccountUiState(
     val privacyStateVerified: Boolean = false,
     val deletionRequestPending: Boolean = false,
     val registeredDevices: List<RemoteRegisteredDevice> = emptyList(),
+    val generatedInvitation: RemoteInvitationCreatedReceipt? = null,
     val isRefreshing: Boolean = false,
     val isActionRunning: Boolean = false,
     val notice: String? = null,
@@ -41,6 +45,7 @@ class RemoteAccountViewModel(
     private val authenticationGateway: RemoteAuthenticationGateway,
     private val privacyGateway: RemotePrivacyGateway,
     private val deviceRegistrationGateway: RemoteDeviceRegistrationGateway,
+    private val invitationGateway: RemoteInvitationGateway,
     private val sessionController: RemoteAccountSessionController,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(RemoteAccountUiState())
@@ -103,6 +108,21 @@ class RemoteAccountViewModel(
                 state.copy(registeredDevices = state.registeredDevices.filterNot { it.deviceId == deviceId })
             }
         }
+
+    fun createInvitation() = launchAccountAction("Invite code created.") { accountUid ->
+        val receipt = invitationGateway.createInvitation(
+            CreateRemoteInvitationCommand(
+                intendedLabel = null,
+                lifetimeHours = STANDARD_INVITATION_LIFETIME_HOURS,
+                maximumUses = 1,
+            ),
+        )
+        updateForAccount(accountUid) { state -> state.copy(generatedInvitation = receipt) }
+    }
+
+    fun clearGeneratedInvitation() {
+        mutableUiState.update { state -> state.copy(generatedInvitation = null) }
+    }
 
     fun clearNotice() {
         mutableUiState.update { state -> state.copy(notice = null) }
@@ -232,6 +252,7 @@ class RemoteAccountViewModelFactory(
                     authenticationGateway = graph.remoteAuthenticationGateway,
                     privacyGateway = graph.remotePrivacyGateway,
                     deviceRegistrationGateway = graph.remoteDeviceRegistrationGateway,
+                    invitationGateway = graph.remoteInvitationGateway,
                     sessionController = graph.remoteAccountSessionController,
                 ),
             ) ?: throw IllegalArgumentException("Unable to create RemoteAccountViewModel.")
@@ -239,3 +260,5 @@ class RemoteAccountViewModelFactory(
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}.")
     }
 }
+
+private const val STANDARD_INVITATION_LIFETIME_HOURS = 24 * 7

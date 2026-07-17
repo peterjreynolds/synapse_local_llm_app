@@ -25,6 +25,7 @@ export const CALLABLE_RATE_LIMIT_POLICIES = {
   attachmentMutation: {maximumRequests: 60, windowMillis: 15 * 60_000},
   conversationMutation: {maximumRequests: 120, windowMillis: 60_000},
   groupMutation: {maximumRequests: 60, windowMillis: 15 * 60_000},
+  invitationMutation: {maximumRequests: 10, windowMillis: 24 * 60 * 60_000},
   ownerMutation: {maximumRequests: 60, windowMillis: 60 * 60_000},
 } as const satisfies Record<string, CallableRateLimitPolicy>;
 

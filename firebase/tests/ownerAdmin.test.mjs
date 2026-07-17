@@ -291,7 +291,7 @@ test("owner completes account, password, device, session, and deletion operation
   assert.equal((await adminFirestore.doc(`accountDeletionRequests/${targetUid}`).get()).exists, false);
 });
 
-test("normal, pending, disabled, and claim-only owners cannot call owner functions", async () => {
+test("active users create bounded invitations but cannot call owner functions", async () => {
   await seedOwner();
   const normal = await seedIdentity({
     email: "normal@accounts.synapse.invalid",
@@ -300,6 +300,37 @@ test("normal, pending, disabled, and claim-only owners cannot call owner functio
     username: "Normal",
   });
   await signInWithEmailAndPassword(userAuth, normal.email, "normal family password");
+  const invitation = await userCallable("createInvitation")({
+    intendedLabel: null,
+    lifetimeHours: 24 * 7,
+    maximumUses: 1,
+  });
+  assert.match(invitation.data.invitationCode, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(invitation.data.invitationId, /^[a-f0-9]{64}$/);
+  assert.equal(invitation.data.maximumUses, 1);
+  const storedInvitation = await adminFirestore
+    .doc(`invitations/${invitation.data.invitationId}`)
+    .get();
+  assert.equal(storedInvitation.get("creatorUid"), normal.uid);
+  assert.equal(storedInvitation.get("maximumUses"), 1);
+  assert.equal(storedInvitation.get("remainingUses"), 1);
+  assert.equal(JSON.stringify(storedInvitation.data()).includes(invitation.data.invitationCode), false);
+  await assert.rejects(
+    userCallable("createInvitation")({
+      intendedLabel: null,
+      lifetimeHours: 24 * 7,
+      maximumUses: 2,
+    }),
+    (error) => error.code === "functions/permission-denied",
+  );
+  await assert.rejects(
+    userCallable("createInvitation")({
+      intendedLabel: null,
+      lifetimeHours: 24 * 7 + 1,
+      maximumUses: 1,
+    }),
+    (error) => error.code === "functions/permission-denied",
+  );
   await assert.rejects(
     userCallable("listOwnerAccounts")({}),
     (error) => error.code === "functions/permission-denied",

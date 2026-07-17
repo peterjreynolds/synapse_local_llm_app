@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {randomBytes} from "node:crypto";
+import {createHash, randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {setTimeout as delay} from "node:timers/promises";
 import {applicationDefault, deleteApp as deleteAdminApp, initializeApp as initializeAdminApp} from "firebase-admin/app";
@@ -200,6 +200,23 @@ async function waitForNotificationReceipt(adminFirestore, messageId) {
   );
 }
 
+async function cleanupInvitationArtifacts(adminFirestore, actorUid, invitationIds) {
+  const invitationRateLimitId = createHash("sha256")
+    .update(`invitationMutation\u0000${actorUid}`, "utf8")
+    .digest("hex");
+  const invitationAuditEvents = await adminFirestore
+    .collection("securityAuditEvents")
+    .where("actorUid", "==", actorUid)
+    .get();
+  await Promise.all([
+    ...invitationIds.map((invitationId) =>
+      adminFirestore.doc(`invitations/${invitationId}`).delete(),
+    ),
+    ...invitationAuditEvents.docs.map((snapshot) => snapshot.ref.delete()),
+    adminFirestore.doc(`callableRateLimits/${invitationRateLimitId}`).delete(),
+  ]);
+}
+
 async function main() {
   requireLiveAcceptanceAuthorization();
   const runId = `live_${Date.now()}`;
@@ -214,6 +231,8 @@ async function main() {
   const clientApps = [];
   const clientFirestores = [];
   const acceptanceIdentities = [];
+  const invitationIds = [];
+  let invitationActorUid = null;
   let roomId = null;
   const messageIds = [];
 
@@ -245,6 +264,7 @@ async function main() {
     acceptanceIdentities.push(peter);
     const trish = await createAcceptanceIdentity(adminAuth, adminFirestore, "trish", runId);
     acceptanceIdentities.push(trish);
+    invitationActorUid = trish.uid;
 
     const peterApp = initializeClientApp(clientConfig, `peter-${runId}`);
     const trishApp = initializeClientApp(clientConfig, `trish-${runId}`);
@@ -261,6 +281,27 @@ async function main() {
       signInAcceptanceClient(peterAuth, peter),
       signInAcceptanceClient(trishAuth, trish),
     ]);
+
+    const memberInvitation = await httpsCallable(trishFunctions, "createInvitation")({
+      intendedLabel: null,
+      lifetimeHours: 24 * 7,
+      maximumUses: 1,
+    });
+    assert.match(memberInvitation.data.invitationId, /^[a-f0-9]{64}$/);
+    invitationIds.push(memberInvitation.data.invitationId);
+    assert.match(memberInvitation.data.invitationCode, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(memberInvitation.data.maximumUses, 1);
+    const storedMemberInvitation = await adminFirestore
+      .doc(`invitations/${memberInvitation.data.invitationId}`)
+      .get();
+    assert.equal(storedMemberInvitation.get("creatorUid"), trish.uid);
+    assert.equal(storedMemberInvitation.get("maximumUses"), 1);
+    assert.equal(storedMemberInvitation.get("remainingUses"), 1);
+    assert.equal(
+      JSON.stringify(storedMemberInvitation.data()).includes(memberInvitation.data.invitationCode),
+      false,
+      "Raw invitation codes must not be persisted.",
+    );
 
     const [peterOpenResult, trishOpenResult] = await Promise.all([
       httpsCallable(peterFunctions, "openDirectRoom")({targetUid: trish.uid}),
@@ -381,6 +422,7 @@ async function main() {
         readAndUnreadTransitions: true,
         sessionLogoutAndRecovery: true,
         triggerReceipts: true,
+        userInvitationCreation: true,
       },
     });
     process.stdout.write(`${JSON.stringify({runId, roomId, messageIds, state: "COMPLETE"})}\n`);
@@ -402,6 +444,11 @@ async function main() {
     const cleanupOperations = [];
     if (roomId) {
       cleanupOperations.push(adminFirestore.recursiveDelete(adminFirestore.doc(`rooms/${roomId}`)));
+    }
+    if (invitationActorUid) {
+      cleanupOperations.push(
+        cleanupInvitationArtifacts(adminFirestore, invitationActorUid, invitationIds),
+      );
     }
     for (const identity of acceptanceIdentities) {
       cleanupOperations.push(adminFirestore.doc(`profiles/${identity.uid}`).delete());

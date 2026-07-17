@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.di.SynapseApplicationGraph
 import app.synapse.localllm.domain.remote.CreateOwnerAccountCommand
-import app.synapse.localllm.domain.remote.CreateOwnerInvitationCommand
+import app.synapse.localllm.domain.remote.CreateRemoteInvitationCommand
 import app.synapse.localllm.domain.remote.OwnerAccountSummary
 import app.synapse.localllm.domain.remote.OwnerAdminGateway
 import app.synapse.localllm.domain.remote.OwnerAuditEventSummary
@@ -20,6 +20,7 @@ import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteDeviceId
+import app.synapse.localllm.domain.remote.RemoteInvitationGateway
 import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
 import app.synapse.localllm.domain.remote.RemoteOutboxState
 import app.synapse.localllm.domain.remote.ResetOwnerAccountPasswordCommand
@@ -55,6 +56,7 @@ data class OwnerLocalOutboxSummary(
 class OwnerAdminViewModel(
     private val authenticationGateway: RemoteAuthenticationGateway,
     private val ownerAdminGateway: OwnerAdminGateway,
+    private val remoteInvitationGateway: RemoteInvitationGateway,
     private val remoteChatCacheRepository: RemoteChatCacheRepository,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(OwnerAdminUiState())
@@ -180,11 +182,11 @@ class OwnerAdminViewModel(
     }
 
     fun createInvitation(
-        command: CreateOwnerInvitationCommand,
+        command: CreateRemoteInvitationCommand,
         onCreated: (String) -> Unit,
     ) = launchAction {
         val ownerUid = requireOwnerSession()
-        val receipt = ownerAdminGateway.createInvitation(command)
+        val receipt = remoteInvitationGateway.createInvitation(command)
         requireOwnerSession(ownerUid)
         onCreated(receipt.invitationCode)
         refreshAfterMutation("Invitation created.", ownerUid)
@@ -363,6 +365,7 @@ class OwnerAdminViewModelFactory(
                 OwnerAdminViewModel(
                     authenticationGateway = graph.remoteAuthenticationGateway,
                     ownerAdminGateway = graph.ownerAdminGateway,
+                    remoteInvitationGateway = graph.remoteInvitationGateway,
                     remoteChatCacheRepository = graph.remoteChatCacheRepository,
                 ),
             ) ?: throw IllegalArgumentException("Unable to create OwnerAdminViewModel.")

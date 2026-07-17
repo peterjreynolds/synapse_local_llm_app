@@ -49,6 +49,7 @@ import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDirectoryGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteGroupGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteInvitationGateway
 import app.synapse.localllm.data.remote.FirebaseRemotePrivacyGateway
 import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
 import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
@@ -81,6 +82,7 @@ import app.synapse.localllm.domain.memory.MemoryCommandInterpreter
 import app.synapse.localllm.domain.memory.MemoryProjector
 import app.synapse.localllm.domain.memory.MemoryRepository
 import app.synapse.localllm.domain.memory.PromptContextAssembler
+import app.synapse.localllm.domain.remote.RemoteInvitationGateway
 import app.synapse.localllm.domain.runtime.LocalInferenceRuntime
 import app.synapse.localllm.domain.runtime.ModelCatalogRepository
 import app.synapse.localllm.domain.runtime.ModelDeviceCompatibilityPolicy
@@ -153,6 +155,8 @@ class SynapseApplicationGraph private constructor(context: Context) {
         applicationScope = applicationScope,
     )
     val ownerAdminGateway = FirebaseOwnerAdminGateway(firebaseFunctions)
+    val remoteInvitationGateway: RemoteInvitationGateway =
+        FirebaseRemoteInvitationGateway(firebaseFunctions)
     val remotePrivacyGateway = FirebaseRemotePrivacyGateway(firebaseFunctions)
     val remoteDirectoryGateway =
         FirebaseRemoteDirectoryGateway(

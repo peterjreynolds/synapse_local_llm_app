@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {parseCreateInvitationCommand} from "./invitationAdmin.js";
+import {
+  authorizeInvitationCreation,
+  parseCreateInvitationCommand,
+} from "./invitationAdmin.js";
 import {parseCreateOwnerAccountCommand} from "./ownerAccountMutation.js";
 import {parseOwnerPasswordResetCommand} from "./passwordAdmin.js";
 import {isRecentAuthentication} from "./ownerAuthorization.js";
 import {parseReviewRegistrationCommand} from "./registrationReview.js";
 
-test("narrows owner invitation commands", () => {
+test("narrows invitation commands and bounds non-owner invitations", () => {
   assert.deepEqual(
     parseCreateInvitationCommand({
       intendedLabel: " Josh's phone ",
@@ -24,6 +27,34 @@ test("narrows owner invitation commands", () => {
       intendedLabel: null,
       lifetimeHours: 0,
       maximumUses: 1,
+    }),
+  );
+  assert.doesNotThrow(() =>
+    authorizeInvitationCreation("USER", {
+      intendedLabel: null,
+      lifetimeHours: 24 * 7,
+      maximumUses: 1,
+    }),
+  );
+  assert.throws(() =>
+    authorizeInvitationCreation("USER", {
+      intendedLabel: null,
+      lifetimeHours: 24 * 7,
+      maximumUses: 2,
+    }),
+  );
+  assert.throws(() =>
+    authorizeInvitationCreation("ADMIN", {
+      intendedLabel: null,
+      lifetimeHours: 24 * 7 + 1,
+      maximumUses: 1,
+    }),
+  );
+  assert.doesNotThrow(() =>
+    authorizeInvitationCreation("OWNER", {
+      intendedLabel: "Family",
+      lifetimeHours: 24 * 30,
+      maximumUses: 100,
     }),
   );
 });

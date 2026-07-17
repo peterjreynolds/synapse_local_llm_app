@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.domain.remote.CreateOwnerAccountCommand
-import app.synapse.localllm.domain.remote.CreateOwnerInvitationCommand
+import app.synapse.localllm.domain.remote.CreateRemoteInvitationCommand
 import app.synapse.localllm.domain.remote.OwnerAccountSummary
 import app.synapse.localllm.domain.remote.OwnerCleanupJobSummary
 import app.synapse.localllm.domain.remote.RemoteAccountState
@@ -275,7 +275,7 @@ fun OwnerAdminPane(
                         localNotice = "Invitation lifetime and uses must be whole numbers."
                     } else {
                         viewModel.createInvitation(
-                            CreateOwnerInvitationCommand(
+                            CreateRemoteInvitationCommand(
                                 intendedLabel = invitationLabel.trim().ifBlank { null },
                                 lifetimeHours = hours,
                                 maximumUses = uses,

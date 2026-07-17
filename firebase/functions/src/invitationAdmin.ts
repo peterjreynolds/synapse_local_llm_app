@@ -5,12 +5,14 @@ import {
   FIREBASE_FUNCTIONS_REGION,
   firebaseAdminFirestore,
 } from "./firebaseAdmin.js";
+import {requireActiveAccount} from "./accountAuthorization.js";
 import {digestInvitationCode} from "./identity.js";
 import {requireActiveOwner} from "./ownerAuthorization.js";
 import {enforceCallableRateLimit} from "./callableRateLimit.js";
 
 const MAXIMUM_INVITATION_USES = 100;
 const MAXIMUM_INVITATION_LIFETIME_HOURS = 24 * 30;
+const MAXIMUM_MEMBER_INVITATION_LIFETIME_HOURS = 24 * 7;
 const INVITATION_LABEL_LIMIT = 64;
 
 interface CreateInvitationCommand {
@@ -85,9 +87,13 @@ export const getOwnerRegistrationConfiguration = onCall(
 export const createInvitation = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},
   async (request): Promise<CreateInvitationReceipt> => {
-    const ownerUid = await requireActiveOwner(request.auth);
-    await enforceCallableRateLimit(ownerUid, "ownerMutation");
+    const account = await requireActiveAccount(request.auth);
     const command = parseCreateInvitationCommand(request.data);
+    authorizeInvitationCreation(account.profile.role, command);
+    await enforceCallableRateLimit(
+      account.uid,
+      account.profile.role === "OWNER" ? "ownerMutation" : "invitationMutation",
+    );
     const invitationCode = randomBytes(32).toString("base64url");
     const invitationId = digestInvitationCode(invitationCode);
     const createdAt = Timestamp.now();
@@ -97,7 +103,7 @@ export const createInvitation = onCall(
     const writes = firebaseAdminFirestore.batch();
     writes.create(firebaseAdminFirestore.doc(`invitations/${invitationId}`), {
       createdAt,
-      creatorUid: ownerUid,
+      creatorUid: account.uid,
       expiresAt,
       intendedLabel: command.intendedLabel,
       maximumUses: command.maximumUses,
@@ -107,7 +113,7 @@ export const createInvitation = onCall(
       state: "ACTIVE",
     });
     writes.create(firebaseAdminFirestore.doc(`securityAuditEvents/${randomUUID()}`), {
-      actorUid: ownerUid,
+      actorUid: account.uid,
       createdAt,
       eventType: "INVITATION_CREATED",
       invitationId,
@@ -122,6 +128,22 @@ export const createInvitation = onCall(
     };
   },
 );
+
+export function authorizeInvitationCreation(
+  role: "OWNER" | "ADMIN" | "USER",
+  command: CreateInvitationCommand,
+): void {
+  if (role === "OWNER") return;
+  if (
+    command.maximumUses !== 1 ||
+    command.lifetimeHours > MAXIMUM_MEMBER_INVITATION_LIFETIME_HOURS
+  ) {
+    throw new HttpsError(
+      "permission-denied",
+      "Member invitations must be one-use codes that expire within seven days.",
+    );
+  }
+}
 
 export const revokeInvitation = onCall(
   {region: FIREBASE_FUNCTIONS_REGION},

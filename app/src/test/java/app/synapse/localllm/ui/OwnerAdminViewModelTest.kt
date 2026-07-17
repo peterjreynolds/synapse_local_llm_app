@@ -16,6 +16,7 @@ import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
+import app.synapse.localllm.domain.remote.RemoteInvitationGateway
 import app.synapse.localllm.domain.remote.RemoteMessageOutboxOperation
 import app.synapse.localllm.domain.remote.RemoteOutboxState
 import io.mockk.coEvery
@@ -99,9 +100,10 @@ class OwnerAdminViewModelTest {
             every { observePendingOutbox() } returns emptyFlow()
         }
         val viewModel = OwnerAdminViewModel(
-            authenticationGateway,
-            ownerAdminGateway,
-            remoteChatCacheRepository,
+            authenticationGateway = authenticationGateway,
+            ownerAdminGateway = ownerAdminGateway,
+            remoteInvitationGateway = mockk<RemoteInvitationGateway>(),
+            remoteChatCacheRepository = remoteChatCacheRepository,
         )
         val ownerPassword = "private owner credential"
         val temporaryPassword = "one time family credential"
@@ -166,9 +168,10 @@ class OwnerAdminViewModelTest {
             every { observePendingOutbox() } returns emptyFlow()
         }
         val viewModel = OwnerAdminViewModel(
-            authenticationGateway,
-            ownerAdminGateway,
-            remoteChatCacheRepository,
+            authenticationGateway = authenticationGateway,
+            ownerAdminGateway = ownerAdminGateway,
+            remoteInvitationGateway = mockk<RemoteInvitationGateway>(),
+            remoteChatCacheRepository = remoteChatCacheRepository,
         )
 
         try {
