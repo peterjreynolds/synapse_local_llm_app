@@ -287,6 +287,37 @@ test("GIF images retain their MIME type and require a separate JPEG thumbnail", 
   );
 });
 
+test("active owner can upload and finalize an attachment in a direct room", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  const opened = await call(peterClient, "openDirectRoom")({targetUid: trish.uid});
+  const roomId = opened.data.roomId;
+  const messageId = "direct-message-with-attachment";
+  const prepared = await call(peterClient, "prepareRemoteAttachment")({
+    attachmentId: ATTACHMENT_ID,
+    byteCount: 4,
+    displayName: "direct-chat.pdf",
+    durationMillis: null,
+    kind: "DOCUMENT",
+    messageId,
+    mimeType: "application/pdf",
+    roomId,
+  });
+
+  await uploadBytes(ref(peterClient.storage, prepared.data.contentObjectPath), new Uint8Array([1, 2, 3, 4]), {
+    contentType: "application/pdf",
+    customMetadata: uploadMetadata(peter.uid, roomId, messageId, "content"),
+  });
+  const finalized = await call(peterClient, "finalizeRemoteAttachment")({
+    attachmentId: ATTACHMENT_ID,
+    messageId,
+    roomId,
+  });
+
+  assert.equal(finalized.data.status, "READY");
+});
+
 test("failed metadata, cancellation, and deleted membership fail closed", async () => {
   const peter = await seedActiveAccount("peter", "OWNER");
   const trish = await seedActiveAccount("trish");
