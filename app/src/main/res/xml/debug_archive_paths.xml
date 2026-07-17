@@ -9,4 +9,7 @@
     <cache-path
         name="app_updates"
         path="app-updates/" />
+    <cache-path
+        name="remote_attachments"
+        path="remote-attachments/" />
 </paths>

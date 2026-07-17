@@ -1,13 +1,7 @@
 package app.synapse.localllm.data.remote
 
 import android.content.Context
-import android.database.Cursor
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.provider.OpenableColumns
-import androidx.core.net.toUri
 import app.synapse.localllm.domain.remote.CancelRemoteAttachmentCommand
 import app.synapse.localllm.domain.remote.DownloadRemoteAttachmentCommand
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
@@ -15,7 +9,6 @@ import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAttachmentGateway
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAttachmentKind
-import app.synapse.localllm.domain.remote.RemoteAttachmentPolicy
 import app.synapse.localllm.domain.remote.RemoteAttachmentSelection
 import app.synapse.localllm.domain.remote.RemoteAttachmentTransferUpdate
 import app.synapse.localllm.domain.remote.RemoteCachedAttachment
@@ -27,7 +20,6 @@ import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.StorageMetadata
 import com.google.firebase.storage.UploadTask
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
@@ -48,39 +40,20 @@ class FirebaseRemoteAttachmentGateway(
 ) : RemoteAttachmentGateway {
     private val applicationContext = context.applicationContext
     private val cacheRoot = File(applicationContext.cacheDir, CACHE_DIRECTORY_NAME)
+    private val selectionStager = AndroidRemoteAttachmentSelectionStager(applicationContext)
+    private val thumbnailEncoder = AndroidRemoteImageThumbnailEncoder()
 
     override suspend fun inspectSelection(
         attachmentId: RemoteAttachmentId,
         sourceUri: String,
         audioDurationMillis: Long?,
         isVoiceNote: Boolean,
-    ): RemoteAttachmentSelection {
-        val uri = trustedSourceUri(sourceUri, allowVoiceNoteFile = isVoiceNote)
-        val metadata = readLocalMetadata(uri)
-        val mimeType = metadata.mimeType
-        val measuredAudioDuration = if (mimeType.startsWith("audio/")) {
-            audioDurationMillis ?: measureAudioDuration(uri)
-        } else {
-            require(audioDurationMillis == null && !isVoiceNote) { "Only audio can be sent as a voice note." }
-            null
-        }
-        val decision = RemoteAttachmentPolicy.validate(
-            displayName = metadata.displayName,
-            mimeType = mimeType,
-            byteCount = metadata.byteCount,
-            audioDurationMillis = measuredAudioDuration,
-            isVoiceNote = isVoiceNote,
-        )
-        return RemoteAttachmentSelection(
-            attachmentId = attachmentId,
-            sourceUri = uri.toString(),
-            displayName = decision.displayName,
-            mimeType = decision.mimeType,
-            byteCount = decision.byteCount,
-            kind = decision.kind,
-            durationMillis = decision.durationMillis,
-        )
-    }
+    ): RemoteAttachmentSelection = selectionStager.stageSelection(
+        attachmentId = attachmentId,
+        sourceUri = sourceUri,
+        audioDurationMillis = audioDurationMillis,
+        isVoiceNote = isVoiceNote,
+    )
 
     override fun uploadAttachment(command: UploadRemoteAttachmentCommand): Flow<RemoteAttachmentTransferUpdate> =
         channelFlow {
@@ -89,6 +62,7 @@ class FirebaseRemoteAttachmentGateway(
             val receipt = prepareAttachment(command)
             when (receipt.status) {
                 AttachmentUploadStatus.READY -> {
+                    selectionStager.release(selection.attachmentId)
                     send(
                         RemoteAttachmentTransferUpdate.Uploaded(
                             attachmentId = selection.attachmentId,
@@ -98,24 +72,32 @@ class FirebaseRemoteAttachmentGateway(
                     return@channelFlow
                 }
 
-                AttachmentUploadStatus.ATTACHED ->
+                AttachmentUploadStatus.ATTACHED -> {
+                    selectionStager.release(selection.attachmentId)
                     throw RemoteChatException("The attachment was already sent.")
+                }
 
                 AttachmentUploadStatus.CANCELLED,
                 AttachmentUploadStatus.CLEANED,
-                -> throw RemoteChatException("The attachment upload expired. Add the file again.")
+                -> {
+                    selectionStager.release(selection.attachmentId)
+                    throw RemoteChatException("The attachment upload expired. Add the file again.")
+                }
 
                 AttachmentUploadStatus.PENDING -> Unit
             }
             val contentReference = storage.reference.child(receipt.contentObjectPath)
             var activeUpload: UploadTask? = null
             try {
+                val sourceUri = selectionStager.requireUploadSource(selection)
+                val thumbnailBytes = if (selection.kind == RemoteAttachmentKind.IMAGE) {
+                    thumbnailEncoder.encode(File(requireNotNull(sourceUri.path)))
+                } else {
+                    null
+                }
                 val metadata = uploadMetadata(command, "content", selection.mimeType)
                 val contentTask = contentReference.putFile(
-                    trustedSourceUri(
-                        selection.sourceUri,
-                        allowVoiceNoteFile = selection.kind == RemoteAttachmentKind.VOICE_NOTE,
-                    ),
+                    sourceUri,
                     metadata,
                 )
                 activeUpload = contentTask
@@ -129,10 +111,7 @@ class FirebaseRemoteAttachmentGateway(
                     )
                 }
                 contentTask.await()
-                if (selection.kind == RemoteAttachmentKind.IMAGE) {
-                    val thumbnailBytes = createThumbnail(
-                        trustedSourceUri(selection.sourceUri, allowVoiceNoteFile = false),
-                    )
+                if (thumbnailBytes != null) {
                     val thumbnailReference = storage.reference.child(
                         requireNotNull(receipt.thumbnailObjectPath) { "Image upload receipt has no thumbnail path." },
                     )
@@ -144,6 +123,7 @@ class FirebaseRemoteAttachmentGateway(
                     thumbnailTask.await()
                 }
                 finalizeAttachment(command)
+                selectionStager.release(selection.attachmentId)
                 send(
                     RemoteAttachmentTransferUpdate.Uploaded(
                         attachmentId = selection.attachmentId,
@@ -162,7 +142,11 @@ class FirebaseRemoteAttachmentGateway(
 
     override suspend fun cancelAttachment(command: CancelRemoteAttachmentCommand) {
         requireAuthenticatedUid(command.accountUid)
-        callAttachmentFunction("cancelRemoteAttachment", command)
+        try {
+            callAttachmentFunction("cancelRemoteAttachment", command)
+        } finally {
+            selectionStager.release(command.attachmentId)
+        }
     }
 
     override fun downloadAttachment(command: DownloadRemoteAttachmentCommand): Flow<RemoteAttachmentTransferUpdate> =
@@ -300,83 +284,6 @@ class FirebaseRemoteAttachmentGateway(
         .setCustomMetadata("variant", variant)
         .build()
 
-    private fun readLocalMetadata(uri: Uri): LocalAttachmentMetadata {
-        if (uri.scheme == "file") {
-            val file = File(requireNotNull(uri.path))
-            require(file.isFile) { "The recorded voice note is unavailable." }
-            return LocalAttachmentMetadata(
-                displayName = file.name,
-                mimeType = "audio/mp4",
-                byteCount = file.length(),
-            )
-        }
-        val resolver = applicationContext.contentResolver
-        val mimeType = resolver.getType(uri)?.takeIf(String::isNotBlank)
-            ?: throw IllegalArgumentException("Android did not provide a safe attachment type.")
-        val cursor = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
-            ?: throw RemoteChatException("Android could not inspect the selected attachment.")
-        cursor.use {
-            require(it.moveToFirst()) { "The selected attachment has no metadata." }
-            val displayName = it.readString(OpenableColumns.DISPLAY_NAME)
-            val byteCount = it.readLong(OpenableColumns.SIZE)
-            return LocalAttachmentMetadata(displayName, mimeType, byteCount)
-        }
-    }
-
-    private fun Cursor.readString(columnName: String): String {
-        val index = getColumnIndex(columnName)
-        return if (index >= 0 && !isNull(index)) getString(index) else "attachment"
-    }
-
-    private fun Cursor.readLong(columnName: String): Long {
-        val index = getColumnIndex(columnName)
-        return if (index >= 0 && !isNull(index)) getLong(index) else -1L
-    }
-
-    private fun measureAudioDuration(uri: Uri): Long {
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(applicationContext, uri)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-                ?: throw IllegalArgumentException("Android could not measure the selected audio file.")
-        } finally {
-            retriever.release()
-        }
-    }
-
-    private fun createThumbnail(uri: Uri): ByteArray {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        applicationContext.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, bounds)
-        } ?: throw RemoteChatException("Android could not read the selected image.")
-        require(bounds.outWidth > 0 && bounds.outHeight > 0) { "The selected image is invalid." }
-        var sampleSize = 1
-        while (bounds.outWidth / sampleSize > THUMBNAIL_EDGE || bounds.outHeight / sampleSize > THUMBNAIL_EDGE) {
-            sampleSize *= 2
-        }
-        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        val bitmap = applicationContext.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, options)
-        } ?: throw RemoteChatException("Android could not decode the selected image.")
-        return bitmap.useAsThumbnailBytes()
-    }
-
-    private fun Bitmap.useAsThumbnailBytes(): ByteArray {
-        return try {
-            val output = ByteArrayOutputStream()
-            var quality = 82
-            do {
-                output.reset()
-                check(compress(Bitmap.CompressFormat.JPEG, quality, output)) { "Android could not encode the thumbnail." }
-                quality -= 10
-            } while (output.size() > MAXIMUM_THUMBNAIL_BYTES && quality >= 32)
-            require(output.size() in 1..MAXIMUM_THUMBNAIL_BYTES.toInt()) { "The image thumbnail is too large." }
-            output.toByteArray()
-        } finally {
-            recycle()
-        }
-    }
-
     private fun requireAuthenticatedUid(accountUid: RemoteAccountUid) {
         sessionController.requireActiveToken(accountUid)
         if (firebaseAuth.currentUser?.uid != accountUid.raw) {
@@ -411,37 +318,11 @@ class FirebaseRemoteAttachmentGateway(
     private fun UploadRemoteAttachmentCommand.toCancelCommand(): CancelRemoteAttachmentCommand =
         CancelRemoteAttachmentCommand(accountUid, roomId, messageId, selection.attachmentId)
 
-    private fun trustedSourceUri(
-        sourceUri: String,
-        allowVoiceNoteFile: Boolean,
-    ): Uri = sourceUri.toUri().also { uri ->
-        require(uri.scheme == "content" || uri.scheme == "file") {
-            "Attachment source must be a local Android URI."
-        }
-        if (uri.scheme == "file") {
-            val sourceFile = File(requireNotNull(uri.path)).canonicalFile
-            val voiceNoteDirectory = File(
-                applicationContext.cacheDir,
-                REMOTE_VOICE_NOTE_CACHE_DIRECTORY,
-            ).canonicalFile
-            require(allowVoiceNoteFile && sourceFile.isFile && sourceFile.parentFile == voiceNoteDirectory) {
-                "Only app-recorded voice notes may use file URIs."
-            }
-        }
-    }
-
-    private data class LocalAttachmentMetadata(
-        val displayName: String,
-        val mimeType: String,
-        val byteCount: Long,
-    )
-
     private companion object {
         const val CACHE_DIRECTORY_NAME = "remote-attachments"
         const val CACHE_FILE_SUFFIX = ".cache"
         const val MAXIMUM_CACHE_BYTES = 100L * 1024L * 1024L
         const val MAXIMUM_THUMBNAIL_BYTES = 256L * 1024L
-        const val THUMBNAIL_EDGE = 512
     }
 }
 

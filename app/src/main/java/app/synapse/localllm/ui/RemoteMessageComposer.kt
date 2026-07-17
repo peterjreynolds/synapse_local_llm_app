@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -67,11 +68,8 @@ internal fun RemoteMessageComposer(
 ) {
     val context = LocalContext.current
     var showAddMenu by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
-    val photoAndGifPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    val photoAndGifPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        runCatching {
-            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
         onAttachmentSelected(uri.toString())
     }
     val fileAndAudioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -174,7 +172,9 @@ internal fun RemoteMessageComposer(
                         enabled = canAddAttachment,
                         onClick = {
                             showAddMenu = false
-                            photoAndGifPicker.launch(REMOTE_PHOTO_AND_GIF_MIME_TYPES)
+                            photoAndGifPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
                         },
                     )
                     DropdownMenuItem(
