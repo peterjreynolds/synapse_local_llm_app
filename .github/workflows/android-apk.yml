@@ -10,12 +10,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: synapse-ai-apk-${{ github.ref }}
-  cancel-in-progress: true
+  group: synapse-ai-apk-release
+  cancel-in-progress: false
 
 jobs:
   build-apk:
     name: Build APK
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -30,6 +31,44 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test release version policy
+        shell: bash
+        run: node --test scripts/ci/resolve-synapse-release-version.test.mjs
+
+      - name: Resolve monotonic release version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_exists=0
+          current_release_body=""
+          if current_release_body="$(gh release view "$RELEASE_TAG" --json body --jq .body 2>/dev/null)"; then
+            release_exists=1
+          fi
+          if [ "$release_exists" = "0" ] && git ls-remote --exit-code origin "refs/heads/$APK_BRANCH" >/dev/null 2>&1; then
+            echo "Refusing to reset versioning while the $APK_BRANCH distribution branch still exists." >&2
+            exit 1
+          fi
+          release_version_json="$(
+            printf '%s' "$current_release_body" |
+              SYNAPSE_RELEASE_EXISTS="$release_exists" \
+              node scripts/ci/resolve-synapse-release-version.mjs
+          )"
+          version_code="$(printf '%s' "$release_version_json" | jq -er '.versionCode')"
+          version_name="$(printf '%s' "$release_version_json" | jq -er '.versionName')"
+          printf 'SYNAPSE_VERSION_CODE=%s\n' "$version_code" >> "$GITHUB_ENV"
+          printf 'SYNAPSE_VERSION_NAME=%s\n' "$version_name" >> "$GITHUB_ENV"
+          {
+            printf '### Rolling APK version\n\n'
+            printf -- '- Version code: `%s`\n' "$version_code"
+            printf -- '- Version name: `%s`\n' "$version_name"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -96,6 +135,12 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$actual_application_id" | tee apk-application-id.txt
+          actual_version_code="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p")"
+          if [ "$actual_version_code" != "$SYNAPSE_VERSION_CODE" ]; then
+            echo "Expected APK version code $SYNAPSE_VERSION_CODE, got $actual_version_code." >&2
+            exit 1
+          fi
+          printf '%s\n' "$actual_version_code" | tee apk-version-code.txt
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK_PATH" \
             | sed -n "s/^Signer #1 certificate SHA-256 digest: //p" \
             | tee apk-signer-sha256.txt
@@ -106,8 +151,47 @@ jobs:
             exit 1
           fi
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Synapse-AI
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish rolling release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version_code="$(cat apk-version-code.txt)"
+          apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
+          application_id="$(cat apk-application-id.txt)"
+          signer_sha256="$(cat apk-signer-sha256.txt)"
+          release_notes="$(printf '%s\n\n' \
+            "Latest automated Synapse AI APK from commit $GITHUB_SHA." \
+            "Version code: $version_code. Package: $application_id." \
+            "SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256." \
+            "The synapse-ai release and apk-latest branch are updated together after every successful main build or explicit manual workflow dispatch.")"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" --clobber
+            git tag --force "$RELEASE_TAG" "$GITHUB_SHA"
+            git push --force origin "refs/tags/$RELEASE_TAG"
+            gh release edit "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Synapse AI APK" \
+              --notes "$release_notes" \
+              --latest
+          else
+            gh release create "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" \
+              --target "$GITHUB_SHA" \
+              --title "Synapse AI APK" \
+              --notes "$release_notes" \
+              --latest
+          fi
+
       - name: Publish single-APK branch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -115,15 +199,16 @@ jobs:
           publish_root="$(mktemp -d)"
           mkdir -p "$publish_root/APK"
           cp "$APK_PATH" "$publish_root/APK/Synapse-AI.apk"
-          cp apk-sha256.txt "$publish_root/APK/Synapse-AI.apk.sha256"
-          cat > "$publish_root/APK/README.md" <<'EOF'
-          # Synapse AI APK
-
-          `Synapse-AI.apk` is the latest APK built from `main`.
-
-          This branch is force-replaced by GitHub Actions so it exposes one
-          canonical APK without retaining old APK commits on the branch.
-          EOF
+          apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
+          printf '%s  Synapse-AI.apk\n' "$apk_sha256" > "$publish_root/APK/Synapse-AI.apk.sha256"
+          {
+            printf '# Synapse AI APK\n\n'
+            printf '%s\n\n' '`Synapse-AI.apk` is the latest APK produced by the approved rolling release workflow.'
+            printf -- '- Source commit: `%s`\n' "$GITHUB_SHA"
+            printf -- '- Version code: `%s`\n' "$SYNAPSE_VERSION_CODE"
+            printf -- '- SHA-256: `%s`\n\n' "$apk_sha256"
+            printf '%s\n' 'This branch is force-replaced so it exposes one canonical APK without retaining old APK commits.'
+          } > "$publish_root/APK/README.md"
 
           auth_header="$(git config --local --get http.https://github.com/.extraheader)"
           git -C "$publish_root" init
@@ -135,35 +220,51 @@ jobs:
           git -C "$publish_root" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git -C "$publish_root" -c "http.https://github.com/.extraheader=$auth_header" push --force origin "$APK_BRANCH"
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Synapse-AI
-          path: ${{ env.APK_PATH }}
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Publish rolling release
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      - name: Verify rolling distribution
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release delete "$RELEASE_TAG" --cleanup-tag --yes
-          fi
-          version_code=$((2000 + GITHUB_RUN_NUMBER))
-          apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
-          application_id="$(cat apk-application-id.txt)"
-          signer_sha256="$(cat apk-signer-sha256.txt)"
-          release_notes="Latest automated Synapse AI APK from commit $GITHUB_SHA. "
-          release_notes+="Version code: $version_code. Package: $application_id. "
-          release_notes+="SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256. "
-          release_notes+="This rolling release is recreated after every successful main build "
-          release_notes+="so the Releases page points at the newest APK."
+          expected_apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
+          expected_asset_digest="sha256:$expected_apk_sha256"
+          release_target="$(gh release view "$RELEASE_TAG" --json targetCommitish --jq .targetCommitish)"
+          release_asset_count="$(
+            gh release view "$RELEASE_TAG" --json assets \
+              --jq '[.assets[] | select(.name == "Synapse-AI.apk")] | length'
+          )"
+          release_asset_digest="$(
+            gh release view "$RELEASE_TAG" --json assets \
+              --jq '.assets[] | select(.name == "Synapse-AI.apk") | .digest'
+          )"
+          remote_tag_sha="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
+          git fetch --force --depth=1 origin "$APK_BRANCH"
+          branch_apk_sha256="$(git show FETCH_HEAD:APK/Synapse-AI.apk.sha256 | cut -d ' ' -f 1)"
 
-          gh release create "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" \
-            --target "$GITHUB_SHA" \
-            --title "Synapse AI APK" \
-            --notes "$release_notes" \
-            --latest
+          if [ "$release_target" != "$GITHUB_SHA" ]; then
+            echo "Expected release target $GITHUB_SHA, got $release_target." >&2
+            exit 1
+          fi
+          if [ "$remote_tag_sha" != "$GITHUB_SHA" ]; then
+            echo "Expected release tag $GITHUB_SHA, got $remote_tag_sha." >&2
+            exit 1
+          fi
+          if [ "$release_asset_count" != "1" ]; then
+            echo "Expected one Synapse-AI.apk release asset, got $release_asset_count." >&2
+            exit 1
+          fi
+          if [ "$release_asset_digest" != "$expected_asset_digest" ]; then
+            echo "Expected release asset digest $expected_asset_digest, got $release_asset_digest." >&2
+            exit 1
+          fi
+          if [ "$branch_apk_sha256" != "$expected_apk_sha256" ]; then
+            echo "Expected apk-latest SHA-256 $expected_apk_sha256, got $branch_apk_sha256." >&2
+            exit 1
+          fi
+          git show FETCH_HEAD:APK/README.md | grep -F "$GITHUB_SHA" >/dev/null
+          {
+            printf '\n### Rolling distribution receipt\n\n'
+            printf -- '- Source commit: `%s`\n' "$GITHUB_SHA"
+            printf -- '- APK SHA-256: `%s`\n' "$expected_apk_sha256"
+            printf -- '- Release tag: `%s`\n' "$RELEASE_TAG"
+            printf -- '- APK branch: `%s`\n' "$APK_BRANCH"
+          } >> "$GITHUB_STEP_SUMMARY"
