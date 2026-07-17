@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc",
     "migrate:identity": "npm run build && node lib/migrateIdentity.js",
+    "repair:legacy-direct-rooms": "npm run build && node lib/repairLegacyDirectRooms.js",
     "test": "npm run build && node --test lib/*.test.js",
     "provision": "npm run build && node lib/provision.js",
     "acceptance:live": "node scripts/liveAcceptance.mjs"
