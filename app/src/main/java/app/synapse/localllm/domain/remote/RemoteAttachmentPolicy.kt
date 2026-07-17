@@ -87,6 +87,7 @@ object RemoteAttachmentPolicy {
         "audio/ogg" to Policy("ogg", RemoteAttachmentKind.AUDIO, 25 * MEBIBYTE),
         "audio/wav" to Policy("wav", RemoteAttachmentKind.AUDIO, 25 * MEBIBYTE),
         "audio/x-wav" to Policy("wav", RemoteAttachmentKind.AUDIO, 25 * MEBIBYTE),
+        "image/gif" to Policy("gif", RemoteAttachmentKind.IMAGE, 15 * MEBIBYTE),
         "image/jpeg" to Policy("jpg", RemoteAttachmentKind.IMAGE, 15 * MEBIBYTE),
         "image/png" to Policy("png", RemoteAttachmentKind.IMAGE, 15 * MEBIBYTE),
         "image/webp" to Policy("webp", RemoteAttachmentKind.IMAGE, 15 * MEBIBYTE),

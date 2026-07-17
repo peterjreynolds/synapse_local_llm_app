@@ -40,4 +40,16 @@ class RemoteAttachmentPolicyTest {
         assertEquals(RemoteAttachmentKind.VOICE_NOTE, decision.kind)
         assertEquals(12_500L, decision.durationMillis)
     }
+
+    @Test
+    fun `accepts GIF images with a normalized extension`() {
+        val decision = RemoteAttachmentPolicy.validate(
+            displayName = "reaction.not-really-a-jpg",
+            mimeType = "image/gif",
+            byteCount = 2_048,
+        )
+
+        assertEquals("reaction.gif", decision.displayName)
+        assertEquals(RemoteAttachmentKind.IMAGE, decision.kind)
+    }
 }

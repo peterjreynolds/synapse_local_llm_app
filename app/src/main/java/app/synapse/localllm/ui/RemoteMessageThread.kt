@@ -1,12 +1,6 @@
 package app.synapse.localllm.ui
 
-import android.Manifest
 import android.content.ClipData
-import android.content.Intent
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,15 +17,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,10 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
@@ -106,18 +92,6 @@ internal fun RemoteMessageThread(
     groupViewModel: RemoteGroupViewModel,
 ) {
     var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
-    val context = LocalContext.current
-    val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        runCatching {
-            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        onAttachmentSelected(uri.toString())
-    }
-    val microphonePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        granted ->
-        if (granted) onStartVoiceNote() else onVoicePermissionDenied()
-    }
     val listState = rememberLazyListState()
     val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room?.peerUid }
     val currentProfile = state.profiles.firstOrNull { profile ->
@@ -128,14 +102,6 @@ internal fun RemoteMessageThread(
     LaunchedEffect(showRoomMembers, room?.roomId) {
         if (showRoomMembers && room?.kind == RemoteRoomKind.GROUP) {
             groupViewModel.loadGroupDetails(room.roomId)
-        }
-    }
-
-    fun submit() {
-        val attachmentsReady = state.pendingAttachments.isNotEmpty() &&
-            state.pendingAttachments.all { attachment -> attachment.state == RemoteAttachmentTransferState.READY }
-        if ((state.composerText.isNotBlank() || attachmentsReady) && !state.isActionRunning) {
-            onSend(state.composerText)
         }
     }
 
@@ -286,105 +252,20 @@ internal fun RemoteMessageThread(
         }
         if (!showRoomMembers) {
             HorizontalDivider()
-            state.replyToMessageId?.let { replyId ->
-                val repliedMessage = state.messages.firstOrNull { message -> message.messageId == replyId }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Replying to ${repliedMessage?.body?.take(80) ?: "message"}",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    TextButton(onClick = onCancelReply) { Text("Cancel") }
-                }
-            }
-            RemotePendingAttachmentList(
-                attachments = state.pendingAttachments,
-                onRetry = onRetryAttachment,
-                onCancel = onCancelAttachment,
+            RemoteMessageComposer(
+                state = state,
+                onSend = onSend,
+                onComposerChanged = onComposerChanged,
+                onAttachmentSelected = onAttachmentSelected,
+                onRetryAttachment = onRetryAttachment,
+                onCancelAttachment = onCancelAttachment,
+                onStartVoiceNote = onStartVoiceNote,
+                onFinishVoiceNote = onFinishVoiceNote,
+                onCancelVoiceNote = onCancelVoiceNote,
+                onVoicePermissionDenied = onVoicePermissionDenied,
+                onCancelReply = onCancelReply,
+                onMentionSynapse = onMentionSynapse,
             )
-            if (state.isRecordingVoiceNote) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Recording voice note…", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = onCancelVoiceNote) { Text("Cancel") }
-                    TextButton(onClick = onFinishVoiceNote) { Text("Finish") }
-                }
-            }
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    if (state.roomAiConfiguration?.localAiEnabled == true) {
-                        TextButton(onClick = onMentionSynapse, enabled = !state.isActionRunning) {
-                            Text("@Synapse")
-                        }
-                    }
-                    TextButton(
-                        onClick = {
-                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                                PackageManager.PERMISSION_GRANTED
-                            ) {
-                                onStartVoiceNote()
-                            } else {
-                                microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            }
-                        },
-                        enabled = !state.isRecordingVoiceNote && !state.isActionRunning,
-                    ) { Text("Voice") }
-                    IconButton(
-                        onClick = { attachmentPicker.launch(REMOTE_ATTACHMENT_MIME_TYPES) },
-                        enabled = !state.isActionRunning && state.pendingAttachments.size < 8,
-                    ) {
-                        Icon(Icons.Default.AttachFile, contentDescription = "Attach image, document, or audio")
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = state.composerText,
-                        onValueChange = onComposerChanged,
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("Message") },
-                        maxLines = 5,
-                        enabled = !state.isActionRunning,
-                        keyboardOptions = KeyboardOptions(
-                            capitalization = KeyboardCapitalization.Sentences,
-                            imeAction = ImeAction.Send,
-                        ),
-                        keyboardActions = KeyboardActions(onSend = { submit() }),
-                    )
-                    FilledIconButton(
-                        onClick = ::submit,
-                        enabled = (
-                            state.composerText.isNotBlank() ||
-                                (
-                                    state.pendingAttachments.isNotEmpty() &&
-                                        state.pendingAttachments.all { attachment ->
-                                            attachment.state == RemoteAttachmentTransferState.READY
-                                        }
-                                )
-                            ) && !state.isActionRunning,
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
-                    }
-                }
-            }
         }
     }
 }

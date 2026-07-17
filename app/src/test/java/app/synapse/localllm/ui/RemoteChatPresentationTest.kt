@@ -216,6 +216,68 @@ class RemoteChatPresentationTest {
         )
     }
 
+    @Test
+    fun directComposerRequiresTextOrOnlyReadyAttachments() {
+        assertFalse(
+            remoteComposerCanSend(
+                "",
+                emptyList(),
+                isRecordingVoiceNote = false,
+                isActionRunning = false,
+            ),
+        )
+        assertTrue(
+            remoteComposerCanSend(
+                "Hello",
+                emptyList(),
+                isRecordingVoiceNote = false,
+                isActionRunning = false,
+            ),
+        )
+        assertTrue(
+            remoteComposerCanSend(
+                composerText = "",
+                attachmentStates = listOf(RemoteAttachmentTransferState.READY),
+                isRecordingVoiceNote = false,
+                isActionRunning = false,
+            ),
+        )
+        assertFalse(
+            remoteComposerCanSend(
+                composerText = "",
+                attachmentStates = listOf(
+                    RemoteAttachmentTransferState.READY,
+                    RemoteAttachmentTransferState.UPLOADING,
+                ),
+                isRecordingVoiceNote = false,
+                isActionRunning = false,
+            ),
+        )
+        assertFalse(
+            remoteComposerCanSend(
+                "Hello",
+                emptyList(),
+                isRecordingVoiceNote = true,
+                isActionRunning = false,
+            ),
+        )
+        assertFalse(
+            remoteComposerCanSend(
+                "Hello",
+                emptyList(),
+                isRecordingVoiceNote = false,
+                isActionRunning = true,
+            ),
+        )
+    }
+
+    @Test
+    fun directComposerPickerOffersGIFsSeparatelyFromFilesAndAudio() {
+        assertTrue("image/gif" in REMOTE_PHOTO_AND_GIF_MIME_TYPES)
+        assertFalse(REMOTE_FILE_AND_AUDIO_MIME_TYPES.any { mimeType -> mimeType.startsWith("image/") })
+        assertTrue(REMOTE_FILE_AND_AUDIO_MIME_TYPES.any { mimeType -> mimeType.startsWith("audio/") })
+    }
+
     private fun profile(
         isOnline: Boolean,
         lastSeenAt: Instant?,

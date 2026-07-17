@@ -40,6 +40,7 @@ const attachmentPolicies: Readonly<Record<string, AttachmentPolicy>> = {
   "audio/ogg": {canonicalExtension: "ogg", kind: "AUDIO", maximumBytes: 25 * 1024 * 1024},
   "audio/wav": {canonicalExtension: "wav", kind: "AUDIO", maximumBytes: 25 * 1024 * 1024},
   "audio/x-wav": {canonicalExtension: "wav", kind: "AUDIO", maximumBytes: 25 * 1024 * 1024},
+  "image/gif": {canonicalExtension: "gif", kind: "IMAGE", maximumBytes: 15 * 1024 * 1024},
   "image/jpeg": {canonicalExtension: "jpg", kind: "IMAGE", maximumBytes: 15 * 1024 * 1024},
   "image/png": {canonicalExtension: "png", kind: "IMAGE", maximumBytes: 15 * 1024 * 1024},
   "image/webp": {canonicalExtension: "webp", kind: "IMAGE", maximumBytes: 15 * 1024 * 1024},

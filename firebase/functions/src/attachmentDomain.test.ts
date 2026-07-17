@@ -44,6 +44,21 @@ test("accepts bounded voice notes with explicit duration", () => {
   assert.equal(command.durationMillis, 12_500);
 });
 
+test("accepts GIF images and normalizes their extension", () => {
+  const command = parsePrepareRemoteAttachmentCommand({
+    attachmentId,
+    byteCount: 2_048,
+    displayName: "reaction.not-really-a-jpg",
+    durationMillis: null,
+    kind: "IMAGE",
+    messageId,
+    mimeType: "image/gif",
+    roomId,
+  });
+  assert.equal(command.displayName, "reaction.gif");
+  assert.equal(command.kind, "IMAGE");
+});
+
 test("rejects executables, MIME-kind mismatches, oversize files, and non-random identifiers", () => {
   const base = {
     attachmentId,

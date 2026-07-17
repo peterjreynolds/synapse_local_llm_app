@@ -219,7 +219,14 @@ private fun formatAttachmentDuration(durationMillis: Long): String {
     return "%d:%02d".format(totalSeconds / 60L, totalSeconds % 60L)
 }
 
-internal val REMOTE_ATTACHMENT_MIME_TYPES = arrayOf(
+internal val REMOTE_PHOTO_AND_GIF_MIME_TYPES = arrayOf(
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+)
+
+internal val REMOTE_FILE_AND_AUDIO_MIME_TYPES = arrayOf(
     "application/msword",
     "application/pdf",
     "application/rtf",
@@ -229,9 +236,6 @@ internal val REMOTE_ATTACHMENT_MIME_TYPES = arrayOf(
     "audio/ogg",
     "audio/wav",
     "audio/x-wav",
-    "image/jpeg",
-    "image/png",
-    "image/webp",
     "text/csv",
     "text/markdown",
     "text/plain",

@@ -230,6 +230,63 @@ test("prepare, upload, finalize, send, authorize download, and tombstone cleanup
   await assert.rejects(getMetadata(contentReference));
 });
 
+test("GIF images retain their MIME type and require a separate JPEG thumbnail", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  await signIn("trish", trish);
+  const created = await call(peterClient, "createGroupRoom")({
+    memberUids: [trish.uid],
+    title: "GIF attachments",
+  });
+  const roomId = created.data.roomId;
+  const messageId = "message-with-gif";
+  const gifBytes = new TextEncoder().encode("GIF89a");
+  const prepared = await call(peterClient, "prepareRemoteAttachment")({
+    attachmentId: ATTACHMENT_ID,
+    byteCount: gifBytes.byteLength,
+    displayName: "reaction.not-a-jpg",
+    durationMillis: null,
+    kind: "IMAGE",
+    messageId,
+    mimeType: "image/gif",
+    roomId,
+  });
+
+  await uploadBytes(ref(peterClient.storage, prepared.data.contentObjectPath), gifBytes, {
+    contentType: "image/gif",
+    customMetadata: uploadMetadata(peter.uid, roomId, messageId, "content"),
+  });
+  await uploadBytes(ref(peterClient.storage, prepared.data.thumbnailObjectPath), new Uint8Array([1, 2, 3]), {
+    contentType: "image/jpeg",
+    customMetadata: uploadMetadata(peter.uid, roomId, messageId, "thumbnail"),
+  });
+  assert.equal((await call(peterClient, "finalizeRemoteAttachment")({
+    attachmentId: ATTACHMENT_ID,
+    messageId,
+    roomId,
+  })).data.status, "READY");
+
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [ATTACHMENT_ID],
+    body: "",
+    clientCreatedAtMillis: Date.now(),
+    messageId,
+    replyToMessageId: null,
+    roomId,
+  });
+  const sentMessage = await adminFirestore.doc(`rooms/${roomId}/messages/${messageId}`).get();
+  const [sentAttachment] = sentMessage.get("attachments");
+  assert.equal(sentAttachment.displayName, "reaction.gif");
+  assert.equal(sentAttachment.mimeType, "image/gif");
+  assert.equal(sentAttachment.kind, "IMAGE");
+  await waitForCondition(
+    () => adminFirestore.collection("notificationDeliveries").where("messageId", "==", messageId).get(),
+    (snapshot) => snapshot.docs.some((document) => document.get("state") === "COMPLETE"),
+    "GIF message notification receipt",
+  );
+});
+
 test("failed metadata, cancellation, and deleted membership fail closed", async () => {
   const peter = await seedActiveAccount("peter", "OWNER");
   const trish = await seedActiveAccount("trish");
