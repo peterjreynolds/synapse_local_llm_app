@@ -8,9 +8,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.synapse.localllm.ui.AppLockScreen
+import app.synapse.localllm.ui.AppLockViewModel
+import app.synapse.localllm.ui.AppLockViewModelFactory
 import app.synapse.localllm.ui.OwnerAdminViewModel
 import app.synapse.localllm.ui.OwnerAdminViewModelFactory
 import app.synapse.localllm.ui.RemoteAccountViewModel
@@ -25,6 +30,9 @@ import app.synapse.localllm.ui.SynapseViewModelFactory
 import app.synapse.localllm.ui.theme.SynapseTheme
 
 class MainActivity : FragmentActivity() {
+    private val appLockViewModel: AppLockViewModel by viewModels {
+        AppLockViewModelFactory(requireSynapseApplication().graph)
+    }
     private val localViewModel: SynapseViewModel by viewModels {
         SynapseViewModelFactory(requireSynapseApplication().graph)
     }
@@ -47,14 +55,24 @@ class MainActivity : FragmentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             SynapseTheme {
-                RemoteChatApp(
-                    remoteViewModel = remoteViewModel,
-                    remoteAccountViewModel = remoteAccountViewModel,
-                    remoteGroupViewModel = remoteGroupViewModel,
-                    localViewModel = localViewModel,
-                    ownerAdminViewModel = ownerAdminViewModel,
-                    requestOwnerIdentityConfirmation = ::requestOwnerIdentityConfirmation,
-                )
+                val appLockState by appLockViewModel.uiState.collectAsStateWithLifecycle()
+                if (appLockState.isLoading || (appLockState.isEnabled && !appLockState.isUnlocked)) {
+                    AppLockScreen(
+                        state = appLockState,
+                        onUnlock = appLockViewModel::unlock,
+                    )
+                } else {
+                    RemoteChatApp(
+                        remoteViewModel = remoteViewModel,
+                        remoteAccountViewModel = remoteAccountViewModel,
+                        remoteGroupViewModel = remoteGroupViewModel,
+                        localViewModel = localViewModel,
+                        ownerAdminViewModel = ownerAdminViewModel,
+                        appLockState = appLockState,
+                        appLockViewModel = appLockViewModel,
+                        requestOwnerIdentityConfirmation = ::requestOwnerIdentityConfirmation,
+                    )
+                }
             }
         }
     }
@@ -71,6 +89,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onStop() {
+        appLockViewModel.lock()
         requireSynapseApplication().graph.remoteRoomVisibilityTracker.setAppForegrounded(false)
         super.onStop()
     }

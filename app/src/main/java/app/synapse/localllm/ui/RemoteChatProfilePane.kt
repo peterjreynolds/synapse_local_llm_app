@@ -56,6 +56,8 @@ internal fun RemoteProfilePane(
     accountState: RemoteAccountUiState,
     accountViewModel: RemoteAccountViewModel,
     appUpdate: AppUpdateUiState,
+    appLockState: AppLockUiState,
+    appLockViewModel: AppLockViewModel,
     onCheckAppUpdate: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -238,6 +240,13 @@ internal fun RemoteProfilePane(
 
         HorizontalDivider()
         Text("Security", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        AppLockSettings(
+            state = appLockState,
+            viewModel = appLockViewModel,
+        )
+
+        HorizontalDivider()
+        Text("Account password", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         OutlinedTextField(
             value = currentPassword,
             onValueChange = { value -> currentPassword = value },

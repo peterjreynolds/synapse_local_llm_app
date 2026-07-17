@@ -60,6 +60,7 @@ import app.synapse.localllm.data.runtime.LlamaServerGateway
 import app.synapse.localllm.data.runtime.PhoneLocalInferenceRuntime
 import app.synapse.localllm.data.runtime.TermuxCommandGateway
 import app.synapse.localllm.data.runtime.embedded.EmbeddedLlamaRuntime
+import app.synapse.localllm.data.security.AndroidAppLockRepository
 import app.synapse.localllm.data.settings.SynapseSettingsStore
 import app.synapse.localllm.data.sms.AndroidSmsOutboundGateway
 import app.synapse.localllm.data.sms.RoomSmsAutoReplyRepository
@@ -221,6 +222,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         )
 
     val settingsStore = SynapseSettingsStore(applicationContext)
+    val appLockRepository = AndroidAppLockRepository(applicationContext)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
     val modelCatalogRepository: ModelCatalogRepository = BuiltInModelCatalogRepository()
     val deviceRuntimeCapabilitiesReader = AndroidDeviceRuntimeCapabilitiesReader(applicationContext)

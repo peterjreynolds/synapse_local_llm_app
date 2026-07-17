@@ -67,6 +67,8 @@ fun RemoteChatApp(
     remoteGroupViewModel: RemoteGroupViewModel,
     localViewModel: SynapseViewModel,
     ownerAdminViewModel: OwnerAdminViewModel,
+    appLockState: AppLockUiState,
+    appLockViewModel: AppLockViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val state by remoteViewModel.uiState.collectAsStateWithLifecycle()
@@ -111,6 +113,8 @@ fun RemoteChatApp(
             remoteGroupViewModel = remoteGroupViewModel,
             localViewModel = localViewModel,
             ownerAdminViewModel = ownerAdminViewModel,
+            appLockState = appLockState,
+            appLockViewModel = appLockViewModel,
             requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
         )
     }
@@ -591,6 +595,8 @@ private fun RemoteSignedInShell(
     remoteGroupViewModel: RemoteGroupViewModel,
     localViewModel: SynapseViewModel,
     ownerAdminViewModel: OwnerAdminViewModel,
+    appLockState: AppLockUiState,
+    appLockViewModel: AppLockViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val localState by localViewModel.uiState.collectAsStateWithLifecycle()
@@ -686,6 +692,8 @@ private fun RemoteSignedInShell(
                     accountState = remoteAccountState,
                     accountViewModel = remoteAccountViewModel,
                     appUpdate = localState.appUpdate,
+                    appLockState = appLockState,
+                    appLockViewModel = appLockViewModel,
                     onCheckAppUpdate = { localViewModel.checkForAppUpdate(automatic = false) },
                 )
                 RemoteAppSection.LOCAL_AI -> SynapseApp(viewModel = localViewModel)
