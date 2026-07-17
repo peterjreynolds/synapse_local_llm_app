@@ -265,6 +265,80 @@ class RoomRemoteChatCacheRepositoryTest {
     }
 
     @Test
+    fun hidingMessageLocallySurvivesServerRecacheAndRemovesSearchResult() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
+        val message = remoteMessage(PETER_ACCOUNT, "message-private", "key-private", FixedClock.now())
+            .copy(body = "Private phrase stays hidden")
+        repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(message)))
+
+        val receipt = repository.hideMessageLocally(PETER_ACCOUNT, ROOM_ID, message.messageId)
+
+        assertEquals(RemoteCacheMutation.MESSAGE_HIDDEN_LOCALLY, receipt.mutation)
+        assertTrue(repository.observeMessages(ROOM_ID).first().isEmpty())
+        assertTrue(repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "private")).isEmpty())
+
+        repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(message.copy(revision = 2))))
+
+        assertTrue(repository.observeMessages(ROOM_ID).first().isEmpty())
+        assertTrue(repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "private")).isEmpty())
+    }
+
+    @Test
+    fun hidingConversationLocallyKeepsPeerCopyAndAllowsOnlyNewHistoryToReturn() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        val room = remoteRoom(PETER_ACCOUNT, ROOM_ID, TRISH_PROFILE, "Peter, Trish")
+        cacheRooms(PETER_ACCOUNT, room)
+        val oldMessage = remoteMessage(PETER_ACCOUNT, "message-old", "key-old", FixedClock.now())
+            .copy(body = "Old local history")
+        repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(oldMessage)))
+        repository.saveDraft(RemoteMessageDraft(PETER_ACCOUNT, ROOM_ID, "Unsent thought", FixedClock.now()))
+
+        val hideReceipt = repository.hideConversationLocally(PETER_ACCOUNT, room)
+
+        assertEquals(RemoteCacheMutation.CONVERSATION_HIDDEN_LOCALLY, hideReceipt.mutation)
+        assertTrue(repository.observeRooms().first().isEmpty())
+        assertTrue(repository.observeMessages(ROOM_ID).first().isEmpty())
+        assertNull(repository.observeDraft(ROOM_ID).first())
+        assertTrue(repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "history")).isEmpty())
+
+        val newTimestamp = FixedClock.now().plusSeconds(60)
+        cacheRooms(PETER_ACCOUNT, room.copy(remoteUpdatedAt = newTimestamp))
+        val newMessage = remoteMessage(PETER_ACCOUNT, "message-new", "key-new", newTimestamp)
+            .copy(body = "New conversation activity")
+        repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(oldMessage, newMessage)))
+
+        assertEquals(listOf(ROOM_ID), repository.observeRooms().first().map(RemoteCachedRoom::roomId))
+        assertEquals(listOf("message-new"), repository.observeMessages(ROOM_ID).first().map { it.messageId.raw })
+        assertTrue(repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "history")).isEmpty())
+        assertEquals(
+            listOf("message-new"),
+            repository.searchMessages(SearchRemoteMessagesCommand(PETER_ACCOUNT, "activity"))
+                .map { it.messageId.raw },
+        )
+    }
+
+    @Test
+    fun explicitlyReopeningLocallyHiddenConversationDoesNotRestoreDeletedHistory() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        val room = remoteRoom(PETER_ACCOUNT, ROOM_ID, TRISH_PROFILE, "Peter, Trish")
+        cacheRooms(PETER_ACCOUNT, room)
+        repository.cacheMessages(
+            CacheRemoteMessagesCommand(
+                PETER_ACCOUNT,
+                listOf(remoteMessage(PETER_ACCOUNT, "message-old", "key-old", FixedClock.now())),
+            ),
+        )
+        repository.hideConversationLocally(PETER_ACCOUNT, room)
+
+        val receipt = repository.showConversationLocally(PETER_ACCOUNT, ROOM_ID)
+
+        assertEquals(RemoteCacheMutation.CONVERSATION_SHOWN_LOCALLY, receipt.mutation)
+        assertEquals(listOf(ROOM_ID), repository.observeRooms().first().map(RemoteCachedRoom::roomId))
+        assertTrue(repository.observeMessages(ROOM_ID).first().isEmpty())
+    }
+
+    @Test
     fun fullTextSearchRejectsUnboundedResultLimits() = runTest {
         repository.activateAccount(PETER_ACCOUNT)
 

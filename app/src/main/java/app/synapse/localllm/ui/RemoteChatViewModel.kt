@@ -220,6 +220,7 @@ class RemoteChatViewModel(
         val receipt = conversationGateway.openDirectRoom(
             OpenRemoteDirectRoomCommand(accountUid, targetUid),
         )
+        cacheRepository.showConversationLocally(accountUid, receipt.roomId)
         selectRoom(receipt.roomId)
     }
 
@@ -560,7 +561,7 @@ class RemoteChatViewModel(
         )
     }
 
-    fun deleteMessage(message: RemoteCachedMessage) = launchAction {
+    fun deleteMessageForEveryone(message: RemoteCachedMessage) = launchAction {
         conversationGateway.deleteMessage(
             ReviseRemoteMessageCommand(
                 accountUid = requireSignedInAccount().accountUid,
@@ -571,6 +572,24 @@ class RemoteChatViewModel(
             ),
         )
     }
+
+    fun deleteMessageForMe(message: RemoteCachedMessage) =
+        launchAction(successNotice = "Message removed from this phone.") {
+            cacheRepository.hideMessageLocally(
+                accountUid = requireSignedInAccount().accountUid,
+                roomId = message.roomId,
+                messageId = message.messageId,
+            )
+        }
+
+    fun deleteConversationForMe(room: RemoteCachedRoom) =
+        launchAction(successNotice = "Conversation removed from this phone.") {
+            cacheRepository.hideConversationLocally(
+                accountUid = requireSignedInAccount().accountUid,
+                room = room,
+            )
+            if (selectedRoomId.value == room.roomId) selectRoom(null)
+        }
 
     fun toggleReaction(
         message: RemoteCachedMessage,

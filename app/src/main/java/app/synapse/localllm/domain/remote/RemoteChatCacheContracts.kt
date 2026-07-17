@@ -268,6 +268,9 @@ enum class RemoteCacheMutation {
     CURSOR_SAVED,
     DRAFT_SAVED,
     DRAFT_CLEARED,
+    MESSAGE_HIDDEN_LOCALLY,
+    CONVERSATION_HIDDEN_LOCALLY,
+    CONVERSATION_SHOWN_LOCALLY,
 }
 
 data class RemoteCacheMutationReceipt(
@@ -316,6 +319,22 @@ interface RemoteChatCacheRepository {
     suspend fun saveDraft(draft: RemoteMessageDraft): RemoteCacheMutationReceipt
 
     suspend fun clearDraft(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCacheMutationReceipt
+
+    suspend fun hideMessageLocally(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        messageId: RemoteMessageId,
+    ): RemoteCacheMutationReceipt
+
+    suspend fun hideConversationLocally(
+        accountUid: RemoteAccountUid,
+        room: RemoteCachedRoom,
+    ): RemoteCacheMutationReceipt
+
+    suspend fun showConversationLocally(
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
     ): RemoteCacheMutationReceipt

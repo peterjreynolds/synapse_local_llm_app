@@ -183,7 +183,7 @@ class SynapseDatabaseMigrationTest {
     }
 
     @Test
-    fun migration8To15PreservesRowsAndBackfillsRoomParticipantsAndAuthors() {
+    fun migration8To16PreservesRowsAndBackfillsRoomParticipantsAndAuthors() {
         val helper = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(TEST_DATABASE_NAME)
@@ -224,13 +224,14 @@ class SynapseDatabaseMigrationTest {
                 SYNAPSE_DATABASE_MIGRATION_12_13,
                 SYNAPSE_DATABASE_MIGRATION_13_14,
                 SYNAPSE_DATABASE_MIGRATION_14_15,
+                SYNAPSE_DATABASE_MIGRATION_15_16,
             )
             .allowMainThreadQueries()
             .build()
         try {
             val migratedDatabase = database.openHelper.writableDatabase
 
-            assertEquals(15, migratedDatabase.version)
+            assertEquals(16, migratedDatabase.version)
             assertEquals(legacyRowsBeforeMigration, readVersion8LegacyRows(migratedDatabase))
             assertMainThreadPreservedWithVersion9Defaults(migratedDatabase)
             assertArchivedThreadPreserved(migratedDatabase)
@@ -246,7 +247,7 @@ class SynapseDatabaseMigrationTest {
     }
 
     @Test
-    fun migration9To15AddsAccountScopedRemoteCacheWithoutChangingLocalState() = runTest {
+    fun migration9To16AddsAccountScopedRemoteCacheWithoutChangingLocalState() = runTest {
         val settingsStore = SynapseSettingsStore(context)
         settingsStore.updateMemoryWritesEnabled(false)
         settingsStore.updateSmsAutoReplyEnabled(true)
@@ -292,13 +293,14 @@ class SynapseDatabaseMigrationTest {
                 SYNAPSE_DATABASE_MIGRATION_12_13,
                 SYNAPSE_DATABASE_MIGRATION_13_14,
                 SYNAPSE_DATABASE_MIGRATION_14_15,
+                SYNAPSE_DATABASE_MIGRATION_15_16,
             )
             .allowMainThreadQueries()
             .build()
         try {
             val migratedDatabase = database.openHelper.writableDatabase
 
-            assertEquals(15, migratedDatabase.version)
+            assertEquals(16, migratedDatabase.version)
             assertEquals(version9RowsBeforeMigration, readVersion9LocalRows(migratedDatabase))
             assertEquals(settingsBeforeMigration, settingsStore.settingsFlow.first())
             version12RemoteCacheTables.forEach { tableName ->
@@ -311,7 +313,7 @@ class SynapseDatabaseMigrationTest {
     }
 
     @Test
-    fun migration10To15PreservesRemoteMessagesAndBuildsSearchIndex() {
+    fun migration10To16PreservesRemoteMessagesAndBuildsSearchIndex() {
         val helper = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(TEST_DATABASE_NAME)
@@ -352,13 +354,14 @@ class SynapseDatabaseMigrationTest {
                 SYNAPSE_DATABASE_MIGRATION_12_13,
                 SYNAPSE_DATABASE_MIGRATION_13_14,
                 SYNAPSE_DATABASE_MIGRATION_14_15,
+                SYNAPSE_DATABASE_MIGRATION_15_16,
             )
             .allowMainThreadQueries()
             .build()
         try {
             val migratedDatabase = database.openHelper.writableDatabase
 
-            assertEquals(15, migratedDatabase.version)
+            assertEquals(16, migratedDatabase.version)
             migratedDatabase.query(
                 """
                 SELECT roomKind, directKey, peerUid, title, avatarObjectPath,
@@ -425,6 +428,23 @@ class SynapseDatabaseMigrationTest {
                     """.trimIndent(),
                 ),
             )
+            migratedDatabase.execSQL(
+                """
+                INSERT INTO remote_room_local_state (
+                    accountUid, remoteRoomId, hiddenThroughRemoteUpdatedAtEpochMillis,
+                    messagesHiddenThroughEpochMillis, updatedAtEpochMillis
+                ) VALUES ('peter-uid', 'direct-room', 5000, 5000, 5200)
+                """.trimIndent(),
+            )
+            migratedDatabase.execSQL(
+                """
+                INSERT INTO remote_message_local_state (
+                    accountUid, remoteRoomId, remoteMessageId, hiddenAtEpochMillis
+                ) VALUES ('peter-uid', 'direct-room', 'message-1', 5200)
+                """.trimIndent(),
+            )
+            assertEquals(1L, queryCount(migratedDatabase, "remote_room_local_state"))
+            assertEquals(1L, queryCount(migratedDatabase, "remote_message_local_state"))
             assertForeignKeysRemainValid(migratedDatabase)
         } finally {
             database.close()
@@ -1380,9 +1400,11 @@ class SynapseDatabaseMigrationTest {
         val version12RemoteCacheTables = listOf(
             "remote_message_cache",
             "remote_message_drafts",
+            "remote_message_local_state",
             "remote_message_outbox",
             "remote_profile_cache",
             "remote_room_cache",
+            "remote_room_local_state",
             "remote_sync_cursors",
         )
     }

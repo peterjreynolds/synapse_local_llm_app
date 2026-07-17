@@ -245,6 +245,22 @@ class RemoteChatSessionSynchronizerTest {
             roomId: RemoteRoomId,
         ): RemoteCacheMutationReceipt = receipt(RemoteCacheMutation.DRAFT_CLEARED)
 
+        override suspend fun hideMessageLocally(
+            accountUid: RemoteAccountUid,
+            roomId: RemoteRoomId,
+            messageId: RemoteMessageId,
+        ): RemoteCacheMutationReceipt = receipt(RemoteCacheMutation.MESSAGE_HIDDEN_LOCALLY)
+
+        override suspend fun hideConversationLocally(
+            accountUid: RemoteAccountUid,
+            room: RemoteCachedRoom,
+        ): RemoteCacheMutationReceipt = receipt(RemoteCacheMutation.CONVERSATION_HIDDEN_LOCALLY)
+
+        override suspend fun showConversationLocally(
+            accountUid: RemoteAccountUid,
+            roomId: RemoteRoomId,
+        ): RemoteCacheMutationReceipt = receipt(RemoteCacheMutation.CONVERSATION_SHOWN_LOCALLY)
+
         override suspend fun searchMessages(
             command: SearchRemoteMessagesCommand,
         ): List<RemoteMessageSearchResult> = emptyList()

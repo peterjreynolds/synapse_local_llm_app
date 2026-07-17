@@ -172,6 +172,47 @@ data class RemoteMessageDraftEntity(
 )
 
 @Entity(
+    tableName = "remote_room_local_state",
+    primaryKeys = ["accountUid", "remoteRoomId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RemoteRoomCacheEntity::class,
+            parentColumns = ["accountUid", "remoteRoomId"],
+            childColumns = ["accountUid", "remoteRoomId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("accountUid")],
+)
+data class RemoteRoomLocalStateEntity(
+    val accountUid: String,
+    val remoteRoomId: String,
+    val hiddenThroughRemoteUpdatedAtEpochMillis: Long?,
+    val messagesHiddenThroughEpochMillis: Long?,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "remote_message_local_state",
+    primaryKeys = ["accountUid", "remoteRoomId", "remoteMessageId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RemoteMessageCacheEntity::class,
+            parentColumns = ["accountUid", "remoteRoomId", "remoteMessageId"],
+            childColumns = ["accountUid", "remoteRoomId", "remoteMessageId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["accountUid", "remoteRoomId"])],
+)
+data class RemoteMessageLocalStateEntity(
+    val accountUid: String,
+    val remoteRoomId: String,
+    val remoteMessageId: String,
+    val hiddenAtEpochMillis: Long,
+)
+
+@Entity(
     tableName = "remote_sync_cursors",
     primaryKeys = ["accountUid", "collectionName", "scopeId"],
     indices = [Index("accountUid")],

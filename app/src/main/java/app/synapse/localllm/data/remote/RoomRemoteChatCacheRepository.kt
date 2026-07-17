@@ -4,11 +4,13 @@ import androidx.room.withTransaction
 import app.synapse.localllm.data.db.RemoteChatCacheDao
 import app.synapse.localllm.data.db.RemoteMessageCacheEntity
 import app.synapse.localllm.data.db.RemoteMessageDraftEntity
+import app.synapse.localllm.data.db.RemoteMessageLocalStateEntity
 import app.synapse.localllm.data.db.RemoteMessageOutboxEntity
 import app.synapse.localllm.data.db.RemoteMessageSearchEntity
 import app.synapse.localllm.data.db.RemoteMessageSearchRow
 import app.synapse.localllm.data.db.RemoteProfileCacheEntity
 import app.synapse.localllm.data.db.RemoteRoomCacheEntity
+import app.synapse.localllm.data.db.RemoteRoomLocalStateEntity
 import app.synapse.localllm.data.db.RemoteSyncCursorEntity
 import app.synapse.localllm.data.db.SynapseDatabase
 import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
@@ -185,6 +187,7 @@ class RoomRemoteChatCacheRepository(
                 remoteChatCacheDao.upsertMessageSearchEntries(
                     command.messages.mapNotNull(RemoteCachedMessage::toSearchEntity),
                 )
+                remoteChatCacheDao.deleteHiddenMessageSearchEntries(command.accountUid.raw)
             }
         }
         return receipt(command.accountUid, RemoteCacheMutation.MESSAGES_CACHED, command.messages.size)
@@ -274,6 +277,67 @@ class RoomRemoteChatCacheRepository(
         requireActiveAccount(accountUid)
         val affectedRows = remoteChatCacheDao.deleteDraft(accountUid.raw, roomId.raw)
         return receipt(accountUid, RemoteCacheMutation.DRAFT_CLEARED, affectedRows)
+    }
+
+    override suspend fun hideMessageLocally(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        messageId: RemoteMessageId,
+    ): RemoteCacheMutationReceipt {
+        requireActiveAccount(accountUid)
+        val hiddenAt = clock.now().toEpochMilli()
+        val affectedRows = database.withTransaction {
+            remoteChatCacheDao.upsertMessageLocalState(
+                RemoteMessageLocalStateEntity(
+                    accountUid = accountUid.raw,
+                    remoteRoomId = roomId.raw,
+                    remoteMessageId = messageId.raw,
+                    hiddenAtEpochMillis = hiddenAt,
+                ),
+            )
+            1 + remoteChatCacheDao.deleteMessageSearchEntries(
+                accountUid = accountUid.raw,
+                remoteRoomId = roomId.raw,
+                remoteMessageIds = listOf(messageId.raw),
+            )
+        }
+        return receipt(accountUid, RemoteCacheMutation.MESSAGE_HIDDEN_LOCALLY, affectedRows)
+    }
+
+    override suspend fun hideConversationLocally(
+        accountUid: RemoteAccountUid,
+        room: RemoteCachedRoom,
+    ): RemoteCacheMutationReceipt {
+        requireActiveAccount(accountUid)
+        require(room.accountUid == accountUid) { "Conversation and active account scopes must match." }
+        val hiddenAt = clock.now().toEpochMilli()
+        val affectedRows = database.withTransaction {
+            remoteChatCacheDao.upsertRoomLocalState(
+                RemoteRoomLocalStateEntity(
+                    accountUid = accountUid.raw,
+                    remoteRoomId = room.roomId.raw,
+                    hiddenThroughRemoteUpdatedAtEpochMillis = room.remoteUpdatedAt.toEpochMilli(),
+                    messagesHiddenThroughEpochMillis = maxOf(hiddenAt, room.remoteUpdatedAt.toEpochMilli()),
+                    updatedAtEpochMillis = hiddenAt,
+                ),
+            )
+            1 + remoteChatCacheDao.deleteRoomMessageSearchEntries(accountUid.raw, room.roomId.raw) +
+                remoteChatCacheDao.deleteDraft(accountUid.raw, room.roomId.raw)
+        }
+        return receipt(accountUid, RemoteCacheMutation.CONVERSATION_HIDDEN_LOCALLY, affectedRows)
+    }
+
+    override suspend fun showConversationLocally(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCacheMutationReceipt {
+        requireActiveAccount(accountUid)
+        val affectedRows = remoteChatCacheDao.showRoomLocally(
+            accountUid = accountUid.raw,
+            remoteRoomId = roomId.raw,
+            updatedAtEpochMillis = clock.now().toEpochMilli(),
+        )
+        return receipt(accountUid, RemoteCacheMutation.CONVERSATION_SHOWN_LOCALLY, affectedRows)
     }
 
     override suspend fun searchMessages(command: SearchRemoteMessagesCommand): List<RemoteMessageSearchResult> {

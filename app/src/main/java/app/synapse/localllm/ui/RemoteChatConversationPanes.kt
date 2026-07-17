@@ -1,6 +1,7 @@
 package app.synapse.localllm.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Badge
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -81,6 +84,7 @@ internal fun RemoteChatsPane(
             onMessageSearchChanged = viewModel::searchCachedMessages,
             onMessageSearchResultSelected = viewModel::openMessageSearchResult,
             onRoomPreferencesChanged = viewModel::updateRoomPreferences,
+            onDeleteConversation = viewModel::deleteConversationForMe,
             onCreateGroup = { showGroupCreation = true },
             isActionRunning = groupState.isActionRunning,
         )
@@ -104,7 +108,8 @@ internal fun RemoteChatsPane(
             onReply = viewModel::replyToMessage,
             onCancelReply = viewModel::cancelReply,
             onEdit = viewModel::editMessage,
-            onDelete = viewModel::deleteMessage,
+            onDeleteForMe = viewModel::deleteMessageForMe,
+            onDeleteForEveryone = viewModel::deleteMessageForEveryone,
             onLoadOlder = viewModel::loadOlderMessages,
             onJumpToMessage = viewModel::jumpToMessage,
             onMessageRevealed = viewModel::consumeMessageReveal,
@@ -134,6 +139,7 @@ private fun RemoteRoomList(
     onMessageSearchChanged: (String) -> Unit,
     onMessageSearchResultSelected: (RemoteMessageSearchResult) -> Unit,
     onRoomPreferencesChanged: (RemoteCachedRoom, Boolean, Boolean, RemoteRoomMuteDuration?) -> Unit,
+    onDeleteConversation: (RemoteCachedRoom) -> Unit,
     onCreateGroup: () -> Unit,
     isActionRunning: Boolean,
 ) {
@@ -141,6 +147,8 @@ private fun RemoteRoomList(
     var unreadOnly by rememberSaveable { mutableStateOf(false) }
     var showArchived by rememberSaveable { mutableStateOf(false) }
     var preferenceRoomId by rememberSaveable { mutableStateOf<String?>(null) }
+    var actionRoomId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleteRoomId by rememberSaveable { mutableStateOf<String?>(null) }
     val visibleRooms = remember(state.rooms, state.profiles, roomSearchQuery, unreadOnly, showArchived) {
         buildRemoteRoomPresentation(
             rooms = state.rooms,
@@ -274,15 +282,39 @@ private fun RemoteRoomList(
                     )
                 },
                 trailingContent = {
-                    Column(horizontalAlignment = Alignment.End) {
-                        if (room.isPinned) Text("Pinned", style = MaterialTheme.typography.labelSmall)
-                        if (room.isArchived) Text("Archived", style = MaterialTheme.typography.labelSmall)
-                        if (room.isMuted) Text("Muted", style = MaterialTheme.typography.labelSmall)
-                        if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
-                        TextButton(onClick = { preferenceRoomId = room.roomId.raw }) { Text("Manage") }
+                    Box {
+                        Column(horizontalAlignment = Alignment.End) {
+                            if (room.isPinned) Text("Pinned", style = MaterialTheme.typography.labelSmall)
+                            if (room.isArchived) Text("Archived", style = MaterialTheme.typography.labelSmall)
+                            if (room.isMuted) Text("Muted", style = MaterialTheme.typography.labelSmall)
+                            if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
+                        }
+                        DropdownMenu(
+                            expanded = actionRoomId == room.roomId.raw,
+                            onDismissRequest = { actionRoomId = null },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Conversation settings") },
+                                onClick = {
+                                    actionRoomId = null
+                                    preferenceRoomId = room.roomId.raw
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete from this phone") },
+                                onClick = {
+                                    actionRoomId = null
+                                    deleteRoomId = room.roomId.raw
+                                },
+                            )
+                        }
                     }
                 },
-                modifier = Modifier.clickable { onRoomSelected(room) },
+                modifier = Modifier.combinedClickable(
+                    onClick = { onRoomSelected(room) },
+                    onLongClickLabel = "Conversation options",
+                    onLongClick = { actionRoomId = room.roomId.raw },
+                ),
             )
             HorizontalDivider()
             }
@@ -296,6 +328,30 @@ private fun RemoteRoomList(
             onSave = { archived, pinned, muteDuration ->
                 onRoomPreferencesChanged(room, archived, pinned, muteDuration)
                 preferenceRoomId = null
+            },
+        )
+    }
+    state.rooms.firstOrNull { room -> room.roomId.raw == deleteRoomId }?.let { room ->
+        AlertDialog(
+            onDismissRequest = { deleteRoomId = null },
+            title = { Text("Delete conversation from this phone?") },
+            text = {
+                Text(
+                    "This removes the conversation and its downloaded history only from this phone. " +
+                        "Other members keep their copies, and new messages can make the chat reappear.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleteRoomId = null
+                        onDeleteConversation(room)
+                    },
+                    enabled = !state.isActionRunning,
+                ) { Text("Delete for me") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteRoomId = null }) { Text("Cancel") }
             },
         )
     }

@@ -281,8 +281,8 @@ class RemoteChatPresentationTest {
     @Test
     fun messageActionsStayContextualToLongPressMenuPermissions() {
         assertEquals(
-            listOf(RemoteMessageAction.REPLY, RemoteMessageAction.COPY),
-            remoteMessageActions(messageDeleted = false, isCurrentAccount = false, canDelete = false),
+            listOf(RemoteMessageAction.REPLY, RemoteMessageAction.COPY, RemoteMessageAction.DELETE),
+            remoteMessageActions(messageDeleted = false, isCurrentAccount = false),
         )
         assertEquals(
             listOf(
@@ -291,11 +291,11 @@ class RemoteChatPresentationTest {
                 RemoteMessageAction.EDIT,
                 RemoteMessageAction.DELETE,
             ),
-            remoteMessageActions(messageDeleted = false, isCurrentAccount = true, canDelete = true),
+            remoteMessageActions(messageDeleted = false, isCurrentAccount = true),
         )
         assertEquals(
-            emptyList<RemoteMessageAction>(),
-            remoteMessageActions(messageDeleted = true, isCurrentAccount = true, canDelete = true),
+            listOf(RemoteMessageAction.DELETE),
+            remoteMessageActions(messageDeleted = true, isCurrentAccount = true),
         )
     }
 

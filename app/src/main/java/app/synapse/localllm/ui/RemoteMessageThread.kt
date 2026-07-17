@@ -83,7 +83,8 @@ internal fun RemoteMessageThread(
     onReply: (RemoteMessageId) -> Unit,
     onCancelReply: () -> Unit,
     onEdit: (RemoteCachedMessage, String) -> Unit,
-    onDelete: (RemoteCachedMessage) -> Unit,
+    onDeleteForMe: (RemoteCachedMessage) -> Unit,
+    onDeleteForEveryone: (RemoteCachedMessage) -> Unit,
     onLoadOlder: () -> Unit,
     onJumpToMessage: (RemoteMessageId) -> Unit,
     onMessageRevealed: () -> Unit,
@@ -223,7 +224,7 @@ internal fun RemoteMessageThread(
                             state.messages.firstOrNull { candidate -> candidate.messageId == replyId }
                         },
                         isCurrentAccount = message.senderUid.raw == state.account?.accountUid?.raw,
-                        canDelete = message.senderUid.raw == state.account?.accountUid?.raw ||
+                        canDeleteForEveryone = message.senderUid.raw == state.account?.accountUid?.raw ||
                             (
                                 message.authorKind == "SYNAPSE_AI" &&
                                     state.roomAiConfiguration?.localAiHostUid == state.account?.accountUid
@@ -239,7 +240,8 @@ internal fun RemoteMessageThread(
                         },
                         onReply = { onReply(message.messageId) },
                         onEdit = { body -> onEdit(message, body) },
-                        onDelete = { onDelete(message) },
+                        onDeleteForMe = { onDeleteForMe(message) },
+                        onDeleteForEveryone = { onDeleteForEveryone(message) },
                         attachmentDownloads = state.attachmentDownloads,
                         onDownloadAttachment = { attachmentId, thumbnail ->
                             onDownloadAttachment(message, attachmentId, thumbnail)
@@ -371,11 +373,12 @@ private fun RemoteMessageBubble(
     message: RemoteCachedMessage,
     repliedMessage: RemoteCachedMessage?,
     isCurrentAccount: Boolean,
-    canDelete: Boolean,
+    canDeleteForEveryone: Boolean,
     senderDisplayName: String?,
     onReply: () -> Unit,
     onEdit: (String) -> Unit,
-    onDelete: () -> Unit,
+    onDeleteForMe: () -> Unit,
+    onDeleteForEveryone: () -> Unit,
     attachmentDownloads: Map<String, RemoteAttachmentDownloadUi>,
     onDownloadAttachment: (RemoteAttachmentId, Boolean) -> Unit,
     onCancelAttachmentDownload: (RemoteAttachmentId, Boolean) -> Unit,
@@ -386,7 +389,6 @@ private fun RemoteMessageBubble(
     val availableActions = remoteMessageActions(
         messageDeleted = message.deletedAt != null,
         isCurrentAccount = isCurrentAccount,
-        canDelete = canDelete,
     )
     var showMessageActions by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var showEditDialog by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
@@ -526,13 +528,29 @@ private fun RemoteMessageBubble(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete message?") },
-            text = { Text("The message will remain as a deletion marker for everyone in the room.") },
+            title = { Text("Delete message") },
+            text = {
+                Text(
+                    if (canDeleteForEveryone) {
+                        "Remove it only from this phone, or replace it with a deletion marker for everyone."
+                    } else {
+                        "This removes the message only from this phone. Other people keep their copy."
+                    },
+                )
+            },
             confirmButton = {
-                TextButton(onClick = {
-                    onDelete()
-                    showDeleteDialog = false
-                }) { Text("Delete") }
+                Column(horizontalAlignment = Alignment.End) {
+                    if (canDeleteForEveryone) {
+                        TextButton(onClick = {
+                            onDeleteForEveryone()
+                            showDeleteDialog = false
+                        }) { Text("Delete for everyone") }
+                    }
+                    TextButton(onClick = {
+                        onDeleteForMe()
+                        showDeleteDialog = false
+                    }) { Text("Delete for me") }
+                }
             },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") } },
         )
@@ -543,20 +561,19 @@ internal enum class RemoteMessageAction(val label: String) {
     REPLY("Reply"),
     COPY("Copy"),
     EDIT("Edit"),
-    DELETE("Delete"),
+    DELETE("Delete…"),
 }
 
 internal fun remoteMessageActions(
     messageDeleted: Boolean,
     isCurrentAccount: Boolean,
-    canDelete: Boolean,
 ): List<RemoteMessageAction> {
-    if (messageDeleted) return emptyList()
+    if (messageDeleted) return listOf(RemoteMessageAction.DELETE)
     return buildList {
         add(RemoteMessageAction.REPLY)
         add(RemoteMessageAction.COPY)
         if (isCurrentAccount) add(RemoteMessageAction.EDIT)
-        if (canDelete) add(RemoteMessageAction.DELETE)
+        add(RemoteMessageAction.DELETE)
     }
 }
 
