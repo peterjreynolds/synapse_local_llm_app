@@ -38,34 +38,22 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.Memory
-import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,8 +65,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -99,10 +85,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboard
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -127,8 +111,6 @@ import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelDeviceCompatibilityAssessment
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
-import app.synapse.localllm.domain.runtime.RuntimeStartStatus
-import app.synapse.localllm.domain.runtime.RuntimeStatus
 import app.synapse.localllm.domain.runtime.formatModelDownloadByteCount
 import app.synapse.localllm.domain.runtime.formatModelDownloadProgressText
 import app.synapse.localllm.domain.settings.InferenceRuntimeBackend
@@ -548,116 +530,6 @@ private fun SynapseScreen(
                 onRoomRenamed = onRoomRenamed,
                 onRoomArchived = onRoomArchived,
                 onRoomDeleted = onRoomDeleted,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SynapseTopBar(
-    state: SynapseUiState,
-    onPanelSelected: (SynapsePanel) -> Unit,
-    onRoomDrawerOpen: () -> Unit,
-    onRuntimeCheck: () -> Unit,
-    onRuntimeStart: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(
-            onClick = onRoomDrawerOpen,
-            modifier = Modifier.size(40.dp),
-        ) {
-            Icon(
-                Icons.Rounded.Menu,
-                contentDescription = "Rooms",
-                tint = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-        Icon(
-            painter = painterResource(R.drawable.synapse_guild_mark),
-            contentDescription = null,
-            tint = Color.Unspecified,
-            modifier = Modifier.size(24.dp),
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = "Synapse Chat",
-            color = MaterialTheme.colorScheme.onBackground,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        val actionableRuntimeLabel = state.runtimeStatus.toActionableRuntimeLabel()
-        if (actionableRuntimeLabel == null) {
-            Spacer(modifier = Modifier.weight(1f))
-        } else {
-            Text(
-                text = actionableRuntimeLabel,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        IconButton(
-            onClick = onRuntimeStart,
-            modifier = Modifier.size(40.dp),
-        ) {
-            Icon(
-                Icons.Rounded.PlayArrow,
-                contentDescription = "Start llama-server",
-                tint = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-        if (actionableRuntimeLabel != null) {
-            IconButton(
-                onClick = {
-                    onRuntimeCheck()
-                    onPanelSelected(SynapsePanel.SETTINGS)
-                },
-                modifier = Modifier.size(40.dp),
-            ) {
-                Icon(
-                    Icons.Rounded.ErrorOutline,
-                    contentDescription = "Open runtime diagnostics",
-                    tint = MaterialTheme.colorScheme.error,
-                )
-            }
-        }
-        IconButton(
-            onClick = { onPanelSelected(SynapsePanel.LIBRARY) },
-            modifier = Modifier.size(40.dp),
-        ) {
-            Icon(
-                Icons.Rounded.FolderOpen,
-                contentDescription = "Library",
-                tint = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-        IconButton(
-            onClick = { onPanelSelected(SynapsePanel.MEMORY) },
-            modifier = Modifier.size(40.dp),
-        ) {
-            Icon(
-                Icons.Rounded.Memory,
-                contentDescription = "Memory",
-                tint = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-        IconButton(
-            onClick = { onPanelSelected(SynapsePanel.SETTINGS) },
-            modifier = Modifier.size(40.dp),
-        ) {
-            Icon(
-                Icons.Rounded.Settings,
-                contentDescription = "Settings",
-                tint = MaterialTheme.colorScheme.onBackground,
             )
         }
     }
@@ -1172,206 +1044,6 @@ private fun DetachedTypingIndicator(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium,
             )
-        }
-    }
-}
-
-@Composable
-private fun ComposerBar(
-    state: SynapseUiState,
-    onComposerChanged: (String) -> Unit,
-    onSend: () -> Unit,
-    onStop: () -> Unit,
-    onAttach: () -> Unit,
-    onRemoveAttachment: (Int) -> Unit,
-    onStartSpeech: () -> Unit,
-    onVoiceModeToggle: () -> Unit,
-    onMentionSynapse: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val synapseIsActive = state.currentRoomMembers.any { member ->
-        member.isActive && member.participant.id == BuiltInParticipantIds.SYNAPSE_LOCAL_AI
-    }
-    val sendAndHideKeyboard = {
-        keyboardController?.hide()
-        onSend()
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-    ) {
-        VoiceModeControlRow(
-            voiceMode = state.voiceMode,
-            onVoiceModeToggle = onVoiceModeToggle,
-        )
-        if (synapseIsActive) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = onMentionSynapse) {
-                    Text("@Synapse")
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        if (state.pendingAttachments.isNotEmpty()) {
-            AttachmentStrip(
-                attachments = state.pendingAttachments,
-                onRemoveAttachment = onRemoveAttachment,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(32.dp),
-            color = Color(0xFF111411),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onAttach) {
-                    Icon(
-                        Icons.Rounded.Add,
-                        contentDescription = "Attach",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                TextField(
-                    value = state.composerText,
-                    onValueChange = onComposerChanged,
-                    placeholder = { Text("Message room") },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 5,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { sendAndHideKeyboard() }),
-                    colors = TextFieldDefaults.colors(
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        cursorColor = MaterialTheme.colorScheme.primary,
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        disabledContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                    ),
-                )
-                IconButton(onClick = onStartSpeech) {
-                    Icon(
-                        Icons.Rounded.Mic,
-                        contentDescription = "Voice input",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                IconButton(
-                    onClick = if (state.isSending) onStop else sendAndHideKeyboard,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                ) {
-                    Icon(
-                        imageVector = if (state.isSending) {
-                            Icons.Rounded.Stop
-                        } else {
-                            Icons.AutoMirrored.Rounded.Send
-                        },
-                        contentDescription = if (state.isSending) "Stop" else "Send",
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun VoiceModeControlRow(
-    voiceMode: VoiceModeUiState,
-    onVoiceModeToggle: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = voiceMode.toDisplayLabel(),
-                modifier = Modifier.weight(1f),
-                color = if (voiceMode.status == VoiceModeStatus.ERROR) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            TextButton(onClick = onVoiceModeToggle) {
-                Icon(
-                    imageVector = if (voiceMode.isActive) {
-                        Icons.Rounded.Stop
-                    } else {
-                        Icons.Rounded.Mic
-                    },
-                    contentDescription = null,
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(voiceMode.toActionLabel())
-            }
-        }
-    }
-}
-
-@Composable
-private fun AttachmentStrip(
-    attachments: List<PendingAttachment>,
-    onRemoveAttachment: (Int) -> Unit,
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        attachments.forEachIndexed { index, attachment ->
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(8.dp),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Rounded.FolderOpen, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = attachment.displayName,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = attachment.byteCount?.let(::formatByteCount).orEmpty(),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                    TextButton(onClick = { onRemoveAttachment(index) }) {
-                        Text("Remove")
-                    }
-                }
-            }
         }
     }
 }
@@ -2558,45 +2230,6 @@ private fun inferAttachmentKind(mimeType: String?, displayName: String): Attachm
         else -> AttachmentKind.FILE
     }
 
-private fun RuntimeStatus.toActionableRuntimeLabel(): String? =
-    when (this) {
-        is RuntimeStatus.Ready -> null
-        is RuntimeStatus.Starting ->
-            when (receipt.status) {
-                RuntimeStartStatus.EMBEDDED_MODEL_MISSING,
-                RuntimeStartStatus.TERMUX_UNAVAILABLE,
-                RuntimeStartStatus.TERMUX_PERMISSION_MISSING,
-                RuntimeStartStatus.FAILED,
-                -> receipt.message
-
-                RuntimeStartStatus.SENT_TO_TERMUX,
-                RuntimeStartStatus.EMBEDDED_MODEL_READY,
-                -> null
-            }
-
-        RuntimeStatus.Unknown -> null
-        is RuntimeStatus.Unreachable -> reason
-    }
-
-private fun VoiceModeUiState.toDisplayLabel(): String =
-    when (status) {
-        VoiceModeStatus.OFF -> "Voice Mode off"
-        VoiceModeStatus.LISTENING -> "Voice Mode listening"
-        VoiceModeStatus.PROCESSING -> "Voice Mode processing"
-        VoiceModeStatus.SPEAKING -> "Voice Mode speaking"
-        VoiceModeStatus.ERROR -> errorMessage ?: "Voice Mode paused after an error"
-    }
-
-private fun VoiceModeUiState.toActionLabel(): String =
-    when (status) {
-        VoiceModeStatus.OFF -> "Voice Mode"
-        VoiceModeStatus.ERROR -> "Retry Voice"
-        VoiceModeStatus.LISTENING,
-        VoiceModeStatus.PROCESSING,
-        VoiceModeStatus.SPEAKING,
-        -> "Stop Voice"
-    }
-
 private fun MemoryKind.toDisplayLabel(): String =
     name.lowercase().replaceFirstChar { firstCharacter ->
         if (firstCharacter.isLowerCase()) {
@@ -2647,7 +2280,7 @@ private fun ModelPromptProfile.toPromptProfileShortLabel(): String =
         ModelPromptProfile.PLAIN_COMPLETION -> "Plain"
     }
 
-private fun formatByteCount(byteCount: Long): String =
+internal fun formatByteCount(byteCount: Long): String =
     when {
         byteCount >= GIB -> "${byteCount / GIB} GB"
         byteCount >= MIB -> "${byteCount / MIB} MB"
