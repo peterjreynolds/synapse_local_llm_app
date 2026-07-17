@@ -81,7 +81,6 @@ internal fun RemoteMessageThread(
     onCancelReply: () -> Unit,
     onEdit: (RemoteCachedMessage, String) -> Unit,
     onDelete: (RemoteCachedMessage) -> Unit,
-    onReaction: (RemoteCachedMessage, String) -> Unit,
     onLoadOlder: () -> Unit,
     onJumpToMessage: (RemoteMessageId) -> Unit,
     onMessageRevealed: () -> Unit,
@@ -226,7 +225,6 @@ internal fun RemoteMessageThread(
                                 message.authorKind == "SYNAPSE_AI" &&
                                     state.roomAiConfiguration?.localAiHostUid == state.account?.accountUid
                                 ),
-                        ownReactions = state.ownReactions[message.messageId].orEmpty(),
                         senderDisplayName = if (message.authorKind == "SYNAPSE_AI") {
                             "Synapse • Phone-local AI"
                         } else if (room?.kind == RemoteRoomKind.GROUP) {
@@ -239,7 +237,6 @@ internal fun RemoteMessageThread(
                         onReply = { onReply(message.messageId) },
                         onEdit = { body -> onEdit(message, body) },
                         onDelete = { onDelete(message) },
-                        onReaction = { emoji -> onReaction(message, emoji) },
                         attachmentDownloads = state.attachmentDownloads,
                         onDownloadAttachment = { attachmentId, thumbnail ->
                             onDownloadAttachment(message, attachmentId, thumbnail)
@@ -372,12 +369,10 @@ private fun RemoteMessageBubble(
     repliedMessage: RemoteCachedMessage?,
     isCurrentAccount: Boolean,
     canDelete: Boolean,
-    ownReactions: Set<String>,
     senderDisplayName: String?,
     onReply: () -> Unit,
     onEdit: (String) -> Unit,
     onDelete: () -> Unit,
-    onReaction: (String) -> Unit,
     attachmentDownloads: Map<String, RemoteAttachmentDownloadUi>,
     onDownloadAttachment: (RemoteAttachmentId, Boolean) -> Unit,
     onCancelAttachmentDownload: (RemoteAttachmentId, Boolean) -> Unit,
@@ -440,15 +435,6 @@ private fun RemoteMessageBubble(
                 if (message.editedAt != null && message.deletedAt == null) {
                     Text("Edited", style = MaterialTheme.typography.labelSmall)
                 }
-                if (message.reactionCounts.isNotEmpty()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        message.reactionCounts.toSortedMap().forEach { (emoji, count) ->
-                            TextButton(onClick = { onReaction(emoji) }) {
-                                Text("$emoji $count${if (emoji in ownReactions) " •" else ""}")
-                            }
-                        }
-                    }
-                }
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (message.deletedAt == null) {
                         TextButton(onClick = onReply) { Text("Reply") }
@@ -468,13 +454,6 @@ private fun RemoteMessageBubble(
                     }
                     if (canDelete && message.deletedAt == null) {
                         TextButton(onClick = { showDeleteDialog = true }) { Text("Delete") }
-                    }
-                }
-                if (message.deletedAt == null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        DEFAULT_REMOTE_REACTIONS.forEach { emoji ->
-                            TextButton(onClick = { onReaction(emoji) }) { Text(emoji) }
-                        }
                     }
                 }
                 Text(
@@ -555,5 +534,4 @@ internal fun remoteMessageDeliveryLabel(message: RemoteCachedMessage): String =
         RemoteMessageDeliveryState.FAILED -> message.failureReason ?: "Send failed"
     }
 
-private val DEFAULT_REMOTE_REACTIONS = listOf("👍", "❤️", "😂")
 private const val MAXIMUM_MESSAGE_LENGTH = 4_000

@@ -105,7 +105,6 @@ internal fun RemoteChatsPane(
             onCancelReply = viewModel::cancelReply,
             onEdit = viewModel::editMessage,
             onDelete = viewModel::deleteMessage,
-            onReaction = viewModel::toggleReaction,
             onLoadOlder = viewModel::loadOlderMessages,
             onJumpToMessage = viewModel::jumpToMessage,
             onMessageRevealed = viewModel::consumeMessageReveal,

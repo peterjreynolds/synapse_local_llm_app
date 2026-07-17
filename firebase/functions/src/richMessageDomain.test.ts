@@ -41,6 +41,16 @@ test("normalizes bounded send and edit commands", () => {
     "",
   );
   assert.equal(
+    parseSendRemoteMessageCommand({
+      body: "Hey from Gboard 😀",
+      clientCreatedAtMillis: 1_000,
+      messageId: "message-emoji",
+      replyToMessageId: null,
+      roomId,
+    }).body,
+    "Hey from Gboard 😀",
+  );
+  assert.equal(
     parseEditRemoteMessageCommand({
       body: "Edited",
       expectedRevision: 2,
