@@ -278,6 +278,27 @@ class RemoteChatPresentationTest {
         assertTrue(REMOTE_FILE_AND_AUDIO_MIME_TYPES.any { mimeType -> mimeType.startsWith("audio/") })
     }
 
+    @Test
+    fun messageActionsStayContextualToLongPressMenuPermissions() {
+        assertEquals(
+            listOf(RemoteMessageAction.REPLY, RemoteMessageAction.COPY),
+            remoteMessageActions(messageDeleted = false, isCurrentAccount = false, canDelete = false),
+        )
+        assertEquals(
+            listOf(
+                RemoteMessageAction.REPLY,
+                RemoteMessageAction.COPY,
+                RemoteMessageAction.EDIT,
+                RemoteMessageAction.DELETE,
+            ),
+            remoteMessageActions(messageDeleted = false, isCurrentAccount = true, canDelete = true),
+        )
+        assertEquals(
+            emptyList<RemoteMessageAction>(),
+            remoteMessageActions(messageDeleted = true, isCurrentAccount = true, canDelete = true),
+        )
+    }
+
     private fun profile(
         isOnline: Boolean,
         lastSeenAt: Instant?,

@@ -1,6 +1,7 @@
 package app.synapse.localllm.ui
 
 import android.content.ClipData
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -380,6 +383,12 @@ private fun RemoteMessageBubble(
 ) {
     val clipboard = LocalClipboard.current
     val coroutineScope = rememberCoroutineScope()
+    val availableActions = remoteMessageActions(
+        messageDeleted = message.deletedAt != null,
+        isCurrentAccount = isCurrentAccount,
+        canDelete = canDelete,
+    )
+    var showMessageActions by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var showEditDialog by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var editText by rememberSaveable(message.messageId.raw) { mutableStateOf(message.body) }
     var showDeleteDialog by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
@@ -387,89 +396,104 @@ private fun RemoteMessageBubble(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isCurrentAccount) Arrangement.End else Arrangement.Start,
     ) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = if (isCurrentAccount) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
-            modifier = Modifier.fillMaxWidth(0.82f),
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                if (!isCurrentAccount && senderDisplayName != null) {
-                    Text(
-                        senderDisplayName,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                }
-                message.replyToMessageId?.let { replyId ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().clickable { onJumpToReply(replyId) },
-                    ) {
+        Box {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (isCurrentAccount) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                modifier = Modifier
+                    .fillMaxWidth(0.82f)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClickLabel = "Message options",
+                        onLongClick = {
+                            if (availableActions.isNotEmpty()) showMessageActions = true
+                        },
+                    ),
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    if (!isCurrentAccount && senderDisplayName != null) {
                         Text(
-                            text = repliedMessage?.let { replied ->
-                                if (replied.deletedAt != null) "Message deleted" else replied.body.take(100)
-                            } ?: "Open replied message",
+                            senderDisplayName,
                             style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(8.dp),
+                            fontWeight = FontWeight.SemiBold,
                         )
+                        Spacer(Modifier.height(2.dp))
                     }
-                    Spacer(Modifier.height(6.dp))
-                }
-                Text(if (message.deletedAt != null) "Message deleted" else message.body)
-                if (message.deletedAt == null) {
-                    message.attachments.forEach { attachment ->
-                        RemoteMessageAttachmentCard(
-                            attachment = attachment,
-                            downloads = attachmentDownloads,
-                            onDownload = onDownloadAttachment,
-                            onCancelDownload = onCancelAttachmentDownload,
-                        )
+                    message.replyToMessageId?.let { replyId ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { onJumpToReply(replyId) },
+                        ) {
+                            Text(
+                                text = repliedMessage?.let { replied ->
+                                    if (replied.deletedAt != null) "Message deleted" else replied.body.take(100)
+                                } ?: "Open replied message",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(8.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
                     }
-                }
-                if (message.editedAt != null && message.deletedAt == null) {
-                    Text("Edited", style = MaterialTheme.typography.labelSmall)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(if (message.deletedAt != null) "Message deleted" else message.body)
                     if (message.deletedAt == null) {
-                        TextButton(onClick = onReply) { Text("Reply") }
-                        TextButton(onClick = {
-                            coroutineScope.launch {
-                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Synapse message", message.body)))
-                            }
-                        }) {
-                            Text("Copy")
+                        message.attachments.forEach { attachment ->
+                            RemoteMessageAttachmentCard(
+                                attachment = attachment,
+                                downloads = attachmentDownloads,
+                                onDownload = onDownloadAttachment,
+                                onCancelDownload = onCancelAttachmentDownload,
+                            )
                         }
                     }
-                    if (isCurrentAccount && message.deletedAt == null) {
-                        TextButton(onClick = {
-                            editText = message.body
-                            showEditDialog = true
-                        }) { Text("Edit") }
+                    if (message.editedAt != null && message.deletedAt == null) {
+                        Text("Edited", style = MaterialTheme.typography.labelSmall)
                     }
-                    if (canDelete && message.deletedAt == null) {
-                        TextButton(onClick = { showDeleteDialog = true }) { Text("Delete") }
+                    Text(
+                        text = remoteMessageTimestamp(message),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = remoteMessageDeliveryLabel(message),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
                     }
                 }
-                Text(
-                    text = remoteMessageTimestamp(message),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = remoteMessageDeliveryLabel(message),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            DropdownMenu(
+                expanded = showMessageActions,
+                onDismissRequest = { showMessageActions = false },
+            ) {
+                availableActions.forEach { action ->
+                    DropdownMenuItem(
+                        text = { Text(action.label) },
+                        onClick = {
+                            showMessageActions = false
+                            when (action) {
+                                RemoteMessageAction.REPLY -> onReply()
+                                RemoteMessageAction.COPY -> coroutineScope.launch {
+                                    clipboard.setClipEntry(
+                                        ClipEntry(ClipData.newPlainText("Synapse message", message.body)),
+                                    )
+                                }
+                                RemoteMessageAction.EDIT -> {
+                                    editText = message.body
+                                    showEditDialog = true
+                                }
+                                RemoteMessageAction.DELETE -> showDeleteDialog = true
+                            }
                         },
                     )
                 }
@@ -512,6 +536,27 @@ private fun RemoteMessageBubble(
             },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") } },
         )
+    }
+}
+
+internal enum class RemoteMessageAction(val label: String) {
+    REPLY("Reply"),
+    COPY("Copy"),
+    EDIT("Edit"),
+    DELETE("Delete"),
+}
+
+internal fun remoteMessageActions(
+    messageDeleted: Boolean,
+    isCurrentAccount: Boolean,
+    canDelete: Boolean,
+): List<RemoteMessageAction> {
+    if (messageDeleted) return emptyList()
+    return buildList {
+        add(RemoteMessageAction.REPLY)
+        add(RemoteMessageAction.COPY)
+        if (isCurrentAccount) add(RemoteMessageAction.EDIT)
+        if (canDelete) add(RemoteMessageAction.DELETE)
     }
 }
 
