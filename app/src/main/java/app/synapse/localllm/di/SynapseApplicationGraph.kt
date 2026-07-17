@@ -10,6 +10,7 @@ import app.synapse.localllm.application.RemoteNotificationNavigationCoordinator
 import app.synapse.localllm.application.RemoteRoomVisibilityTracker
 import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.application.SmsAutoReplyCoordinator
+import app.synapse.localllm.data.appearance.AndroidChatAppearanceRepository
 import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
 import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
@@ -223,6 +224,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
 
     val settingsStore = SynapseSettingsStore(applicationContext)
     val appLockRepository = AndroidAppLockRepository(applicationContext)
+    val chatAppearanceRepository = AndroidChatAppearanceRepository(applicationContext, clock)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
     val modelCatalogRepository: ModelCatalogRepository = BuiltInModelCatalogRepository()
     val deviceRuntimeCapabilitiesReader = AndroidDeviceRuntimeCapabilitiesReader(applicationContext)

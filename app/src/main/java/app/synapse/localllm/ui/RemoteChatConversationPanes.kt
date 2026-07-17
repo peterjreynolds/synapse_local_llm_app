@@ -18,11 +18,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,6 +69,8 @@ internal fun RemoteChatsPane(
     accountState: RemoteAccountUiState,
     groupState: RemoteGroupUiState,
     groupViewModel: RemoteGroupViewModel,
+    appearanceState: ChatAppearanceUiState,
+    appearanceViewModel: ChatAppearanceViewModel,
 ) {
     var showGroupCreation by rememberSaveable { mutableStateOf(false) }
     val selectedRoomId = state.selectedRoomId
@@ -115,6 +120,10 @@ internal fun RemoteChatsPane(
             onMessageRevealed = viewModel::consumeMessageReveal,
             onLocalAiConfigurationChanged = viewModel::updateRoomAiConfiguration,
             onMentionSynapse = viewModel::insertRemoteSynapseMention,
+            appearanceState = appearanceState,
+            onBubblePaletteSelected = appearanceViewModel::selectBubblePalette,
+            onBackgroundSelected = appearanceViewModel::selectBackground,
+            onResetAppearance = appearanceViewModel::resetAppearance,
             accountState = accountState,
             groupState = groupState,
             groupViewModel = groupViewModel,
@@ -159,39 +168,46 @@ private fun RemoteRoomList(
         )
     }
     Column(modifier = Modifier.fillMaxSize()) {
-        Button(
-            onClick = onCreateGroup,
-            enabled = !isActionRunning,
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("New group")
+            OutlinedTextField(
+                value = roomSearchQuery,
+                onValueChange = { value ->
+                    val normalizedQuery = value.take(MAXIMUM_VISIBLE_SEARCH_QUERY_LENGTH)
+                    roomSearchQuery = normalizedQuery
+                    onMessageSearchChanged(normalizedQuery)
+                },
+                modifier = Modifier.weight(1f),
+                label = { Text("Search chats and messages") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                singleLine = true,
+            )
+            IconButton(
+                onClick = onCreateGroup,
+                enabled = !isActionRunning,
+            ) {
+                Icon(Icons.Default.GroupAdd, contentDescription = "New group")
+            }
         }
-        OutlinedTextField(
-            value = roomSearchQuery,
-            onValueChange = { value -> roomSearchQuery = value.take(MAXIMUM_VISIBLE_SEARCH_QUERY_LENGTH) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            label = { Text("Search conversations") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = state.messageSearchQuery,
-            onValueChange = onMessageSearchChanged,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            label = { Text("Search downloaded messages") },
-            singleLine = true,
-        )
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OutlinedButton(onClick = { unreadOnly = !unreadOnly }, modifier = Modifier.weight(1f)) {
-                Text(if (unreadOnly) "All chats" else "Unread only")
-            }
-            OutlinedButton(onClick = { showArchived = !showArchived }, modifier = Modifier.weight(1f)) {
-                Text(if (showArchived) "Hide archived" else "Show archived")
-            }
+            FilterChip(
+                selected = unreadOnly,
+                onClick = { unreadOnly = !unreadOnly },
+                label = { Text("Unread") },
+            )
+            FilterChip(
+                selected = showArchived,
+                onClick = { showArchived = !showArchived },
+                label = { Text("Archived") },
+            )
         }
         when (
             remoteMessageSearchPresentationState(
@@ -260,63 +276,63 @@ private fun RemoteRoomList(
         }
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(visibleRooms, key = { room -> room.roomId.raw }) { room ->
-            val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room.peerUid }
-            val displayName = if (room.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room.title
-            ListItem(
-                headlineContent = {
-                    Text(displayName, fontWeight = FontWeight.SemiBold)
-                },
-                supportingContent = {
-                    Text(
-                        room.latestMessagePreview ?: if (room.kind == RemoteRoomKind.GROUP) {
-                            "Group conversation"
-                        } else {
-                            "Private synced conversation"
-                        },
-                    )
-                },
-                leadingContent = {
-                    RemoteProfileAvatar(
-                        profile = if (room.kind == RemoteRoomKind.DIRECT) peer else null,
-                        displayName = displayName,
-                    )
-                },
-                trailingContent = {
-                    Box {
-                        Column(horizontalAlignment = Alignment.End) {
-                            if (room.isPinned) Text("Pinned", style = MaterialTheme.typography.labelSmall)
-                            if (room.isArchived) Text("Archived", style = MaterialTheme.typography.labelSmall)
-                            if (room.isMuted) Text("Muted", style = MaterialTheme.typography.labelSmall)
-                            if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
+                val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room.peerUid }
+                val displayName = if (room.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room.title
+                ListItem(
+                    headlineContent = {
+                        Text(displayName, fontWeight = FontWeight.SemiBold)
+                    },
+                    supportingContent = {
+                        Text(
+                            room.latestMessagePreview ?: if (room.kind == RemoteRoomKind.GROUP) {
+                                "Group conversation"
+                            } else {
+                                "Private synced conversation"
+                            },
+                        )
+                    },
+                    leadingContent = {
+                        RemoteProfileAvatar(
+                            profile = if (room.kind == RemoteRoomKind.DIRECT) peer else null,
+                            displayName = displayName,
+                        )
+                    },
+                    trailingContent = {
+                        Box {
+                            Column(horizontalAlignment = Alignment.End) {
+                                if (room.isPinned) Text("Pinned", style = MaterialTheme.typography.labelSmall)
+                                if (room.isArchived) Text("Archived", style = MaterialTheme.typography.labelSmall)
+                                if (room.isMuted) Text("Muted", style = MaterialTheme.typography.labelSmall)
+                                if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
+                            }
+                            DropdownMenu(
+                                expanded = actionRoomId == room.roomId.raw,
+                                onDismissRequest = { actionRoomId = null },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Conversation settings") },
+                                    onClick = {
+                                        actionRoomId = null
+                                        preferenceRoomId = room.roomId.raw
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Delete from this phone") },
+                                    onClick = {
+                                        actionRoomId = null
+                                        deleteRoomId = room.roomId.raw
+                                    },
+                                )
+                            }
                         }
-                        DropdownMenu(
-                            expanded = actionRoomId == room.roomId.raw,
-                            onDismissRequest = { actionRoomId = null },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Conversation settings") },
-                                onClick = {
-                                    actionRoomId = null
-                                    preferenceRoomId = room.roomId.raw
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Delete from this phone") },
-                                onClick = {
-                                    actionRoomId = null
-                                    deleteRoomId = room.roomId.raw
-                                },
-                            )
-                        }
-                    }
-                },
-                modifier = Modifier.combinedClickable(
-                    onClick = { onRoomSelected(room) },
-                    onLongClickLabel = "Conversation options",
-                    onLongClick = { actionRoomId = room.roomId.raw },
-                ),
-            )
-            HorizontalDivider()
+                    },
+                    modifier = Modifier.combinedClickable(
+                        onClick = { onRoomSelected(room) },
+                        onLongClickLabel = "Conversation options",
+                        onLongClick = { actionRoomId = room.roomId.raw },
+                    ),
+                )
+                HorizontalDivider()
             }
         }
     }

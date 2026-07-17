@@ -1,5 +1,7 @@
 package app.synapse.localllm.ui
 
+import app.synapse.localllm.domain.appearance.ChatBackground
+import app.synapse.localllm.domain.appearance.ChatBubblePalette
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
@@ -297,6 +299,20 @@ class RemoteChatPresentationTest {
             listOf(RemoteMessageAction.DELETE),
             remoteMessageActions(messageDeleted = true, isCurrentAccount = true),
         )
+    }
+
+    @Test
+    fun everyBundledChatAppearanceHasAVisiblePresentation() {
+        ChatBubblePalette.entries.forEach { palette ->
+            assertTrue(palette.presentation().label.isNotBlank())
+        }
+        ChatBackground.entries.forEach { background ->
+            val presentation = background.presentation()
+            assertTrue(presentation.label.isNotBlank())
+            if (background.ordinal >= ChatBackground.AURORA_FLOW.ordinal) {
+                assertTrue((presentation.drawableResourceId ?: 0) > 0)
+            }
+        }
     }
 
     private fun profile(

@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AlternateEmail
@@ -67,6 +68,7 @@ import app.synapse.localllm.domain.runtime.RuntimeStatus
 internal fun SynapseTopBar(
     state: SynapseUiState,
     onPanelSelected: (SynapsePanel) -> Unit,
+    onOpenAppNavigation: (() -> Unit)?,
     onRoomDrawerOpen: () -> Unit,
     onRuntimeCheck: () -> Unit,
     onRuntimeStart: () -> Unit,
@@ -81,12 +83,12 @@ internal fun SynapseTopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(
-            onClick = onRoomDrawerOpen,
+            onClick = onOpenAppNavigation ?: onRoomDrawerOpen,
             modifier = Modifier.size(40.dp),
         ) {
             Icon(
                 Icons.Rounded.Menu,
-                contentDescription = "Rooms",
+                contentDescription = if (onOpenAppNavigation == null) "Rooms" else "Open app navigation",
                 tint = MaterialTheme.colorScheme.onBackground,
             )
         }
@@ -99,7 +101,7 @@ internal fun SynapseTopBar(
         Spacer(modifier = Modifier.width(6.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Synapse Chat",
+                text = "Local AI",
                 color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
@@ -111,6 +113,18 @@ internal fun SynapseTopBar(
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (onOpenAppNavigation != null) {
+            IconButton(
+                onClick = onRoomDrawerOpen,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.Chat,
+                    contentDescription = "Local AI rooms",
+                    tint = MaterialTheme.colorScheme.onBackground,
                 )
             }
         }
@@ -186,7 +200,7 @@ internal fun ComposerBar(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (state.voiceMode.status != VoiceModeStatus.OFF) {

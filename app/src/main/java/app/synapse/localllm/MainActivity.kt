@@ -16,6 +16,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.synapse.localllm.ui.AppLockScreen
 import app.synapse.localllm.ui.AppLockViewModel
 import app.synapse.localllm.ui.AppLockViewModelFactory
+import app.synapse.localllm.ui.ChatAppearanceViewModel
+import app.synapse.localllm.ui.ChatAppearanceViewModelFactory
 import app.synapse.localllm.ui.OwnerAdminViewModel
 import app.synapse.localllm.ui.OwnerAdminViewModelFactory
 import app.synapse.localllm.ui.RemoteAccountViewModel
@@ -32,6 +34,9 @@ import app.synapse.localllm.ui.theme.SynapseTheme
 class MainActivity : FragmentActivity() {
     private val appLockViewModel: AppLockViewModel by viewModels {
         AppLockViewModelFactory(requireSynapseApplication().graph)
+    }
+    private val chatAppearanceViewModel: ChatAppearanceViewModel by viewModels {
+        ChatAppearanceViewModelFactory(requireSynapseApplication().graph)
     }
     private val localViewModel: SynapseViewModel by viewModels {
         SynapseViewModelFactory(requireSynapseApplication().graph)
@@ -70,6 +75,7 @@ class MainActivity : FragmentActivity() {
                         ownerAdminViewModel = ownerAdminViewModel,
                         appLockState = appLockState,
                         appLockViewModel = appLockViewModel,
+                        chatAppearanceViewModel = chatAppearanceViewModel,
                         requestOwnerIdentityConfirmation = ::requestOwnerIdentityConfirmation,
                     )
                 }

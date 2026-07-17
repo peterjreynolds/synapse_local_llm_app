@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -42,18 +43,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.synapse.localllm.application.RemoteLocalAiHostStatus
+import app.synapse.localllm.domain.appearance.ChatBackground
+import app.synapse.localllm.domain.appearance.ChatBubblePalette
+import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
-import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
-import app.synapse.localllm.application.RemoteLocalAiHostStatus
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -90,11 +94,16 @@ internal fun RemoteMessageThread(
     onMessageRevealed: () -> Unit,
     onLocalAiConfigurationChanged: (Boolean, Boolean) -> Unit,
     onMentionSynapse: () -> Unit,
+    appearanceState: ChatAppearanceUiState,
+    onBubblePaletteSelected: (ChatBubblePalette) -> Unit,
+    onBackgroundSelected: (ChatBackground) -> Unit,
+    onResetAppearance: () -> Unit,
     accountState: RemoteAccountUiState,
     groupState: RemoteGroupUiState,
     groupViewModel: RemoteGroupViewModel,
 ) {
     var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
+    var showAppearance by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room?.peerUid }
     val currentProfile = state.profiles.firstOrNull { profile ->
@@ -147,6 +156,9 @@ internal fun RemoteMessageThread(
                 )
             }
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = { showAppearance = true }) {
+                Icon(Icons.Default.Palette, contentDescription = "Change chat appearance")
+            }
             IconButton(onClick = { showRoomMembers = !showRoomMembers }) {
                 Icon(
                     Icons.Default.Info,
@@ -181,74 +193,100 @@ internal fun RemoteMessageThread(
                     )
                 }
             }
-        } else if (state.messages.isEmpty()) {
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "Messages will synchronize here.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
             ) {
-                item(key = "load-older") {
-                    OutlinedButton(
-                        onClick = onLoadOlder,
-                        enabled = !state.hasReachedMessageStart && !state.isLoadingOlderMessages,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (state.hasReachedMessageStart) "Start of conversation" else "Load earlier messages")
-                    }
-                }
-                itemsIndexed(
-                    items = state.messages,
-                    key = { _, message -> message.messageId.raw },
-                ) { index, message ->
-                    val previousDate = state.messages.getOrNull(index - 1)?.displayInstant()?.atZone(ZoneId.systemDefault())?.toLocalDate()
-                    val messageDate = message.displayInstant().atZone(ZoneId.systemDefault()).toLocalDate()
-                    if (messageDate != previousDate) {
+                ChatBackgroundLayer(appearanceState.appearance.background)
+                if (state.messages.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
-                            text = remoteMessageDateLabel(messageDate),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.fillMaxWidth(),
+                            text = "Messages will synchronize here.",
+                            color = appearanceState.appearance.bubblePalette.presentation().contentColor,
                         )
                     }
-                    RemoteMessageBubble(
-                        message = message,
-                        repliedMessage = message.replyToMessageId?.let { replyId ->
-                            state.messages.firstOrNull { candidate -> candidate.messageId == replyId }
-                        },
-                        isCurrentAccount = message.senderUid.raw == state.account?.accountUid?.raw,
-                        canDeleteForEveryone = message.senderUid.raw == state.account?.accountUid?.raw ||
-                            (
-                                message.authorKind == "SYNAPSE_AI" &&
-                                    state.roomAiConfiguration?.localAiHostUid == state.account?.accountUid
-                                ),
-                        senderDisplayName = if (message.authorKind == "SYNAPSE_AI") {
-                            "Synapse • Phone-local AI"
-                        } else if (room?.kind == RemoteRoomKind.GROUP) {
-                            state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
-                                ?.displayName
-                                ?: "Group member"
-                        } else {
-                            null
-                        },
-                        onReply = { onReply(message.messageId) },
-                        onEdit = { body -> onEdit(message, body) },
-                        onDeleteForMe = { onDeleteForMe(message) },
-                        onDeleteForEveryone = { onDeleteForEveryone(message) },
-                        attachmentDownloads = state.attachmentDownloads,
-                        onDownloadAttachment = { attachmentId, thumbnail ->
-                            onDownloadAttachment(message, attachmentId, thumbnail)
-                        },
-                        onCancelAttachmentDownload = onCancelAttachmentDownload,
-                        onJumpToReply = { replyId -> onJumpToMessage(replyId) },
-                    )
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                    ) {
+                        item(key = "load-older") {
+                            OutlinedButton(
+                                onClick = onLoadOlder,
+                                enabled = !state.hasReachedMessageStart && !state.isLoadingOlderMessages,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (state.hasReachedMessageStart) {
+                                        "Start of conversation"
+                                    } else {
+                                        "Load earlier messages"
+                                    },
+                                )
+                            }
+                        }
+                        itemsIndexed(
+                            items = state.messages,
+                            key = { _, message -> message.messageId.raw },
+                        ) { index, message ->
+                            val previousDate = state.messages.getOrNull(index - 1)
+                                ?.displayInstant()
+                                ?.atZone(ZoneId.systemDefault())
+                                ?.toLocalDate()
+                            val messageDate = message.displayInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+                            if (messageDate != previousDate) {
+                                Text(
+                                    text = remoteMessageDateLabel(messageDate),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = appearanceState.appearance.bubblePalette.presentation().contentColor,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            val isCurrentAccount = message.senderUid.raw == state.account?.accountUid?.raw
+                            val bubblePalette = appearanceState.appearance.bubblePalette.presentation()
+                            RemoteMessageBubble(
+                                message = message,
+                                repliedMessage = message.replyToMessageId?.let { replyId ->
+                                    state.messages.firstOrNull { candidate -> candidate.messageId == replyId }
+                                },
+                                isCurrentAccount = isCurrentAccount,
+                                bubbleColor = if (isCurrentAccount) {
+                                    bubblePalette.outgoingBubbleColor
+                                } else {
+                                    bubblePalette.incomingBubbleColor
+                                },
+                                bubbleContentColor = bubblePalette.contentColor,
+                                canDeleteForEveryone = isCurrentAccount ||
+                                    (
+                                        message.authorKind == "SYNAPSE_AI" &&
+                                            state.roomAiConfiguration?.localAiHostUid == state.account?.accountUid
+                                        ),
+                                senderDisplayName = if (message.authorKind == "SYNAPSE_AI") {
+                                    "Synapse • Phone-local AI"
+                                } else if (room?.kind == RemoteRoomKind.GROUP) {
+                                    state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
+                                        ?.displayName
+                                        ?: "Group member"
+                                } else {
+                                    null
+                                },
+                                onReply = { onReply(message.messageId) },
+                                onEdit = { body -> onEdit(message, body) },
+                                onDeleteForMe = { onDeleteForMe(message) },
+                                onDeleteForEveryone = { onDeleteForEveryone(message) },
+                                attachmentDownloads = state.attachmentDownloads,
+                                onDownloadAttachment = { attachmentId, thumbnail ->
+                                    onDownloadAttachment(message, attachmentId, thumbnail)
+                                },
+                                onCancelAttachmentDownload = onCancelAttachmentDownload,
+                                onJumpToReply = { replyId -> onJumpToMessage(replyId) },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -269,6 +307,15 @@ internal fun RemoteMessageThread(
                 onMentionSynapse = onMentionSynapse,
             )
         }
+    }
+    if (showAppearance) {
+        ChatAppearanceDialog(
+            state = appearanceState,
+            onBubblePaletteSelected = onBubblePaletteSelected,
+            onBackgroundSelected = onBackgroundSelected,
+            onReset = onResetAppearance,
+            onDismiss = { showAppearance = false },
+        )
     }
 }
 
@@ -373,6 +420,8 @@ private fun RemoteMessageBubble(
     message: RemoteCachedMessage,
     repliedMessage: RemoteCachedMessage?,
     isCurrentAccount: Boolean,
+    bubbleColor: Color,
+    bubbleContentColor: Color,
     canDeleteForEveryone: Boolean,
     senderDisplayName: String?,
     onReply: () -> Unit,
@@ -401,11 +450,8 @@ private fun RemoteMessageBubble(
         Box {
             Surface(
                 shape = RoundedCornerShape(16.dp),
-                color = if (isCurrentAccount) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
+                color = bubbleColor,
+                contentColor = bubbleContentColor,
                 modifier = Modifier
                     .fillMaxWidth(0.82f)
                     .combinedClickable(
@@ -458,7 +504,7 @@ private fun RemoteMessageBubble(
                     Text(
                         text = remoteMessageTimestamp(message),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = bubbleContentColor.copy(alpha = 0.72f),
                     )
                     if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
                         Spacer(Modifier.height(4.dp))
@@ -468,7 +514,7 @@ private fun RemoteMessageBubble(
                             color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
                                 MaterialTheme.colorScheme.error
                             } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
+                                bubbleContentColor.copy(alpha = 0.72f)
                             },
                         )
                     }

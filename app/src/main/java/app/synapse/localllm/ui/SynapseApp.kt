@@ -128,7 +128,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun SynapseApp(viewModel: SynapseViewModel) {
+fun SynapseApp(
+    viewModel: SynapseViewModel,
+    onOpenAppNavigation: (() -> Unit)? = null,
+) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val messageSpeechController = rememberMessageSpeechPlaybackController()
@@ -277,6 +280,7 @@ fun SynapseApp(viewModel: SynapseViewModel) {
         onMentionSynapse = viewModel::insertSynapseMention,
         messageSpeechController = messageSpeechController,
         onPanelSelected = viewModel::selectPanel,
+        onOpenAppNavigation = onOpenAppNavigation,
         onRoomDrawerOpen = viewModel::openRoomDrawer,
         onRoomDrawerClose = viewModel::closeRoomDrawer,
         onCreateRoom = viewModel::createRoom,
@@ -369,6 +373,7 @@ private fun SynapseScreen(
     onMentionSynapse: () -> Unit,
     messageSpeechController: MessageSpeechPlaybackController,
     onPanelSelected: (SynapsePanel) -> Unit,
+    onOpenAppNavigation: (() -> Unit)?,
     onRoomDrawerOpen: () -> Unit,
     onRoomDrawerClose: () -> Unit,
     onCreateRoom: (CreateRoomCommand) -> Unit,
@@ -430,6 +435,7 @@ private fun SynapseScreen(
                 SynapseTopBar(
                     state = state,
                     onPanelSelected = onPanelSelected,
+                    onOpenAppNavigation = onOpenAppNavigation,
                     onRoomDrawerOpen = onRoomDrawerOpen,
                     onRuntimeCheck = onRuntimeCheck,
                     onRuntimeStart = onRuntimeStart,
@@ -766,12 +772,12 @@ private fun ChatPanel(
             modifier = Modifier.fillMaxSize(),
             state = listState,
             contentPadding = PaddingValues(
-                start = 16.dp,
-                top = 18.dp,
-                end = 16.dp,
-                bottom = 24.dp,
+                start = 10.dp,
+                top = 8.dp,
+                end = 10.dp,
+                bottom = 12.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(messages, key = { message -> message.id.raw }) { message ->
                 MessageBubble(
@@ -859,7 +865,7 @@ private fun MessageBubble(
             ),
             modifier = Modifier.fillMaxWidth(if (isLocalOwner) 0.84f else 0.92f),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

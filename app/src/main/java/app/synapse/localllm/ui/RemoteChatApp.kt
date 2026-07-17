@@ -3,7 +3,6 @@ package app.synapse.localllm.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,15 +17,20 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -34,12 +38,14 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -59,6 +65,7 @@ import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
 import app.synapse.localllm.domain.remote.validateRemoteInviteRegistrationCommand
+import kotlinx.coroutines.launch
 
 @Composable
 fun RemoteChatApp(
@@ -69,6 +76,7 @@ fun RemoteChatApp(
     ownerAdminViewModel: OwnerAdminViewModel,
     appLockState: AppLockUiState,
     appLockViewModel: AppLockViewModel,
+    chatAppearanceViewModel: ChatAppearanceViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val state by remoteViewModel.uiState.collectAsStateWithLifecycle()
@@ -115,6 +123,7 @@ fun RemoteChatApp(
             ownerAdminViewModel = ownerAdminViewModel,
             appLockState = appLockState,
             appLockViewModel = appLockViewModel,
+            chatAppearanceViewModel = chatAppearanceViewModel,
             requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
         )
     }
@@ -597,17 +606,27 @@ private fun RemoteSignedInShell(
     ownerAdminViewModel: OwnerAdminViewModel,
     appLockState: AppLockUiState,
     appLockViewModel: AppLockViewModel,
+    chatAppearanceViewModel: ChatAppearanceViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val localState by localViewModel.uiState.collectAsStateWithLifecycle()
     val remoteAccountState by remoteAccountViewModel.uiState.collectAsStateWithLifecycle()
     val remoteGroupState by remoteGroupViewModel.uiState.collectAsStateWithLifecycle()
+    val chatAppearanceState by chatAppearanceViewModel.uiState.collectAsStateWithLifecycle()
     var selectedSection by rememberSaveable { mutableStateOf(RemoteAppSection.CHATS) }
     val availableSections = availableRemoteAppSections(state.account?.role)
     val snackbarHostState = remember { SnackbarHostState() }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(state.selectedRoomId) {
         if (state.selectedRoomId != null) selectedSection = RemoteAppSection.CHATS
+    }
+    LaunchedEffect(state.account?.accountUid, state.selectedRoomId) {
+        chatAppearanceViewModel.selectConversation(state.account?.accountUid, state.selectedRoomId)
+    }
+    DisposableEffect(chatAppearanceViewModel) {
+        onDispose { chatAppearanceViewModel.selectConversation(null, null) }
     }
     LaunchedEffect(availableSections) {
         if (selectedSection !in availableSections) selectedSection = RemoteAppSection.CHATS
@@ -631,76 +650,104 @@ private fun RemoteSignedInShell(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(selectedSection.title, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = if (selectedSection == RemoteAppSection.LOCAL_AI) {
-                                "Local-only workspace"
-                            } else {
-                                "Signed in as @${state.account?.usernameNormalized.orEmpty()}"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-            )
-        },
-        bottomBar = {
-            NavigationBar {
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = state.selectedRoomId == null,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+                    Text("Synapse Chat", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        "@${state.account?.usernameNormalized.orEmpty()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                HorizontalDivider()
                 availableSections.forEach { section ->
-                    NavigationBarItem(
+                    NavigationDrawerItem(
                         selected = selectedSection == section,
                         onClick = {
                             selectedSection = section
                             if (section != RemoteAppSection.CHATS) remoteViewModel.selectRoom(null)
+                            coroutineScope.launch { drawerState.close() }
                         },
                         icon = { Icon(section.icon, contentDescription = section.title) },
                         label = { Text(section.navigationLabel) },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                     )
                 }
             }
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-    ) { contentPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(contentPadding),
-        ) {
-            when (selectedSection) {
-                RemoteAppSection.CHATS -> RemoteChatsPane(
-                    state = state,
-                    viewModel = remoteViewModel,
-                    accountState = remoteAccountState,
-                    groupState = remoteGroupState,
-                    groupViewModel = remoteGroupViewModel,
-                )
-                RemoteAppSection.PEOPLE -> RemotePeoplePane(
-                    state = state,
-                    accountState = remoteAccountState,
-                    onOpenDirectRoom = remoteViewModel::openDirectRoom,
-                    onSetUserBlocked = remoteAccountViewModel::setUserBlocked,
-                )
-                RemoteAppSection.PROFILE -> RemoteProfilePane(
-                    state = state,
-                    viewModel = remoteViewModel,
-                    accountState = remoteAccountState,
-                    accountViewModel = remoteAccountViewModel,
-                    appUpdate = localState.appUpdate,
-                    appLockState = appLockState,
-                    appLockViewModel = appLockViewModel,
-                    onCheckAppUpdate = { localViewModel.checkForAppUpdate(automatic = false) },
-                )
-                RemoteAppSection.LOCAL_AI -> SynapseApp(viewModel = localViewModel)
-                RemoteAppSection.ADMIN -> OwnerAdminPane(
-                    viewModel = ownerAdminViewModel,
-                    requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
-                )
+    ) {
+        Scaffold(
+            topBar = {
+                if (state.selectedRoomId == null && selectedSection != RemoteAppSection.LOCAL_AI) {
+                    TopAppBar(
+                        navigationIcon = {
+                            IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                                Icon(Icons.Default.Menu, contentDescription = "Open navigation")
+                            }
+                        },
+                        title = {
+                            Column {
+                                Text(selectedSection.title, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    text = if (selectedSection == RemoteAppSection.LOCAL_AI) {
+                                        "Local-only workspace"
+                                    } else {
+                                        "Signed in as @${state.account?.usernameNormalized.orEmpty()}"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
+                    )
+                }
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        ) { contentPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(contentPadding),
+            ) {
+                when (selectedSection) {
+                    RemoteAppSection.CHATS -> RemoteChatsPane(
+                        state = state,
+                        viewModel = remoteViewModel,
+                        accountState = remoteAccountState,
+                        groupState = remoteGroupState,
+                        groupViewModel = remoteGroupViewModel,
+                        appearanceState = chatAppearanceState,
+                        appearanceViewModel = chatAppearanceViewModel,
+                    )
+                    RemoteAppSection.PEOPLE -> RemotePeoplePane(
+                        state = state,
+                        accountState = remoteAccountState,
+                        onOpenDirectRoom = remoteViewModel::openDirectRoom,
+                        onSetUserBlocked = remoteAccountViewModel::setUserBlocked,
+                    )
+                    RemoteAppSection.PROFILE -> RemoteProfilePane(
+                        state = state,
+                        viewModel = remoteViewModel,
+                        accountState = remoteAccountState,
+                        accountViewModel = remoteAccountViewModel,
+                        appUpdate = localState.appUpdate,
+                        appLockState = appLockState,
+                        appLockViewModel = appLockViewModel,
+                        onCheckAppUpdate = { localViewModel.checkForAppUpdate(automatic = false) },
+                    )
+                    RemoteAppSection.LOCAL_AI -> SynapseApp(
+                        viewModel = localViewModel,
+                        onOpenAppNavigation = { coroutineScope.launch { drawerState.open() } },
+                    )
+                    RemoteAppSection.ADMIN -> OwnerAdminPane(
+                        viewModel = ownerAdminViewModel,
+                        requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
+                    )
+                }
             }
         }
     }
