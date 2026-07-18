@@ -16,7 +16,7 @@ object RemoteAttachmentPolicy {
         audioDurationMillis: Long? = null,
         isVoiceNote: Boolean = false,
     ): RemoteAttachmentPolicyDecision {
-        val normalizedMimeType = mimeType.trim().lowercase()
+        val normalizedMimeType = canonicalMimeType(mimeType)
         val policy = policies[normalizedMimeType]
             ?: throw IllegalArgumentException("Choose a supported image, document, or audio file.")
         require(byteCount in 1..policy.maximumBytes) {
@@ -50,7 +50,12 @@ object RemoteAttachmentPolicy {
         )
     }
 
-    fun maximumBytesFor(mimeType: String): Long? = policies[mimeType.trim().lowercase()]?.maximumBytes
+    fun maximumBytesFor(mimeType: String): Long? = policies[canonicalMimeType(mimeType)]?.maximumBytes
+
+    fun canonicalMimeType(mimeType: String): String = when (val normalized = mimeType.trim().lowercase()) {
+        "image/jpg", "image/pjpeg" -> "image/jpeg"
+        else -> normalized
+    }
 
     private fun normalizeDisplayName(
         displayName: String,

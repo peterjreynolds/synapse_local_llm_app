@@ -9,7 +9,6 @@ import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import java.io.ByteArrayInputStream
 import java.io.File
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,7 +25,7 @@ class AndroidRemoteAttachmentSelectionStagerTest {
 
     @Test
     fun `selected provider content is copied once into a durable private upload source`() = runTest {
-        val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xD9.toByte())
+        val jpegBytes = createJpegBytes(width = 32, height = 24)
         var openCount = 0
         val stager = AndroidRemoteAttachmentSelectionStager(
             context = context,
@@ -49,12 +48,49 @@ class AndroidRemoteAttachmentSelectionStagerTest {
         assertEquals(1, openCount)
         assertEquals("file", Uri.parse(selection.sourceUri).scheme)
         assertEquals("Summer photo.jpg", selection.displayName)
-        assertEquals(jpegBytes.size.toLong(), selection.byteCount)
-        assertArrayEquals(jpegBytes, File(requireNotNull(Uri.parse(selection.sourceUri).path)).readBytes())
+        assertEquals("image/jpeg", selection.mimeType)
+        val stagedFile = File(requireNotNull(Uri.parse(selection.sourceUri).path))
+        assertEquals(stagedFile.length(), selection.byteCount)
+        assertTrue(BitmapFactory.decodeFile(stagedFile.path) != null)
         assertEquals(Uri.parse(selection.sourceUri), stager.requireUploadSource(selection))
 
         stager.release(attachmentId)
         assertFalse(File(requireNotNull(Uri.parse(selection.sourceUri).path)).exists())
+    }
+
+    @Test
+    fun `large one-shot JPEG screenshot is resized and compressed before upload`() = runTest {
+        val jpegBytes = createJpegBytes(width = 1_440, height = 3_200, quality = 100)
+        var openCount = 0
+        val stager = AndroidRemoteAttachmentSelectionStager(
+            context = context,
+            contentMetadataReader = {
+                RemoteAttachmentSourceMetadata("Screenshot_20260718_012942.jpg", "image/jpg")
+            },
+            contentStreamOpener = {
+                openCount += 1
+                object : ByteArrayInputStream(jpegBytes) {
+                    override fun available(): Int = 0
+                }
+            },
+        )
+
+        val selection = stager.stageSelection(
+            attachmentId = attachmentId,
+            sourceUri = "content://media/picker/screenshots/42",
+            audioDurationMillis = null,
+            isVoiceNote = false,
+        )
+
+        val stagedFile = File(requireNotNull(Uri.parse(selection.sourceUri).path))
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(stagedFile.path, bounds)
+        assertEquals(1, openCount)
+        assertEquals("image/jpeg", selection.mimeType)
+        assertEquals("Screenshot_20260718_012942.jpg", selection.displayName)
+        assertEquals(stagedFile.length(), selection.byteCount)
+        assertTrue(selection.byteCount < jpegBytes.size)
+        assertTrue(maxOf(bounds.outWidth, bounds.outHeight) <= 2_560)
     }
 
     @Test
@@ -112,6 +148,17 @@ class AndroidRemoteAttachmentSelectionStagerTest {
         assertTrue(thumbnail.size <= 256 * 1024)
         assertTrue(maxOf(bounds.outWidth, bounds.outHeight) <= 512)
         source.delete()
+    }
+}
+
+private fun createJpegBytes(
+    width: Int,
+    height: Int,
+    quality: Int = 92,
+): ByteArray = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).use { bitmap ->
+    java.io.ByteArrayOutputStream().use { output ->
+        assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output))
+        output.toByteArray()
     }
 }
 

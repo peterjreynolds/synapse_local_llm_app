@@ -26,6 +26,12 @@ internal data class RemoteAttachmentSourceMetadata(
     val mimeType: String,
 )
 
+private data class StagedAttachmentMetadata(
+    val displayName: String,
+    val mimeType: String,
+    val byteCount: Long,
+)
+
 internal class AndroidRemoteAttachmentSelectionStager(
     context: Context,
     private val contentMetadataReader: (Uri) -> RemoteAttachmentSourceMetadata =
@@ -62,23 +68,34 @@ internal class AndroidRemoteAttachmentSelectionStager(
         val maximumBytes = RemoteAttachmentPolicy.maximumBytesFor(metadata.mimeType)
             ?: throw IllegalArgumentException("Choose a supported image, document, or audio file.")
         val stagedFile = stagedFile(attachmentId)
+        val incomingFile = incomingFile(attachmentId)
         stagedFile.delete()
+        incomingFile.delete()
         try {
             val copiedBytes = contentStreamOpener(uri)?.use { input ->
-                stagedFile.outputStream().buffered().use { output ->
+                incomingFile.outputStream().buffered().use { output ->
                     input.copyBoundedTo(output, maximumBytes)
                 }
             } ?: throw RemoteChatException("Android could not read the selected attachment.")
-            val measuredAudioDuration = if (metadata.mimeType.startsWith("audio/")) {
+            val stagedMetadata = if (RemoteAttachmentPolicy.canonicalMimeType(metadata.mimeType) == JPEG_MIME_TYPE) {
+                val normalizedByteCount = AndroidRemoteJpegNormalizer().normalize(incomingFile, stagedFile)
+                StagedAttachmentMetadata(metadata.displayName, JPEG_MIME_TYPE, normalizedByteCount)
+            } else {
+                check(incomingFile.renameTo(stagedFile)) {
+                    "Android could not preserve the selected attachment."
+                }
+                StagedAttachmentMetadata(metadata.displayName, metadata.mimeType, copiedBytes)
+            }
+            val measuredAudioDuration = if (stagedMetadata.mimeType.startsWith("audio/")) {
                 audioDurationMillis ?: measureAudioDuration(Uri.fromFile(stagedFile))
             } else {
                 require(audioDurationMillis == null) { "Only audio can include a duration." }
                 null
             }
             val decision = RemoteAttachmentPolicy.validate(
-                displayName = metadata.displayName,
-                mimeType = metadata.mimeType,
-                byteCount = copiedBytes,
+                displayName = stagedMetadata.displayName,
+                mimeType = stagedMetadata.mimeType,
+                byteCount = stagedMetadata.byteCount,
                 audioDurationMillis = measuredAudioDuration,
                 isVoiceNote = false,
             )
@@ -94,6 +111,8 @@ internal class AndroidRemoteAttachmentSelectionStager(
         } catch (exception: Exception) {
             stagedFile.delete()
             throw exception
+        } finally {
+            incomingFile.delete()
         }
     }
 
@@ -119,6 +138,9 @@ internal class AndroidRemoteAttachmentSelectionStager(
 
     internal fun stagedFile(attachmentId: RemoteAttachmentId): File =
         File(stagingDirectory, "${attachmentId.raw}$STAGING_FILE_SUFFIX")
+
+    private fun incomingFile(attachmentId: RemoteAttachmentId): File =
+        File(stagingDirectory, "${attachmentId.raw}$INCOMING_FILE_SUFFIX")
 
     private fun inspectVoiceNote(
         attachmentId: RemoteAttachmentId,
@@ -186,50 +208,56 @@ internal class AndroidRemoteAttachmentSelectionStager(
 
     private companion object {
         const val MEBIBYTE = 1024L * 1024L
+        const val INCOMING_FILE_SUFFIX = ".incoming"
+        const val JPEG_MIME_TYPE = "image/jpeg"
         const val STAGING_DIRECTORY_NAME = "remote-attachment-staging"
         const val STAGING_FILE_SUFFIX = ".source"
         const val VOICE_NOTE_MIME_TYPE = "audio/mp4"
     }
 }
 
+internal class AndroidRemoteJpegNormalizer {
+    fun normalize(
+        sourceFile: File,
+        targetFile: File,
+    ): Long {
+        require(sourceFile.isFile) { "The private image copy is unavailable." }
+        val bitmap = decodeRemoteImageBitmap(sourceFile, NORMALIZED_IMAGE_EDGE)
+        return bitmap.useAsNormalizedJpeg(targetFile)
+    }
+
+    private fun Bitmap.useAsNormalizedJpeg(targetFile: File): Long {
+        return try {
+            var quality = 88
+            do {
+                targetFile.outputStream().buffered().use { output ->
+                    check(compress(Bitmap.CompressFormat.JPEG, quality, output)) {
+                        "Android could not prepare the selected image."
+                    }
+                }
+                quality -= 8
+            } while (targetFile.length() > TARGET_MAXIMUM_IMAGE_BYTES && quality >= 64)
+            require(targetFile.length() in 1..MAXIMUM_IMAGE_BYTES) {
+                "The selected image is still too large after compression."
+            }
+            targetFile.length()
+        } finally {
+            recycle()
+        }
+    }
+
+    private companion object {
+        const val MAXIMUM_IMAGE_BYTES = 15L * 1024L * 1024L
+        const val NORMALIZED_IMAGE_EDGE = 2_560
+        const val TARGET_MAXIMUM_IMAGE_BYTES = 5L * 1024L * 1024L
+    }
+}
+
 internal class AndroidRemoteImageThumbnailEncoder {
     fun encode(sourceFile: File): ByteArray {
         require(sourceFile.isFile) { "The private image copy is unavailable." }
-        val bitmap = runCatching { decodeWithImageDecoder(sourceFile) }
-            .getOrElse { imageDecoderFailure ->
-                decodeWithBitmapFactory(sourceFile)
-                    ?: throw RemoteChatException("Android could not decode the selected image.", imageDecoderFailure)
-            }
+        val bitmap = decodeRemoteImageBitmap(sourceFile, THUMBNAIL_EDGE)
         return bitmap.useAsThumbnailBytes()
-    }
-
-    private fun decodeWithImageDecoder(sourceFile: File): Bitmap =
-        ImageDecoder.decodeBitmap(ImageDecoder.createSource(sourceFile)) { decoder, info, _ ->
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val sourceWidth = info.size.width
-            val sourceHeight = info.size.height
-            val scale = minOf(
-                1f,
-                THUMBNAIL_EDGE.toFloat() / maxOf(sourceWidth, sourceHeight).toFloat(),
-            )
-            decoder.setTargetSize(
-                maxOf(1, (sourceWidth * scale).toInt()),
-                maxOf(1, (sourceHeight * scale).toInt()),
-            )
-        }
-
-    private fun decodeWithBitmapFactory(sourceFile: File): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(sourceFile.path, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sampleSize = 1
-        while (bounds.outWidth / sampleSize > THUMBNAIL_EDGE || bounds.outHeight / sampleSize > THUMBNAIL_EDGE) {
-            sampleSize *= 2
-        }
-        return BitmapFactory.decodeFile(
-            sourceFile.path,
-            BitmapFactory.Options().apply { inSampleSize = sampleSize },
-        )
     }
 
     private fun Bitmap.useAsThumbnailBytes(): ByteArray {
@@ -256,6 +284,46 @@ internal class AndroidRemoteImageThumbnailEncoder {
         const val MAXIMUM_THUMBNAIL_BYTES = 256 * 1024
         const val THUMBNAIL_EDGE = 512
     }
+}
+
+private fun decodeRemoteImageBitmap(
+    sourceFile: File,
+    maximumEdge: Int,
+): Bitmap = runCatching {
+    ImageDecoder.decodeBitmap(ImageDecoder.createSource(sourceFile)) { decoder, info, _ ->
+        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        val sourceWidth = info.size.width
+        val sourceHeight = info.size.height
+        require(sourceWidth > 0 && sourceHeight > 0) { "The selected image has invalid dimensions." }
+        val scale = minOf(
+            1f,
+            maximumEdge.toFloat() / maxOf(sourceWidth, sourceHeight).toFloat(),
+        )
+        decoder.setTargetSize(
+            maxOf(1, (sourceWidth * scale).toInt()),
+            maxOf(1, (sourceHeight * scale).toInt()),
+        )
+    }
+}.getOrElse { imageDecoderFailure ->
+    decodeRemoteImageWithBitmapFactory(sourceFile, maximumEdge)
+        ?: throw RemoteChatException("Android could not decode the selected image.", imageDecoderFailure)
+}
+
+private fun decodeRemoteImageWithBitmapFactory(
+    sourceFile: File,
+    maximumEdge: Int,
+): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(sourceFile.path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sampleSize = 1
+    while (bounds.outWidth / sampleSize > maximumEdge || bounds.outHeight / sampleSize > maximumEdge) {
+        sampleSize *= 2
+    }
+    return BitmapFactory.decodeFile(
+        sourceFile.path,
+        BitmapFactory.Options().apply { inSampleSize = sampleSize },
+    )
 }
 
 private fun readContentMetadata(

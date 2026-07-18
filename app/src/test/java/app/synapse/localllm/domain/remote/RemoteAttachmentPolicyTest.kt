@@ -52,4 +52,17 @@ class RemoteAttachmentPolicyTest {
         assertEquals("reaction.gif", decision.displayName)
         assertEquals(RemoteAttachmentKind.IMAGE, decision.kind)
     }
+
+    @Test
+    fun `canonicalizes Android JPEG aliases`() {
+        val decision = RemoteAttachmentPolicy.validate(
+            displayName = "phone screenshot.jpeg",
+            mimeType = "image/jpg",
+            byteCount = 2_048,
+        )
+
+        assertEquals("image/jpeg", decision.mimeType)
+        assertEquals("phone screenshot.jpg", decision.displayName)
+        assertEquals(15L * 1024L * 1024L, RemoteAttachmentPolicy.maximumBytesFor("image/pjpeg"))
+    }
 }
