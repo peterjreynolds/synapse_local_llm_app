@@ -3,21 +3,10 @@ import test from "node:test";
 import {
   buildDirectRoomIdentity,
   buildNotificationReceiptId,
-  buildSyntheticAccountEmail,
-  normalizeUsername,
   parseHumanMessagePayload,
+  parseRemoteNotificationMessagePayload,
   parseTargetUid,
 } from "./domain.js";
-
-test("normalizes allowed account usernames case-insensitively", () => {
-  assert.equal(normalizeUsername(" Peter "), "peter");
-  assert.equal(buildSyntheticAccountEmail("Trish"), "trish@accounts.synapse.invalid");
-});
-
-test("rejects ambiguous username input", () => {
-  assert.throws(() => normalizeUsername("Pé ter"));
-  assert.throws(() => normalizeUsername("ab"));
-});
 
 test("builds one deterministic room regardless of caller order", () => {
   const peterFirst = buildDirectRoomIdentity("peter-uid", "trish-uid");
@@ -47,6 +36,39 @@ test("narrows human notification messages", () => {
   assert.throws(() =>
     parseHumanMessagePayload({authorKind: "HUMAN", body: "", senderUid: "peter-uid"}),
   );
+  assert.deepEqual(
+    parseHumanMessagePayload({
+      attachmentIds: ["attachment-12345678-1234-4123-8123-123456789abc"],
+      authorKind: "HUMAN",
+      body: "",
+      senderUid: "peter-uid",
+    }),
+    {body: "Attachment", senderUid: "peter-uid"},
+  );
+});
+
+test("accepts only explicitly attributed AI notification messages", () => {
+  assert.deepEqual(
+    parseRemoteNotificationMessagePayload({
+      aiParticipantId: "participant-synapse-local-ai",
+      aiProvenance: "PHONE_LOCAL",
+      attachmentIds: [],
+      authorKind: "SYNAPSE_AI",
+      body: "Local answer",
+      senderUid: "participant-synapse-local-ai",
+    }),
+    {
+      authorKind: "SYNAPSE_AI",
+      body: "Local answer",
+      provenance: "PHONE_LOCAL",
+      senderUid: "participant-synapse-local-ai",
+    },
+  );
+  assert.throws(() => parseRemoteNotificationMessagePayload({
+    authorKind: "SYNAPSE_AI",
+    body: "Forged answer",
+    senderUid: "peter-uid",
+  }));
 });
 
 test("hashes provider event identifiers into safe receipt ids", () => {

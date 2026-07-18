@@ -8,6 +8,8 @@ evidence-backed memory stay in app-local storage.
 
 The active product roadmap is tracked in
 [`docs/canonical-master-plan.md`](docs/canonical-master-plan.md).
+The remote security, App Check, deletion, retention, and operations boundary is
+recorded in [`docs/security-and-operations.md`](docs/security-and-operations.md).
 
 ## Local Rooms And Members
 
@@ -47,6 +49,21 @@ local model runtime, memory, SMS receipts, and UI are app-owned. It does not
 depend on OpenClaw, Wingman, a Synapse governance runtime, or an external
 sidecar. The product name “Synapse” does not activate historical Synapse
 governance infrastructure.
+
+## Remote Chat Security Boundary
+
+Remote people, direct rooms, groups, and rich messages use Firebase
+Authentication, callable Cloud Functions, Firestore, Cloud Storage, and FCM.
+Membership and message mutations are authorized server-side, while an
+account-scoped Room cache supports offline display and an idempotent send
+outbox. Removed room access is reconciled into the local cache when the
+authoritative room list next synchronizes.
+
+Remote chat is not end-to-end encrypted. Firebase and authorized project
+operators remain inside the data trust boundary, even though transport and
+provider-managed storage encryption are used. Push payloads carry routing
+identifiers rather than plaintext message bodies. The phone-local AI rooms and
+memory system remain app-local and are a separate boundary from remote chat.
 
 ## Embedded Runtime
 
@@ -200,8 +217,10 @@ Synapse pauses memory writes and keeps chat usable.
 ## Debug Archives
 
 Settings > Diagnostics > `Export Debug ZIP` creates a private troubleshooting
-archive that excludes GGUF model weights. It includes raw Room/DataStore state,
-including room/member/authorship rows, readable database summaries, generation
-timing traces, runtime/model metadata, UI state, window metrics, and app-state
-file manifests. AI routing returns an explicit decision reason, and generation
-diagnostics are created only when an AI response actually starts.
+archive with bounded app version, runtime state, storage health, UI counts,
+window metrics, and Room/DataStore aggregate counts. It excludes raw app state,
+chat and memory content, prompts, SMS and account data, credentials, tokens,
+private filesystem paths, and GGUF model weights. Review the archive before
+sharing it because aggregate usage metadata can still be sensitive. AI routing
+returns an explicit decision reason, and generation diagnostics are created only
+when an AI response actually starts.

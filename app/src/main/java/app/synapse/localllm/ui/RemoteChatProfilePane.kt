@@ -21,11 +21,13 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,14 +45,22 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.POST_NOTIFICATIONS_PERMISSION
+import app.synapse.localllm.domain.appearance.ChatBubblePalette
 import app.synapse.localllm.domain.notifications.NotificationPermissionState
 import app.synapse.localllm.resolveNotificationPermissionState
+import java.time.Instant
 
 @Composable
 internal fun RemoteProfilePane(
     state: RemoteChatUiState,
     viewModel: RemoteChatViewModel,
+    accountState: RemoteAccountUiState,
+    accountViewModel: RemoteAccountViewModel,
     appUpdate: AppUpdateUiState,
+    appLockState: AppLockUiState,
+    appLockViewModel: AppLockViewModel,
+    appearanceState: ChatAppearanceUiState,
+    onBubblePaletteSelected: (ChatBubblePalette) -> Unit,
     onCheckAppUpdate: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -60,6 +70,10 @@ internal fun RemoteProfilePane(
     var bio by rememberSaveable(accountUid?.raw) { mutableStateOf("") }
     var currentPassword by remember(accountUid?.raw) { mutableStateOf("") }
     var newPassword by remember(accountUid?.raw) { mutableStateOf("") }
+    var confirmNewPassword by remember(accountUid?.raw) { mutableStateOf("") }
+    var deletionPassword by remember(accountUid?.raw) { mutableStateOf("") }
+    var deletionUsername by remember(accountUid?.raw) { mutableStateOf("") }
+    var localSecurityNotice by remember(accountUid?.raw) { mutableStateOf<String?>(null) }
     var notificationPermissionState by remember {
         mutableStateOf(resolveNotificationPermissionState(context))
     }
@@ -79,6 +93,23 @@ internal fun RemoteProfilePane(
             val mimeType = context.contentResolver.getType(uri).orEmpty()
             viewModel.uploadAvatar(uri.toString(), mimeType)
         }
+    }
+
+    ClearSensitiveInputsOnStop {
+        currentPassword = ""
+        newPassword = ""
+        confirmNewPassword = ""
+        deletionPassword = ""
+        accountViewModel.clearGeneratedInvitation()
+    }
+    if (
+        currentPassword.isNotEmpty() ||
+        newPassword.isNotEmpty() ||
+        confirmNewPassword.isNotEmpty() ||
+        deletionPassword.isNotEmpty() ||
+        accountState.generatedInvitation != null
+    ) {
+        BlockScreenshotsWhileVisible()
     }
 
     LaunchedEffect(profile?.remoteUpdatedAt) {
@@ -154,6 +185,27 @@ internal fun RemoteProfilePane(
         }
 
         HorizontalDivider()
+        Text("Chat bubble colors", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            "Choose the incoming and outgoing message colors used by this account on this phone.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        ChatBubblePaletteSelector(
+            selectedPalette = appearanceState.appearance.bubblePalette,
+            enabled = !appearanceState.isSaving,
+            onSelected = onBubblePaletteSelected,
+        )
+        appearanceState.notice?.let { notice ->
+            Text(notice, style = MaterialTheme.typography.bodySmall)
+        }
+
+        HorizontalDivider()
+        RemoteInvitationControls(
+            state = accountState,
+            onCreateInvitation = accountViewModel::createInvitation,
+        )
+
+        HorizontalDivider()
         Text("Notifications", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
             text = if (notificationPermissionState.allowsNotifications) {
@@ -171,9 +223,56 @@ internal fun RemoteProfilePane(
                 Text(" Enable notifications")
             }
         }
+        NotificationPreferenceRow(
+            label = "Direct messages",
+            checked = state.notificationPreferences.directMessages,
+            enabled = !state.isActionRunning,
+            onCheckedChange = { enabled ->
+                viewModel.updateNotificationPreferences(
+                    state.notificationPreferences.copy(directMessages = enabled),
+                )
+            },
+        )
+        NotificationPreferenceRow(
+            label = "Group messages",
+            checked = state.notificationPreferences.groupMessages,
+            enabled = !state.isActionRunning,
+            onCheckedChange = { enabled ->
+                viewModel.updateNotificationPreferences(
+                    state.notificationPreferences.copy(groupMessages = enabled),
+                )
+            },
+        )
+        NotificationPreferenceRow(
+            label = "Group mentions",
+            checked = state.notificationPreferences.mentions,
+            enabled = !state.isActionRunning,
+            onCheckedChange = { enabled ->
+                viewModel.updateNotificationPreferences(
+                    state.notificationPreferences.copy(mentions = enabled),
+                )
+            },
+        )
+        NotificationPreferenceRow(
+            label = "Alerts from muted conversations",
+            checked = state.notificationPreferences.mutedRooms,
+            enabled = !state.isActionRunning,
+            onCheckedChange = { enabled ->
+                viewModel.updateNotificationPreferences(
+                    state.notificationPreferences.copy(mutedRooms = enabled),
+                )
+            },
+        )
 
         HorizontalDivider()
         Text("Security", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        AppLockSettings(
+            state = appLockState,
+            viewModel = appLockViewModel,
+        )
+
+        HorizontalDivider()
+        Text("Account password", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         OutlinedTextField(
             value = currentPassword,
             onValueChange = { value -> currentPassword = value },
@@ -188,22 +287,162 @@ internal fun RemoteProfilePane(
             onValueChange = { value -> newPassword = value },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("New password") },
-            supportingText = { Text("At least 8 characters") },
+            supportingText = { Text("12-128 characters") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         )
+        OutlinedTextField(
+            value = confirmNewPassword,
+            onValueChange = { value -> confirmNewPassword = value },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Confirm new password") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        )
+        localSecurityNotice?.let { notice ->
+            Text(notice, color = MaterialTheme.colorScheme.error)
+        }
         OutlinedButton(
             onClick = {
+                if (newPassword != confirmNewPassword) {
+                    localSecurityNotice = "New passwords do not match."
+                    return@OutlinedButton
+                }
+                localSecurityNotice = null
                 viewModel.changePassword(currentPassword, newPassword)
                 currentPassword = ""
                 newPassword = ""
+                confirmNewPassword = ""
             },
-            enabled = currentPassword.isNotEmpty() && newPassword.length >= 8 && !state.isActionRunning,
+            enabled = currentPassword.isNotEmpty() &&
+                newPassword.length in 12..128 &&
+                confirmNewPassword.isNotEmpty() &&
+                !state.isActionRunning,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Icon(Icons.Default.Lock, contentDescription = null)
             Text(" Change password")
+        }
+
+        HorizontalDivider()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Registered devices",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            OutlinedButton(
+                onClick = accountViewModel::refresh,
+                enabled = !accountState.isRefreshing && !accountState.isActionRunning,
+            ) {
+                Text("Refresh")
+            }
+        }
+        Text(
+            "Only device status is shown. Private notification identifiers are never displayed.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (accountState.isRefreshing) {
+            CircularProgressIndicator()
+        } else if (accountState.registeredDevices.isEmpty()) {
+            Text("No registered notification devices.")
+        } else {
+            accountState.registeredDevices.forEachIndexed { index, device ->
+                val otherDeviceNumber = accountState.registeredDevices
+                    .take(index + 1)
+                    .count { registeredDevice -> !registeredDevice.isCurrentDevice }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            if (device.isCurrentDevice) "This phone" else "Other Android device $otherDeviceNumber",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(if (device.active) "Notifications active" else "Notifications inactive")
+                        Text(
+                            device.updatedAtMillis?.let { timestamp ->
+                                "Last registered ${Instant.ofEpochMilli(timestamp)}"
+                            } ?: "Registration time unavailable",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(
+                            onClick = { accountViewModel.removeOwnDevice(device.deviceId) },
+                            enabled = !accountState.isActionRunning,
+                        ) {
+                            Text(if (device.isCurrentDevice) "Remove this phone" else "Remove device")
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider()
+        Text(
+            "Account deletion",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        if (!accountState.privacyStateVerified) {
+            Text(
+                "Checking account-deletion status…",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (accountState.deletionRequestPending) {
+            Text(
+                "Deletion is pending owner review. You can cancel the request while the account remains active.",
+                color = MaterialTheme.colorScheme.error,
+            )
+            OutlinedButton(
+                onClick = accountViewModel::cancelAccountDeletionRequest,
+                enabled = !accountState.isActionRunning,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Cancel deletion request")
+            }
+        } else {
+            Text(
+                "Request permanent account deletion. This does not immediately erase the account; an owner must complete the audited deletion.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = deletionUsername,
+                onValueChange = { value -> deletionUsername = value },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Type @${state.account?.usernameNormalized.orEmpty()} to confirm") },
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = deletionPassword,
+                onValueChange = { value -> deletionPassword = value },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Current password") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            )
+            OutlinedButton(
+                onClick = {
+                    accountViewModel.requestAccountDeletion(deletionPassword, deletionUsername)
+                    deletionPassword = ""
+                    deletionUsername = ""
+                },
+                enabled = deletionPassword.isNotEmpty() &&
+                    deletionUsername.trim().removePrefix("@") == state.account?.usernameNormalized &&
+                    !accountState.isActionRunning,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Request account deletion")
+            }
         }
 
         HorizontalDivider()
@@ -238,6 +477,27 @@ internal fun RemoteProfilePane(
             Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
             Text(" Secure logout")
         }
+    }
+}
+
+@Composable
+private fun NotificationPreferenceRow(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+        )
     }
 }
 

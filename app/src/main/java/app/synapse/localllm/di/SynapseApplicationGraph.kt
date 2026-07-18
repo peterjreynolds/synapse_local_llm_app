@@ -5,14 +5,22 @@ import androidx.room.Room
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.application.RemoteDeviceRegistrationCoordinator
 import app.synapse.localllm.application.RemoteChatSessionSynchronizer
+import app.synapse.localllm.application.RemoteLocalAiResponseCoordinator
 import app.synapse.localllm.application.RemoteNotificationNavigationCoordinator
 import app.synapse.localllm.application.RemoteRoomVisibilityTracker
 import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.application.SmsAutoReplyCoordinator
+import app.synapse.localllm.data.appearance.AndroidChatAppearanceRepository
 import app.synapse.localllm.data.chat.RoomConversationRepository
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
 import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_10_11
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_11_12
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_12_13
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_13_14
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_14_15
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_15_16
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
@@ -32,10 +40,17 @@ import app.synapse.localllm.data.memory.RecentUserTurnMemoryCandidateResolver
 import app.synapse.localllm.data.memory.RuleBasedMemoryCandidateProposer
 import app.synapse.localllm.data.memory.RoomMemoryRepository
 import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
+import app.synapse.localllm.data.remote.FirebaseOwnerAdminGateway
+import app.synapse.localllm.data.remote.AndroidRemoteVoiceNoteRecorder
 import app.synapse.localllm.data.remote.FirebaseRemoteAuthenticationGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteAiParticipantGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteAttachmentGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDirectoryGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteGroupGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteInvitationGateway
+import app.synapse.localllm.data.remote.FirebaseRemotePrivacyGateway
 import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
 import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
 import app.synapse.localllm.data.runtime.AndroidDeviceRuntimeCapabilitiesReader
@@ -47,6 +62,7 @@ import app.synapse.localllm.data.runtime.LlamaServerGateway
 import app.synapse.localllm.data.runtime.PhoneLocalInferenceRuntime
 import app.synapse.localllm.data.runtime.TermuxCommandGateway
 import app.synapse.localllm.data.runtime.embedded.EmbeddedLlamaRuntime
+import app.synapse.localllm.data.security.AndroidAppLockRepository
 import app.synapse.localllm.data.settings.SynapseSettingsStore
 import app.synapse.localllm.data.sms.AndroidSmsOutboundGateway
 import app.synapse.localllm.data.sms.RoomSmsAutoReplyRepository
@@ -66,6 +82,7 @@ import app.synapse.localllm.domain.memory.MemoryCommandInterpreter
 import app.synapse.localllm.domain.memory.MemoryProjector
 import app.synapse.localllm.domain.memory.MemoryRepository
 import app.synapse.localllm.domain.memory.PromptContextAssembler
+import app.synapse.localllm.domain.remote.RemoteInvitationGateway
 import app.synapse.localllm.domain.runtime.LocalInferenceRuntime
 import app.synapse.localllm.domain.runtime.ModelCatalogRepository
 import app.synapse.localllm.domain.runtime.ModelDeviceCompatibilityPolicy
@@ -114,6 +131,12 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_7_8,
         SYNAPSE_DATABASE_MIGRATION_8_9,
         SYNAPSE_DATABASE_MIGRATION_9_10,
+        SYNAPSE_DATABASE_MIGRATION_10_11,
+        SYNAPSE_DATABASE_MIGRATION_11_12,
+        SYNAPSE_DATABASE_MIGRATION_12_13,
+        SYNAPSE_DATABASE_MIGRATION_13_14,
+        SYNAPSE_DATABASE_MIGRATION_14_15,
+        SYNAPSE_DATABASE_MIGRATION_15_16,
     ).build()
 
     val remoteAccountSessionController = RemoteAccountSessionCoordinator()
@@ -126,7 +149,15 @@ class SynapseApplicationGraph private constructor(context: Context) {
     private val firebaseMessaging = FirebaseMessaging.getInstance()
     private val firebaseStorage = FirebaseStorage.getInstance(firebaseApp)
 
-    val remoteAuthenticationGateway = FirebaseRemoteAuthenticationGateway(firebaseAuth)
+    val remoteAuthenticationGateway = FirebaseRemoteAuthenticationGateway(
+        firebaseAuth = firebaseAuth,
+        firebaseFunctions = firebaseFunctions,
+        applicationScope = applicationScope,
+    )
+    val ownerAdminGateway = FirebaseOwnerAdminGateway(firebaseFunctions)
+    val remoteInvitationGateway: RemoteInvitationGateway =
+        FirebaseRemoteInvitationGateway(firebaseFunctions)
+    val remotePrivacyGateway = FirebaseRemotePrivacyGateway(firebaseFunctions)
     val remoteDirectoryGateway =
         FirebaseRemoteDirectoryGateway(
             context = applicationContext,
@@ -142,12 +173,35 @@ class SynapseApplicationGraph private constructor(context: Context) {
             functions = firebaseFunctions,
             sessionController = remoteAccountSessionController,
         )
+    val remoteAiParticipantGateway =
+        FirebaseRemoteAiParticipantGateway(
+            firebaseAuth = firebaseAuth,
+            firebaseFunctions = firebaseFunctions,
+            sessionController = remoteAccountSessionController,
+        )
+    val remoteAttachmentGateway =
+        FirebaseRemoteAttachmentGateway(
+            context = applicationContext,
+            firebaseAuth = firebaseAuth,
+            functions = firebaseFunctions,
+            storage = firebaseStorage,
+            sessionController = remoteAccountSessionController,
+        )
+    val remoteVoiceNoteRecorder = AndroidRemoteVoiceNoteRecorder(applicationContext)
+    val remoteGroupGateway =
+        FirebaseRemoteGroupGateway(
+            context = applicationContext,
+            firebaseAuth = firebaseAuth,
+            functions = firebaseFunctions,
+            storage = firebaseStorage,
+            sessionController = remoteAccountSessionController,
+        )
     val remoteDeviceRegistrationGateway =
         FirebaseRemoteDeviceRegistrationGateway(
             firebaseAuth = firebaseAuth,
-            firestore = firestore,
             firebaseInstallations = firebaseInstallations,
             firebaseMessaging = firebaseMessaging,
+            firebaseFunctions = firebaseFunctions,
             sessionController = remoteAccountSessionController,
         )
     val remoteDeviceRegistrationCoordinator =
@@ -173,6 +227,8 @@ class SynapseApplicationGraph private constructor(context: Context) {
         )
 
     val settingsStore = SynapseSettingsStore(applicationContext)
+    val appLockRepository = AndroidAppLockRepository(applicationContext)
+    val chatAppearanceRepository = AndroidChatAppearanceRepository(applicationContext, clock)
     val embeddedModelStore = AndroidEmbeddedModelStore(applicationContext)
     val modelCatalogRepository: ModelCatalogRepository = BuiltInModelCatalogRepository()
     val deviceRuntimeCapabilitiesReader = AndroidDeviceRuntimeCapabilitiesReader(applicationContext)
@@ -265,6 +321,15 @@ class SynapseApplicationGraph private constructor(context: Context) {
                 idFactory = idFactory,
                 clock = clock,
             ),
+        )
+
+    val remoteLocalAiResponseCoordinator =
+        RemoteLocalAiResponseCoordinator(
+            gateway = remoteAiParticipantGateway,
+            settingsFlow = settingsStore.settingsFlow,
+            localInferenceRuntime = localInferenceRuntime,
+            clock = clock,
+            responseRoutingPolicy = aiResponseRoutingPolicy,
         )
 
     val turnCoordinator =

@@ -1,21 +1,33 @@
 import {applicationDefault, getApps, initializeApp} from "firebase-admin/app";
 import {getAuth} from "firebase-admin/auth";
 import {Timestamp, getFirestore} from "firebase-admin/firestore";
-import {buildSyntheticAccountEmail, normalizeUsername, type AllowedUsername} from "./domain.js";
+import {
+  buildAccountClaims,
+  buildSyntheticAccountEmail,
+  normalizeUsername,
+  type AccountRole,
+} from "./identity.js";
 
 const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT ?? "synapse-chat-pjr-2026";
-const BOOTSTRAP_USERNAMES: readonly AllowedUsername[] = ["Peter", "Trish"];
+const BOOTSTRAP_ACCOUNTS = [
+  {role: "OWNER", username: "Peter"},
+  {role: "USER", username: "Trish"},
+] as const satisfies readonly {role: AccountRole; username: string}[];
 const MINIMUM_PASSWORD_LENGTH = 8;
+
+type BootstrapUsername = (typeof BOOTSTRAP_ACCOUNTS)[number]["username"];
 
 interface BootstrapCredential {
   password: string;
-  username: AllowedUsername;
+  role: AccountRole;
+  username: BootstrapUsername;
 }
 
 interface CreatedBootstrapAccount {
   email: string;
+  role: AccountRole;
   uid: string;
-  username: AllowedUsername;
+  username: BootstrapUsername;
 }
 
 async function readHiddenSecret(prompt: string): Promise<string> {
@@ -63,13 +75,13 @@ async function readHiddenSecret(prompt: string): Promise<string> {
 
 async function resolveBootstrapCredentials(): Promise<BootstrapCredential[]> {
   const credentials: BootstrapCredential[] = [];
-  for (const username of BOOTSTRAP_USERNAMES) {
+  for (const {role, username} of BOOTSTRAP_ACCOUNTS) {
     const environmentName = `SYNAPSE_${username.toUpperCase()}_PASSWORD`;
     const password = process.env[environmentName] ?? (await readHiddenSecret(`${username} password: `));
     if (password.length < MINIMUM_PASSWORD_LENGTH) {
       throw new Error(`${username}'s password must contain at least ${MINIMUM_PASSWORD_LENGTH} characters.`);
     }
-    credentials.push({password, username});
+    credentials.push({password, role, username});
   }
   return credentials;
 }
@@ -110,7 +122,16 @@ async function createBootstrapAccounts(
         emailVerified: true,
         password: credential.password,
       });
-      createdAccounts.push({email, uid: account.uid, username: credential.username});
+      await auth.setCustomUserClaims(
+        account.uid,
+        buildAccountClaims(credential.role, "ACTIVE"),
+      );
+      createdAccounts.push({
+        email,
+        role: credential.role,
+        uid: account.uid,
+        username: credential.username,
+      });
     }
 
     const createdAt = Timestamp.now();
@@ -124,6 +145,7 @@ async function createBootstrapAccounts(
         usernameNormalized: normalizedUsername,
       });
       writes.create(firestore.doc(`profiles/${account.uid}`), {
+        accountState: "ACTIVE",
         allowed: true,
         avatarUrl: null,
         bio: "",
@@ -131,7 +153,9 @@ async function createBootstrapAccounts(
         directoryVisible: true,
         displayName: account.username,
         lastSeenAt: null,
+        mustChangePassword: false,
         online: false,
+        role: account.role,
         updatedAt: createdAt,
         username: account.username,
         usernameNormalized: normalizedUsername,
@@ -139,6 +163,7 @@ async function createBootstrapAccounts(
       writes.create(firestore.doc(`accountProvisioningReceipts/${account.uid}`), {
         actor: "bootstrap-command",
         createdAt,
+        role: account.role,
         uid: account.uid,
         username: account.username,
       });

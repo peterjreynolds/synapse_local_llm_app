@@ -9,6 +9,14 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "accountState",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "directoryVisible",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "usernameNormalized",
           "order": "ASCENDING"
         }
@@ -19,7 +27,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "memberIds",
+          "fieldPath": "activeMemberIds",
           "arrayConfig": "CONTAINS"
         },
         {
@@ -43,5 +51,20 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "typing",
+      "fieldPath": "expiresAt",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        },
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    }
+  ]
 }

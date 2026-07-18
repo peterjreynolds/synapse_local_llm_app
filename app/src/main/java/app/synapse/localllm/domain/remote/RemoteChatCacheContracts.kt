@@ -25,6 +25,15 @@ value class RemoteRoomId(val raw: String) {
     }
 }
 
+fun isValidRemoteDirectRoomId(rawRoomId: String): Boolean =
+    REMOTE_DIRECT_ROOM_ID_PATTERN.matches(rawRoomId)
+
+fun isValidRemoteGroupRoomId(rawRoomId: String): Boolean =
+    REMOTE_GROUP_ROOM_ID_PATTERN.matches(rawRoomId)
+
+fun isValidRemoteConversationRoomId(rawRoomId: String): Boolean =
+    isValidRemoteDirectRoomId(rawRoomId) || isValidRemoteGroupRoomId(rawRoomId)
+
 @JvmInline
 value class RemoteMessageId(val raw: String) {
     init {
@@ -42,6 +51,8 @@ value class RemoteIdempotencyKey(val raw: String) {
 enum class RemoteMessageDeliveryState {
     PENDING,
     SENT,
+    DELIVERED,
+    READ,
     FAILED,
 }
 
@@ -50,6 +61,25 @@ enum class RemoteOutboxState {
     IN_FLIGHT,
     FAILED,
     COMPLETE,
+}
+
+enum class RemoteRoomKind {
+    DIRECT,
+    GROUP,
+}
+
+enum class RemoteRoomMemberRole {
+    OWNER,
+    ADMIN,
+    MEMBER,
+}
+
+enum class RemoteRoomMuteDuration {
+    OFF,
+    ONE_HOUR,
+    EIGHT_HOURS,
+    ONE_WEEK,
+    FOREVER,
 }
 
 data class RemoteCachedProfile(
@@ -65,27 +95,43 @@ data class RemoteCachedProfile(
     val remoteUpdatedAt: Instant,
 )
 
-data class RemoteCachedDirectRoom(
+data class RemoteCachedRoom(
     val accountUid: RemoteAccountUid,
     val roomId: RemoteRoomId,
-    val directKey: String,
-    val peerUid: RemoteProfileUid,
+    val kind: RemoteRoomKind,
+    val directKey: String?,
+    val peerUid: RemoteProfileUid?,
     val title: String,
+    val avatarObjectPath: String?,
     val unreadCount: Int,
     val latestMessagePreview: String?,
     val latestMessageSenderUid: RemoteProfileUid?,
-    val remoteUpdatedAt: Instant,
-)
-
-data class RemoteCachedMembership(
-    val accountUid: RemoteAccountUid,
-    val roomId: RemoteRoomId,
-    val memberUid: RemoteProfileUid,
-    val role: String,
-    val isActive: Boolean,
+    val currentMemberRole: RemoteRoomMemberRole,
+    val notificationsEnabled: Boolean,
+    val isMuted: Boolean,
+    val isArchived: Boolean,
+    val isPinned: Boolean,
     val joinedAt: Instant,
     val lastReadAt: Instant?,
-)
+    val remoteUpdatedAt: Instant,
+    val mutedUntil: Instant? = null,
+) {
+    init {
+        require(unreadCount >= 0) { "Remote room unread count cannot be negative." }
+        when (kind) {
+            RemoteRoomKind.DIRECT -> {
+                require(!directKey.isNullOrBlank()) { "Direct rooms require a direct key." }
+                require(peerUid != null) { "Direct rooms require a peer UID." }
+                require(avatarObjectPath == null) { "Direct rooms cannot own a group avatar." }
+            }
+
+            RemoteRoomKind.GROUP -> {
+                require(directKey == null) { "Group rooms cannot have a direct key." }
+                require(peerUid == null) { "Group rooms cannot have a direct peer." }
+            }
+        }
+    }
+}
 
 data class RemoteCachedMessage(
     val accountUid: RemoteAccountUid,
@@ -95,11 +141,49 @@ data class RemoteCachedMessage(
     val senderUid: RemoteProfileUid,
     val authorKind: String,
     val body: String,
+    val attachments: List<RemoteCachedAttachment> = emptyList(),
+    val replyToMessageId: RemoteMessageId?,
+    val editedAt: Instant?,
+    val deletedAt: Instant?,
+    val revision: Long,
+    val reactionCounts: Map<String, Int>,
+    val deliveredToCount: Int,
+    val readByCount: Int,
     val deliveryState: RemoteMessageDeliveryState,
     val clientCreatedAt: Instant,
     val serverCreatedAt: Instant?,
     val failureReason: String?,
-)
+    val aiParticipantId: String? = null,
+    val aiProvenance: RemoteAiProvenance? = null,
+) {
+    init {
+        require(revision >= 1L) { "Remote message revision must be positive." }
+        require(deliveredToCount >= 0 && readByCount >= 0) { "Remote message receipt counts cannot be negative." }
+        require(reactionCounts.keys.all { emoji -> emoji.isNotBlank() && emoji.length <= 16 }) {
+            "Remote reaction identifiers are invalid."
+        }
+        require(reactionCounts.values.all { count -> count > 0 }) { "Remote reaction counts must be positive." }
+        require(deletedAt != null || body.isNotBlank() || attachments.isNotEmpty()) {
+            "Active remote messages require text or an attachment."
+        }
+        require(attachments.size <= 8 && attachments.distinctBy(RemoteCachedAttachment::attachmentId).size == attachments.size) {
+            "Remote message attachments must be unique and bounded."
+        }
+        when (authorKind) {
+            "HUMAN" -> require(aiParticipantId == null && aiProvenance == null) {
+                "Human messages cannot claim AI provenance."
+            }
+
+            "SYNAPSE_AI" -> require(
+                aiParticipantId == "participant-synapse-local-ai" && aiProvenance != null,
+            ) {
+                "Synapse AI messages require an explicit participant and provenance."
+            }
+
+            else -> error("Remote message author kind is unsupported.")
+        }
+    }
+}
 
 data class RemoteMessageOutboxOperation(
     val accountUid: RemoteAccountUid,
@@ -109,6 +193,8 @@ data class RemoteMessageOutboxOperation(
     val idempotencyKey: RemoteIdempotencyKey,
     val senderUid: RemoteProfileUid,
     val body: String,
+    val attachments: List<RemoteCachedAttachment> = emptyList(),
+    val replyToMessageId: RemoteMessageId?,
     val state: RemoteOutboxState,
     val attemptCount: Int,
     val createdAt: Instant,
@@ -132,8 +218,7 @@ data class CacheRemoteProfilesCommand(
 
 data class CacheRemoteRoomsCommand(
     val accountUid: RemoteAccountUid,
-    val rooms: List<RemoteCachedDirectRoom>,
-    val memberships: List<RemoteCachedMembership>,
+    val rooms: List<RemoteCachedRoom>,
 )
 
 data class CacheRemoteMessagesCommand(
@@ -146,6 +231,33 @@ data class EnqueueRemoteMessageCommand(
     val outboxOperation: RemoteMessageOutboxOperation,
 )
 
+data class RemoteMessageDraft(
+    val accountUid: RemoteAccountUid,
+    val roomId: RemoteRoomId,
+    val body: String,
+    val updatedAt: Instant,
+)
+
+data class SearchRemoteMessagesCommand(
+    val accountUid: RemoteAccountUid,
+    val query: String,
+    val roomId: RemoteRoomId? = null,
+    val limit: Int = 25,
+)
+
+data class RemoteMessageSearchResult(
+    val roomId: RemoteRoomId,
+    val messageId: RemoteMessageId,
+    val excerpt: String,
+)
+
+data class RemoteNotificationPreferences(
+    val directMessages: Boolean = true,
+    val groupMessages: Boolean = true,
+    val mentions: Boolean = true,
+    val mutedRooms: Boolean = false,
+)
+
 enum class RemoteCacheMutation {
     PROFILES_CACHED,
     ROOMS_CACHED,
@@ -154,6 +266,11 @@ enum class RemoteCacheMutation {
     MESSAGE_ALREADY_ENQUEUED,
     DELIVERY_UPDATED,
     CURSOR_SAVED,
+    DRAFT_SAVED,
+    DRAFT_CLEARED,
+    MESSAGE_HIDDEN_LOCALLY,
+    CONVERSATION_HIDDEN_LOCALLY,
+    CONVERSATION_SHOWN_LOCALLY,
 }
 
 data class RemoteCacheMutationReceipt(
@@ -171,11 +288,13 @@ interface RemoteChatCacheRepository {
 
     fun observeProfiles(): Flow<List<RemoteCachedProfile>>
 
-    fun observeDirectRooms(): Flow<List<RemoteCachedDirectRoom>>
+    fun observeRooms(): Flow<List<RemoteCachedRoom>>
 
     fun observeMessages(roomId: RemoteRoomId): Flow<List<RemoteCachedMessage>>
 
     fun observePendingOutbox(): Flow<List<RemoteMessageOutboxOperation>>
+
+    fun observeDraft(roomId: RemoteRoomId): Flow<RemoteMessageDraft?>
 
     suspend fun cacheProfiles(command: CacheRemoteProfilesCommand): RemoteCacheMutationReceipt
 
@@ -197,8 +316,36 @@ interface RemoteChatCacheRepository {
 
     suspend fun saveSyncCursor(cursor: RemoteSyncCursor): RemoteCacheMutationReceipt
 
+    suspend fun saveDraft(draft: RemoteMessageDraft): RemoteCacheMutationReceipt
+
+    suspend fun clearDraft(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCacheMutationReceipt
+
+    suspend fun hideMessageLocally(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        messageId: RemoteMessageId,
+    ): RemoteCacheMutationReceipt
+
+    suspend fun hideConversationLocally(
+        accountUid: RemoteAccountUid,
+        room: RemoteCachedRoom,
+    ): RemoteCacheMutationReceipt
+
+    suspend fun showConversationLocally(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCacheMutationReceipt
+
+    suspend fun searchMessages(command: SearchRemoteMessagesCommand): List<RemoteMessageSearchResult>
+
     suspend fun findSyncCursor(
         collectionName: String,
         scopeId: String,
     ): RemoteSyncCursor?
 }
+
+private val REMOTE_DIRECT_ROOM_ID_PATTERN = Regex("^direct_[a-f0-9]{64}$")
+private val REMOTE_GROUP_ROOM_ID_PATTERN = Regex("^group_[a-f0-9]{32}$")

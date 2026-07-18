@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {randomBytes} from "node:crypto";
+import {createHash, randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {setTimeout as delay} from "node:timers/promises";
 import {applicationDefault, deleteApp as deleteAdminApp, initializeApp as initializeAdminApp} from "firebase-admin/app";
@@ -137,7 +137,14 @@ async function createAcceptanceIdentity(adminAuth, adminFirestore, role, runId) 
     password,
   });
   try {
+    await adminAuth.setCustomUserClaims(user.uid, {
+      accountState: "ACTIVE",
+      claimsVersion: 1,
+      mustChangePassword: false,
+      role: "USER",
+    });
     await adminFirestore.doc(`profiles/${user.uid}`).create({
+      accountState: "ACTIVE",
       allowed: true,
       avatarUrl: null,
       bio: "Temporary release acceptance account",
@@ -145,7 +152,9 @@ async function createAcceptanceIdentity(adminAuth, adminFirestore, role, runId) 
       directoryVisible: false,
       displayName,
       lastSeenAt: null,
+      mustChangePassword: false,
       online: false,
+      role: "USER",
       updatedAt: AdminFieldValue.serverTimestamp(),
       username: `acceptance_${role}`,
       usernameNormalized: `acceptance_${role}`,
@@ -191,6 +200,23 @@ async function waitForNotificationReceipt(adminFirestore, messageId) {
   );
 }
 
+async function cleanupInvitationArtifacts(adminFirestore, actorUid, invitationIds) {
+  const invitationRateLimitId = createHash("sha256")
+    .update(`invitationMutation\u0000${actorUid}`, "utf8")
+    .digest("hex");
+  const invitationAuditEvents = await adminFirestore
+    .collection("securityAuditEvents")
+    .where("actorUid", "==", actorUid)
+    .get();
+  await Promise.all([
+    ...invitationIds.map((invitationId) =>
+      adminFirestore.doc(`invitations/${invitationId}`).delete(),
+    ),
+    ...invitationAuditEvents.docs.map((snapshot) => snapshot.ref.delete()),
+    adminFirestore.doc(`callableRateLimits/${invitationRateLimitId}`).delete(),
+  ]);
+}
+
 async function main() {
   requireLiveAcceptanceAuthorization();
   const runId = `live_${Date.now()}`;
@@ -205,6 +231,8 @@ async function main() {
   const clientApps = [];
   const clientFirestores = [];
   const acceptanceIdentities = [];
+  const invitationIds = [];
+  let invitationActorUid = null;
   let roomId = null;
   const messageIds = [];
 
@@ -216,6 +244,10 @@ async function main() {
     ]);
     assert.equal(provisionedPeter.disabled, false, "Peter must be enabled.");
     assert.equal(provisionedTrish.disabled, false, "Trish must be enabled.");
+    assert.equal(provisionedPeter.customClaims?.accountState, "ACTIVE", "Peter claims must be active.");
+    assert.equal(provisionedPeter.customClaims?.role, "OWNER", "Peter must hold the owner claim.");
+    assert.equal(provisionedTrish.customClaims?.accountState, "ACTIVE", "Trish claims must be active.");
+    assert.equal(provisionedTrish.customClaims?.role, "USER", "Trish must hold the user claim.");
 
     const [peterProfile, trishProfile] = await adminFirestore.getAll(
       adminFirestore.doc(`profiles/${provisionedPeter.uid}`),
@@ -223,11 +255,16 @@ async function main() {
     );
     assert.equal(peterProfile.get("allowed"), true, "Peter must be allowed.");
     assert.equal(trishProfile.get("allowed"), true, "Trish must be allowed.");
+    assert.equal(peterProfile.get("accountState"), "ACTIVE", "Peter profile must be active.");
+    assert.equal(peterProfile.get("role"), "OWNER", "Peter profile must hold the owner role.");
+    assert.equal(trishProfile.get("accountState"), "ACTIVE", "Trish profile must be active.");
+    assert.equal(trishProfile.get("role"), "USER", "Trish profile must hold the user role.");
 
     const peter = await createAcceptanceIdentity(adminAuth, adminFirestore, "peter", runId);
     acceptanceIdentities.push(peter);
     const trish = await createAcceptanceIdentity(adminAuth, adminFirestore, "trish", runId);
     acceptanceIdentities.push(trish);
+    invitationActorUid = trish.uid;
 
     const peterApp = initializeClientApp(clientConfig, `peter-${runId}`);
     const trishApp = initializeClientApp(clientConfig, `trish-${runId}`);
@@ -245,6 +282,27 @@ async function main() {
       signInAcceptanceClient(trishAuth, trish),
     ]);
 
+    const memberInvitation = await httpsCallable(trishFunctions, "createInvitation")({
+      intendedLabel: null,
+      lifetimeHours: 24 * 7,
+      maximumUses: 1,
+    });
+    assert.match(memberInvitation.data.invitationId, /^[a-f0-9]{64}$/);
+    invitationIds.push(memberInvitation.data.invitationId);
+    assert.match(memberInvitation.data.invitationCode, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(memberInvitation.data.maximumUses, 1);
+    const storedMemberInvitation = await adminFirestore
+      .doc(`invitations/${memberInvitation.data.invitationId}`)
+      .get();
+    assert.equal(storedMemberInvitation.get("creatorUid"), trish.uid);
+    assert.equal(storedMemberInvitation.get("maximumUses"), 1);
+    assert.equal(storedMemberInvitation.get("remainingUses"), 1);
+    assert.equal(
+      JSON.stringify(storedMemberInvitation.data()).includes(memberInvitation.data.invitationCode),
+      false,
+      "Raw invitation codes must not be persisted.",
+    );
+
     const [peterOpenResult, trishOpenResult] = await Promise.all([
       httpsCallable(peterFunctions, "openDirectRoom")({targetUid: trish.uid}),
       httpsCallable(trishFunctions, "openDirectRoom")({targetUid: peter.uid}),
@@ -258,8 +316,8 @@ async function main() {
     const [peterRoom, trishRoom, peterRoomList, trishRoomList] = await Promise.all([
       getDoc(peterRoomReference),
       getDoc(trishRoomReference),
-      getDocs(query(collection(peterFirestore, "rooms"), where("memberIds", "array-contains", peter.uid))),
-      getDocs(query(collection(trishFirestore, "rooms"), where("memberIds", "array-contains", trish.uid))),
+      getDocs(query(collection(peterFirestore, "rooms"), where("activeMemberIds", "array-contains", peter.uid))),
+      getDocs(query(collection(trishFirestore, "rooms"), where("activeMemberIds", "array-contains", trish.uid))),
     ]);
     assert(peterRoom.exists() && trishRoom.exists(), "Both clients must read the direct room.");
     assert(peterRoomList.docs.some((snapshot) => snapshot.id === roomId));
@@ -364,6 +422,7 @@ async function main() {
         readAndUnreadTransitions: true,
         sessionLogoutAndRecovery: true,
         triggerReceipts: true,
+        userInvitationCreation: true,
       },
     });
     process.stdout.write(`${JSON.stringify({runId, roomId, messageIds, state: "COMPLETE"})}\n`);
@@ -385,6 +444,11 @@ async function main() {
     const cleanupOperations = [];
     if (roomId) {
       cleanupOperations.push(adminFirestore.recursiveDelete(adminFirestore.doc(`rooms/${roomId}`)));
+    }
+    if (invitationActorUid) {
+      cleanupOperations.push(
+        cleanupInvitationArtifacts(adminFirestore, invitationActorUid, invitationIds),
+      );
     }
     for (const identity of acceptanceIdentities) {
       cleanupOperations.push(adminFirestore.doc(`profiles/${identity.uid}`).delete());

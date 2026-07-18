@@ -1,40 +1,42 @@
 package app.synapse.localllm.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,16 +49,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import app.synapse.localllm.domain.remote.RemoteCachedDirectRoom
-import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
-import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
+import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
 import app.synapse.localllm.domain.remote.RemoteProfileUid
+import app.synapse.localllm.domain.remote.RemoteRoomKind
+import app.synapse.localllm.domain.remote.RemoteRoomMuteDuration
 import coil3.compose.AsyncImage
 import java.time.ZoneId
+import java.text.Normalizer
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
@@ -64,13 +67,32 @@ import java.time.format.FormatStyle
 internal fun RemoteChatsPane(
     state: RemoteChatUiState,
     viewModel: RemoteChatViewModel,
+    accountState: RemoteAccountUiState,
+    groupState: RemoteGroupUiState,
+    groupViewModel: RemoteGroupViewModel,
+    appearanceState: ChatAppearanceUiState,
+    appearanceViewModel: ChatAppearanceViewModel,
 ) {
+    var showGroupCreation by rememberSaveable { mutableStateOf(false) }
     val selectedRoomId = state.selectedRoomId
+    LaunchedEffect(groupState.roomToOpen, groupState.roomToClose) {
+        groupState.roomToOpen?.let(viewModel::selectRoom)
+        if (groupState.roomToClose == selectedRoomId) viewModel.selectRoom(null)
+        if (groupState.roomToOpen != null || groupState.roomToClose != null) {
+            showGroupCreation = false
+            groupViewModel.consumeNavigation()
+        }
+    }
     if (selectedRoomId == null) {
         RemoteRoomList(
-            rooms = state.rooms,
-            profiles = state.profiles,
+            state = state,
             onRoomSelected = { room -> viewModel.selectRoom(room.roomId) },
+            onMessageSearchChanged = viewModel::searchCachedMessages,
+            onMessageSearchResultSelected = viewModel::openMessageSearchResult,
+            onRoomPreferencesChanged = viewModel::updateRoomPreferences,
+            onDeleteConversation = viewModel::deleteConversationForMe,
+            onCreateGroup = { showGroupCreation = true },
+            isActionRunning = groupState.isActionRunning,
         )
     } else {
         val room = state.rooms.firstOrNull { candidate -> candidate.roomId == selectedRoomId }
@@ -79,229 +101,437 @@ internal fun RemoteChatsPane(
             room = room,
             onBack = { viewModel.selectRoom(null) },
             onSend = viewModel::sendMessage,
+            onComposerChanged = viewModel::updateComposerText,
+            onAttachmentSelected = viewModel::addAttachment,
+            onRetryAttachment = viewModel::retryAttachment,
+            onCancelAttachment = viewModel::cancelAttachment,
+            onDownloadAttachment = viewModel::downloadAttachment,
+            onCancelAttachmentDownload = viewModel::cancelAttachmentDownload,
+            onStartVoiceNote = viewModel::startVoiceNoteRecording,
+            onFinishVoiceNote = viewModel::finishVoiceNoteRecording,
+            onCancelVoiceNote = viewModel::cancelVoiceNoteRecording,
+            onVoicePermissionDenied = viewModel::reportVoiceNotePermissionDenied,
+            onReply = viewModel::replyToMessage,
+            onCancelReply = viewModel::cancelReply,
+            onEdit = viewModel::editMessage,
+            onDeleteForMe = viewModel::deleteMessageForMe,
+            onDeleteForEveryone = viewModel::deleteMessageForEveryone,
+            onLoadOlder = viewModel::loadOlderMessages,
+            onJumpToMessage = viewModel::jumpToMessage,
+            onMessageRevealed = viewModel::consumeMessageReveal,
+            onLocalAiConfigurationChanged = viewModel::updateRoomAiConfiguration,
+            onMentionSynapse = viewModel::insertRemoteSynapseMention,
+            appearanceState = appearanceState,
+            onBackgroundSelected = appearanceViewModel::selectBackground,
+            onMessageScaleSelected = appearanceViewModel::selectMessageScale,
+            onResetAppearance = appearanceViewModel::resetAppearance,
+            accountState = accountState,
+            groupState = groupState,
+            groupViewModel = groupViewModel,
+        )
+    }
+    if (showGroupCreation) {
+        RemoteGroupCreateDialog(
+            profiles = state.profiles,
+            currentAccountUid = state.account?.accountUid?.raw,
+            blockedProfileUids = accountState.blockedProfileUids,
+            isActionRunning = groupState.isActionRunning,
+            onDismiss = { showGroupCreation = false },
+            onCreate = groupViewModel::createGroup,
         )
     }
 }
 
 @Composable
 private fun RemoteRoomList(
-    rooms: List<RemoteCachedDirectRoom>,
-    profiles: List<RemoteCachedProfile>,
-    onRoomSelected: (RemoteCachedDirectRoom) -> Unit,
-) {
-    if (rooms.isEmpty()) {
-        EmptyRemotePane(
-            title = "No synced conversations yet",
-            detail = "Open People and choose an approved account to start a private chat.",
-        )
-        return
-    }
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        items(rooms, key = { room -> room.roomId.raw }) { room ->
-            val peer = profiles.firstOrNull { profile -> profile.profileUid == room.peerUid }
-            ListItem(
-                headlineContent = {
-                    Text(peer?.displayName ?: room.title, fontWeight = FontWeight.SemiBold)
-                },
-                supportingContent = {
-                    Text(room.latestMessagePreview ?: "Private synced conversation")
-                },
-                leadingContent = {
-                    RemoteProfileAvatar(
-                        profile = peer,
-                        displayName = peer?.displayName ?: room.title,
-                    )
-                },
-                trailingContent = {
-                    if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
-                },
-                modifier = Modifier.clickable { onRoomSelected(room) },
-            )
-            HorizontalDivider()
-        }
-    }
-}
-
-@Composable
-private fun RemoteMessageThread(
     state: RemoteChatUiState,
-    room: RemoteCachedDirectRoom?,
-    onBack: () -> Unit,
-    onSend: (String) -> Unit,
+    onRoomSelected: (RemoteCachedRoom) -> Unit,
+    onMessageSearchChanged: (String) -> Unit,
+    onMessageSearchResultSelected: (RemoteMessageSearchResult) -> Unit,
+    onRoomPreferencesChanged: (RemoteCachedRoom, Boolean, Boolean, RemoteRoomMuteDuration?) -> Unit,
+    onDeleteConversation: (RemoteCachedRoom) -> Unit,
+    onCreateGroup: () -> Unit,
+    isActionRunning: Boolean,
 ) {
-    var composerText by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf("") }
-    var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
-    val listState = rememberLazyListState()
-    val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room?.peerUid }
-    val currentProfile = state.profiles.firstOrNull { profile ->
-        profile.profileUid.raw == state.account?.accountUid?.raw
+    var roomSearchQuery by rememberSaveable { mutableStateOf("") }
+    var unreadOnly by rememberSaveable { mutableStateOf(false) }
+    var showArchived by rememberSaveable { mutableStateOf(false) }
+    var preferenceRoomId by rememberSaveable { mutableStateOf<String?>(null) }
+    var actionRoomId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleteRoomId by rememberSaveable { mutableStateOf<String?>(null) }
+    val visibleRooms = remember(state.rooms, state.profiles, roomSearchQuery, unreadOnly, showArchived) {
+        buildRemoteRoomPresentation(
+            rooms = state.rooms,
+            profiles = state.profiles,
+            searchQuery = roomSearchQuery,
+            unreadOnly = unreadOnly,
+            showArchived = showArchived,
+        )
     }
-    val title = peer?.displayName ?: room?.title ?: "Private conversation"
-
-    fun submit() {
-        if (composerText.isNotBlank() && !state.isActionRunning) {
-            onSend(composerText)
-            composerText = ""
-        }
-    }
-
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding(),
-    ) {
+    Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to conversations")
-            }
-            RemoteProfileAvatar(profile = peer, displayName = title)
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(title, fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = remotePresenceLabel(peer),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { showRoomMembers = !showRoomMembers }) {
-                Icon(
-                    Icons.Default.Info,
-                    contentDescription = if (showRoomMembers) "Show messages" else "Show room members",
-                )
-            }
-        }
-        HorizontalDivider()
-        if (showRoomMembers) {
-            RemoteRoomMembers(
-                profiles = listOfNotNull(currentProfile, peer).distinctBy { profile -> profile.profileUid },
-                currentAccountUid = state.account?.accountUid?.raw,
+            OutlinedTextField(
+                value = roomSearchQuery,
+                onValueChange = { value ->
+                    val normalizedQuery = value.take(MAXIMUM_VISIBLE_SEARCH_QUERY_LENGTH)
+                    roomSearchQuery = normalizedQuery
+                    onMessageSearchChanged(normalizedQuery)
+                },
                 modifier = Modifier.weight(1f),
+                label = { Text("Search chats and messages") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                singleLine = true,
             )
-        } else if (state.messages.isEmpty()) {
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            IconButton(
+                onClick = onCreateGroup,
+                enabled = !isActionRunning,
+            ) {
+                Icon(Icons.Default.GroupAdd, contentDescription = "New group")
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(
+                selected = unreadOnly,
+                onClick = { unreadOnly = !unreadOnly },
+                label = { Text("Unread") },
+            )
+            FilterChip(
+                selected = showArchived,
+                onClick = { showArchived = !showArchived },
+                label = { Text("Archived") },
+            )
+        }
+        when (
+            remoteMessageSearchPresentationState(
+                query = state.messageSearchQuery,
+                isSearching = state.isSearchingMessages,
+                results = state.messageSearchResults,
+            )
+        ) {
+            RemoteMessageSearchPresentationState.HIDDEN -> Unit
+            RemoteMessageSearchPresentationState.SEARCHING -> {
                 Text(
-                    text = "Messages will synchronize here.",
+                    "Searching downloaded messages…",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            RemoteMessageSearchPresentationState.EMPTY -> {
+                Text(
+                    "No downloaded messages match.",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-            ) {
-                items(state.messages, key = { message -> message.messageId.raw }) { message ->
-                    RemoteMessageBubble(
-                        message = message,
-                        isCurrentAccount = message.senderUid.raw == state.account?.accountUid?.raw,
-                    )
-                }
-            }
-        }
-        if (!showRoomMembers) {
-            HorizontalDivider()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = composerText,
-                    onValueChange = { value -> composerText = value.take(MAXIMUM_MESSAGE_LENGTH) },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message") },
-                    maxLines = 5,
-                    enabled = !state.isActionRunning,
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Sentences,
-                        imeAction = ImeAction.Send,
-                    ),
-                    keyboardActions = KeyboardActions(onSend = { submit() }),
+            RemoteMessageSearchPresentationState.RESULTS -> {
+                Text(
+                    "Message results",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
-                FilledIconButton(
-                    onClick = ::submit,
-                    enabled = composerText.isNotBlank() && !state.isActionRunning,
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 240.dp),
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
+                    items(
+                        items = state.messageSearchResults,
+                        key = { result -> "${result.roomId.raw}:${result.messageId.raw}" },
+                    ) { result ->
+                        val room = state.rooms.firstOrNull { candidate -> candidate.roomId == result.roomId }
+                        ListItem(
+                            headlineContent = { Text(room?.title ?: "Conversation") },
+                            supportingContent = { Text(result.excerpt, maxLines = 2) },
+                            modifier = Modifier.clickable { onMessageSearchResultSelected(result) },
+                        )
+                    }
                 }
+                HorizontalDivider()
             }
         }
+        if (state.rooms.isEmpty()) {
+            EmptyRemotePane(
+                title = "No synced conversations yet",
+                detail = "Start a private chat from People or create a group.",
+            )
+            return@Column
+        }
+        if (visibleRooms.isEmpty()) {
+            EmptyRemotePane(
+                title = "No conversations match",
+                detail = "Change the search or filter settings.",
+            )
+            return@Column
+        }
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(visibleRooms, key = { room -> room.roomId.raw }) { room ->
+                val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room.peerUid }
+                val displayName = if (room.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room.title
+                ListItem(
+                    headlineContent = {
+                        Text(displayName, fontWeight = FontWeight.SemiBold)
+                    },
+                    supportingContent = {
+                        Text(
+                            room.latestMessagePreview ?: if (room.kind == RemoteRoomKind.GROUP) {
+                                "Group conversation"
+                            } else {
+                                "Private synced conversation"
+                            },
+                        )
+                    },
+                    leadingContent = {
+                        RemoteProfileAvatar(
+                            profile = if (room.kind == RemoteRoomKind.DIRECT) peer else null,
+                            displayName = displayName,
+                        )
+                    },
+                    trailingContent = {
+                        Box {
+                            Column(horizontalAlignment = Alignment.End) {
+                                if (room.isPinned) Text("Pinned", style = MaterialTheme.typography.labelSmall)
+                                if (room.isArchived) Text("Archived", style = MaterialTheme.typography.labelSmall)
+                                if (room.isMuted) Text("Muted", style = MaterialTheme.typography.labelSmall)
+                                if (room.unreadCount > 0) Badge { Text(room.unreadCount.toString()) }
+                            }
+                            DropdownMenu(
+                                expanded = actionRoomId == room.roomId.raw,
+                                onDismissRequest = { actionRoomId = null },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Conversation settings") },
+                                    onClick = {
+                                        actionRoomId = null
+                                        preferenceRoomId = room.roomId.raw
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Delete from this phone") },
+                                    onClick = {
+                                        actionRoomId = null
+                                        deleteRoomId = room.roomId.raw
+                                    },
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.combinedClickable(
+                        onClick = { onRoomSelected(room) },
+                        onLongClickLabel = "Conversation options",
+                        onLongClick = { actionRoomId = room.roomId.raw },
+                    ),
+                )
+                HorizontalDivider()
+            }
+        }
+    }
+    state.rooms.firstOrNull { room -> room.roomId.raw == preferenceRoomId }?.let { room ->
+        RemoteRoomPreferencesDialog(
+            room = room,
+            isActionRunning = state.isActionRunning,
+            onDismiss = { preferenceRoomId = null },
+            onSave = { archived, pinned, muteDuration ->
+                onRoomPreferencesChanged(room, archived, pinned, muteDuration)
+                preferenceRoomId = null
+            },
+        )
+    }
+    state.rooms.firstOrNull { room -> room.roomId.raw == deleteRoomId }?.let { room ->
+        AlertDialog(
+            onDismissRequest = { deleteRoomId = null },
+            title = { Text("Delete conversation from this phone?") },
+            text = {
+                Text(
+                    "This removes the conversation and its downloaded history only from this phone. " +
+                        "Other members keep their copies, and new messages can make the chat reappear.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        deleteRoomId = null
+                        onDeleteConversation(room)
+                    },
+                    enabled = !state.isActionRunning,
+                ) { Text("Delete for me") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteRoomId = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 
+internal enum class RemoteMessageSearchPresentationState {
+    HIDDEN,
+    SEARCHING,
+    EMPTY,
+    RESULTS,
+}
+
+internal fun remoteMessageSearchPresentationState(
+    query: String,
+    isSearching: Boolean,
+    results: List<RemoteMessageSearchResult>,
+): RemoteMessageSearchPresentationState = when {
+    query.isBlank() -> RemoteMessageSearchPresentationState.HIDDEN
+    isSearching -> RemoteMessageSearchPresentationState.SEARCHING
+    results.isEmpty() -> RemoteMessageSearchPresentationState.EMPTY
+    else -> RemoteMessageSearchPresentationState.RESULTS
+}
+
 @Composable
-private fun RemoteMessageBubble(
-    message: RemoteCachedMessage,
-    isCurrentAccount: Boolean,
+private fun RemoteRoomPreferencesDialog(
+    room: RemoteCachedRoom,
+    isActionRunning: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (Boolean, Boolean, RemoteRoomMuteDuration?) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isCurrentAccount) Arrangement.End else Arrangement.Start,
-    ) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = if (isCurrentAccount) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
-            modifier = Modifier.fillMaxWidth(0.82f),
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Text(message.body)
-                if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = when (message.deliveryState) {
-                            RemoteMessageDeliveryState.PENDING -> "Sending…"
-                            RemoteMessageDeliveryState.SENT -> "Sent"
-                            RemoteMessageDeliveryState.FAILED -> message.failureReason ?: "Send failed"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
+    var archived by rememberSaveable(room.roomId.raw, room.isArchived) { mutableStateOf(room.isArchived) }
+    var pinned by rememberSaveable(room.roomId.raw, room.isPinned) { mutableStateOf(room.isPinned) }
+    var muteDuration by rememberSaveable(room.roomId.raw, room.isMuted, room.mutedUntil) {
+        mutableStateOf<RemoteRoomMuteDuration?>(null)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Conversation settings") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(onClick = { pinned = !pinned }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (pinned) "Unpin conversation" else "Pin conversation")
+                }
+                OutlinedButton(onClick = { archived = !archived }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (archived) "Restore from archive" else "Archive conversation")
+                }
+                Text("Mute notifications", fontWeight = FontWeight.SemiBold)
+                OutlinedButton(
+                    onClick = { muteDuration = null },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (muteDuration == null) "✓ Keep current setting" else "Keep current setting")
+                }
+                RemoteRoomMuteDuration.entries.forEach { duration ->
+                    OutlinedButton(
+                        onClick = { muteDuration = duration },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (muteDuration == duration) "✓ ${duration.label()}" else duration.label())
+                    }
                 }
             }
-        }
-    }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(archived, pinned, muteDuration) },
+                enabled = !isActionRunning,
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
+
+private fun RemoteRoomMuteDuration.label(): String = when (this) {
+    RemoteRoomMuteDuration.OFF -> "Not muted"
+    RemoteRoomMuteDuration.ONE_HOUR -> "1 hour"
+    RemoteRoomMuteDuration.EIGHT_HOURS -> "8 hours"
+    RemoteRoomMuteDuration.ONE_WEEK -> "1 week"
+    RemoteRoomMuteDuration.FOREVER -> "Until I turn it off"
+}
+
 
 @Composable
 internal fun RemotePeoplePane(
     state: RemoteChatUiState,
+    accountState: RemoteAccountUiState,
     onOpenDirectRoom: (RemoteProfileUid) -> Unit,
+    onSetUserBlocked: (RemoteProfileUid, Boolean) -> Unit,
 ) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedProfileUid by rememberSaveable { mutableStateOf<String?>(null) }
     val currentUid = state.account?.accountUid?.raw
-    val visibleProfiles = remember(state.profiles, searchQuery, currentUid) {
-        val normalizedQuery = searchQuery.trim().lowercase()
-        state.profiles.filter { profile ->
-            profile.profileUid.raw != currentUid &&
-                (
-                    normalizedQuery.isEmpty() ||
-                        profile.displayName.lowercase().contains(normalizedQuery) ||
-                        profile.username.lowercase().contains(normalizedQuery)
-                )
-        }
+    LaunchedEffect(currentUid) {
+        selectedProfileUid = null
+        searchQuery = ""
     }
+    val presentation = remember(state.profiles, state.rooms, searchQuery, currentUid) {
+        buildRemotePeoplePresentation(state.profiles, state.rooms, currentUid, searchQuery)
+    }
+    val selectedProfile = state.profiles.firstOrNull { profile ->
+        profile.profileUid.raw == selectedProfileUid && profile.profileUid.raw != currentUid
+    }
+    if (selectedProfile != null) {
+        val isBlocked = selectedProfile.profileUid in accountState.blockedProfileUids
+        val accountControlsAvailable = accountState.accountUid?.raw == currentUid &&
+            accountState.privacyStateVerified &&
+            !accountState.isRefreshing
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            IconButton(onClick = { selectedProfileUid = null }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to people")
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                RemoteProfileAvatar(selectedProfile, selectedProfile.displayName)
+                Column {
+                    Text(selectedProfile.displayName, style = MaterialTheme.typography.headlineSmall)
+                    Text("@${selectedProfile.username}")
+                    Text(
+                        remotePresenceLabel(selectedProfile),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (selectedProfile.bio.isNotBlank()) Text(selectedProfile.bio)
+            if (isBlocked) {
+                Text(
+                    "You blocked this account. New conversations are unavailable until you unblock it.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Button(
+                onClick = { onOpenDirectRoom(selectedProfile.profileUid) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = accountControlsAvailable &&
+                    !isBlocked &&
+                    !state.isActionRunning &&
+                    !accountState.isActionRunning,
+            ) {
+                Text("Start chat")
+            }
+            OutlinedButton(
+                onClick = { onSetUserBlocked(selectedProfile.profileUid, !isBlocked) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = accountControlsAvailable &&
+                    !state.isActionRunning &&
+                    !accountState.isActionRunning,
+            ) {
+                Text(if (isBlocked) "Unblock account" else "Block account")
+            }
+        }
+        return
+    }
+    val visibleProfiles = presentation.recentContacts + presentation.directory
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = searchQuery,
@@ -319,40 +549,162 @@ internal fun RemotePeoplePane(
             )
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(visibleProfiles, key = { profile -> profile.profileUid.raw }) { profile ->
-                    ListItem(
-                        headlineContent = { Text(profile.displayName, fontWeight = FontWeight.SemiBold) },
-                        supportingContent = {
-                            Column {
-                                Text("@${profile.username}")
-                                if (profile.bio.isNotBlank()) Text(profile.bio)
-                            }
-                        },
-                        leadingContent = {
-                            RemoteProfileAvatar(profile = profile, displayName = profile.displayName)
-                        },
-                        trailingContent = {
-                            Text(
-                                text = remotePresenceLabel(profile),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (profile.isOnline) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        },
-                        modifier = Modifier.clickable { onOpenDirectRoom(profile.profileUid) },
+                if (presentation.recentContacts.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Recent contacts",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+                items(
+                    items = presentation.recentContacts,
+                    key = { profile -> "recent-${profile.profileUid.raw}" },
+                ) { profile ->
+                    RemotePeopleListItem(
+                        profile = profile,
+                        isBlocked = profile.profileUid in accountState.blockedProfileUids,
+                        onSelected = { selectedProfileUid = profile.profileUid.raw },
                     )
-                    HorizontalDivider()
+                }
+                if (presentation.directory.isNotEmpty()) {
+                    item {
+                        Text(
+                            if (presentation.recentContacts.isEmpty()) "People" else "Directory",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+                items(
+                    items = presentation.directory,
+                    key = { profile -> "directory-${profile.profileUid.raw}" },
+                ) { profile ->
+                    RemotePeopleListItem(
+                        profile = profile,
+                        isBlocked = profile.profileUid in accountState.blockedProfileUids,
+                        onSelected = { selectedProfileUid = profile.profileUid.raw },
+                    )
                 }
             }
         }
     }
 }
 
+internal data class RemotePeoplePresentation(
+    val recentContacts: List<RemoteCachedProfile>,
+    val directory: List<RemoteCachedProfile>,
+)
+
+internal fun buildRemotePeoplePresentation(
+    profiles: List<RemoteCachedProfile>,
+    rooms: List<RemoteCachedRoom>,
+    currentAccountUid: String?,
+    searchQuery: String,
+): RemotePeoplePresentation {
+    val normalizedQuery = normalizeRemoteSearchQuery(searchQuery)
+    val candidates = profiles.filter { profile ->
+        profile.profileUid.raw != currentAccountUid &&
+            (
+                normalizedQuery.isEmpty() ||
+                    normalizeRemoteSearchQuery(profile.displayName).contains(normalizedQuery) ||
+                    normalizeRemoteSearchQuery(profile.username).contains(normalizedQuery)
+            )
+    }
+    if (normalizedQuery.isNotEmpty()) {
+        return RemotePeoplePresentation(
+            recentContacts = emptyList(),
+            directory = candidates.sortedBy { profile -> profile.displayName.lowercase() },
+        )
+    }
+    val profilesByUid = candidates.associateBy(RemoteCachedProfile::profileUid)
+    val recentContacts = rooms
+        .sortedByDescending(RemoteCachedRoom::remoteUpdatedAt)
+        .mapNotNull { room -> profilesByUid[room.peerUid] }
+        .distinctBy(RemoteCachedProfile::profileUid)
+    val recentUids = recentContacts.mapTo(mutableSetOf(), RemoteCachedProfile::profileUid)
+    return RemotePeoplePresentation(
+        recentContacts = recentContacts,
+        directory = candidates
+            .filterNot { profile -> profile.profileUid in recentUids }
+            .sortedBy { profile -> profile.displayName.lowercase() },
+    )
+}
+
+internal fun orderRemoteRoomsForList(rooms: List<RemoteCachedRoom>): List<RemoteCachedRoom> =
+    rooms.sortedWith(
+        compareByDescending<RemoteCachedRoom> { room -> room.isPinned }
+            .thenBy { room -> room.isArchived }
+            .thenByDescending { room -> room.remoteUpdatedAt },
+    )
+
+internal fun buildRemoteRoomPresentation(
+    rooms: List<RemoteCachedRoom>,
+    profiles: List<RemoteCachedProfile>,
+    searchQuery: String,
+    unreadOnly: Boolean,
+    showArchived: Boolean,
+): List<RemoteCachedRoom> {
+    val normalizedQuery = normalizeRemoteSearchQuery(searchQuery)
+    val profilesByUid = profiles.associateBy(RemoteCachedProfile::profileUid)
+    return orderRemoteRoomsForList(
+        rooms.filter { room ->
+            val peer = room.peerUid?.let(profilesByUid::get)
+            val matchesQuery = normalizedQuery.isEmpty() || listOfNotNull(
+                room.title,
+                peer?.displayName,
+                peer?.username,
+            ).any { candidate -> normalizeRemoteSearchQuery(candidate).contains(normalizedQuery) }
+            matchesQuery && (!unreadOnly || room.unreadCount > 0) && (showArchived || !room.isArchived)
+        },
+    )
+}
+
+private fun normalizeRemoteSearchQuery(value: String): String =
+    Normalizer.normalize(value, Normalizer.Form.NFKC)
+        .trim()
+        .lowercase()
+        .take(MAXIMUM_VISIBLE_SEARCH_QUERY_LENGTH)
+
 @Composable
-private fun RemoteRoomMembers(
+private fun RemotePeopleListItem(
+    profile: RemoteCachedProfile,
+    isBlocked: Boolean,
+    onSelected: () -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text(profile.displayName, fontWeight = FontWeight.SemiBold) },
+        supportingContent = {
+            Column {
+                Text("@${profile.username}")
+                if (profile.bio.isNotBlank()) Text(profile.bio)
+                if (isBlocked) Text("Blocked", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        leadingContent = {
+            RemoteProfileAvatar(profile = profile, displayName = profile.displayName)
+        },
+        trailingContent = {
+            Text(
+                text = remotePresenceLabel(profile),
+                style = MaterialTheme.typography.labelMedium,
+                color = if (profile.isOnline) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        },
+        modifier = Modifier.clickable(onClick = onSelected),
+    )
+    HorizontalDivider()
+}
+
+@Composable
+internal fun RemoteRoomMembers(
     profiles: List<RemoteCachedProfile>,
     currentAccountUid: String?,
     modifier: Modifier = Modifier,
@@ -392,9 +744,10 @@ private fun RemoteRoomMembers(
 internal fun RemoteProfileAvatar(
     profile: RemoteCachedProfile?,
     displayName: String,
+    size: Dp = 42.dp,
 ) {
-    Box(modifier = Modifier.size(42.dp), contentAlignment = Alignment.Center) {
-        RemoteInitialsAvatar(displayName)
+    Box(modifier = Modifier.size(size), contentAlignment = Alignment.Center) {
+        RemoteInitialsAvatar(displayName, size)
         profile?.avatarUrl?.takeIf(String::isNotBlank)?.let { avatarUrl ->
             AsyncImage(
                 model = avatarUrl,
@@ -409,7 +762,10 @@ internal fun RemoteProfileAvatar(
 }
 
 @Composable
-private fun RemoteInitialsAvatar(displayName: String) {
+private fun RemoteInitialsAvatar(
+    displayName: String,
+    size: Dp,
+) {
     val initials = displayName
         .trim()
         .split(Regex("\\s+"))
@@ -419,7 +775,7 @@ private fun RemoteInitialsAvatar(displayName: String) {
         .joinToString("")
         .ifBlank { "?" }
     Surface(
-        modifier = Modifier.size(42.dp),
+        modifier = Modifier.size(size),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.secondaryContainer,
     ) {
@@ -462,8 +818,9 @@ internal fun EmptyRemotePane(
     }
 }
 
-private const val MAXIMUM_MESSAGE_LENGTH = 4_000
 private val REMOTE_PRESENCE_FORMATTER: DateTimeFormatter =
     DateTimeFormatter
         .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
         .withZone(ZoneId.systemDefault())
+
+private const val MAXIMUM_VISIBLE_SEARCH_QUERY_LENGTH = 100

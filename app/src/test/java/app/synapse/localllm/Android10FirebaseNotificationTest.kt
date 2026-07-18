@@ -1,5 +1,6 @@
 package app.synapse.localllm
 
+import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
@@ -33,17 +34,30 @@ class Android10FirebaseNotificationTest {
                             "roomId" to roomId,
                             "senderUid" to "trish-uid",
                             "type" to "SYNAPSE_CHAT_MESSAGE",
+                            "unreadCount" to "3",
                         ),
                     )
                     .build(),
             )
 
             assertEquals(1, shadowNotificationManager.size())
+            val postedNotification = shadowNotificationManager.allNotifications.single()
+            assertEquals("Synapse Chat", postedNotification.extras.getString(Notification.EXTRA_TITLE))
+            assertEquals(
+                "You received a message from Synapse.",
+                postedNotification.extras.getString(Notification.EXTRA_TEXT),
+            )
+            assertEquals(3, postedNotification.number)
+            assertEquals(Notification.BADGE_ICON_SMALL, postedNotification.badgeIconType)
+            assertEquals(0, postedNotification.flags and Notification.FLAG_ONLY_ALERT_ONCE)
             assertTrue(
                 shadowNotificationManager.notificationChannels.any { channel ->
-                    channel.name == "Synapse Chat messages"
+                    channel.name == "Synapse Chat messages" && channel.canShowBadge()
                 },
             )
+
+            dismissRemoteRoomNotification(context, app.synapse.localllm.domain.remote.RemoteRoomId(roomId))
+            assertEquals(0, shadowNotificationManager.size())
         } finally {
             serviceController.destroy()
         }

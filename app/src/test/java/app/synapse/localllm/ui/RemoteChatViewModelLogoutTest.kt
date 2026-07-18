@@ -5,6 +5,8 @@ import app.synapse.localllm.application.RemoteChatSessionSynchronizer
 import app.synapse.localllm.application.RemoteRoomVisibilityTracker
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAccountRole
+import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
@@ -113,7 +115,13 @@ class RemoteChatViewModelLogoutTest {
     ): LogoutHarness {
         val mainDispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(mainDispatcher)
-        val authenticatedAccount = RemoteAuthenticatedAccount(ACCOUNT_UID, "peter")
+        val authenticatedAccount = RemoteAuthenticatedAccount(
+            accountUid = ACCOUNT_UID,
+            usernameNormalized = "peter",
+            role = RemoteAccountRole.OWNER,
+            state = RemoteAccountState.ACTIVE,
+            mustChangePassword = false,
+        )
         val authenticationState = MutableStateFlow<RemoteAuthenticationState>(
             RemoteAuthenticationState.SignedIn(authenticatedAccount),
         )
@@ -129,7 +137,7 @@ class RemoteChatViewModelLogoutTest {
         }
         val cacheRepository = mockk<RemoteChatCacheRepository>(relaxed = true) {
             every { observeProfiles() } returns emptyFlow()
-            every { observeDirectRooms() } returns emptyFlow()
+            every { observeRooms() } returns emptyFlow()
             every { observeMessages(any()) } returns emptyFlow()
             every { observePendingOutbox() } returns emptyFlow()
         }
@@ -138,12 +146,16 @@ class RemoteChatViewModelLogoutTest {
         }
         val viewModel = RemoteChatViewModel(
             authenticationGateway = authenticationGateway,
+            attachmentGateway = mockk(relaxed = true),
             directoryGateway = mockk<RemoteDirectoryGateway>(relaxed = true),
             conversationGateway = mockk<RemoteConversationGateway>(relaxed = true),
+            remoteAiParticipantGateway = NoOpRemoteAiParticipantGateway,
             deviceRegistrationGateway = deviceRegistrationGateway,
             cacheRepository = cacheRepository,
             sessionSynchronizer = sessionSynchronizer,
             roomVisibilityTracker = RemoteRoomVisibilityTracker(),
+            remoteLocalAiResponseHost = IdleRemoteLocalAiResponseHost,
+            voiceNoteRecorder = mockk(relaxed = true),
             idFactory = SynapseIdFactory(),
             clock = object : SynapseClock {
                 override fun now(): Instant = Instant.EPOCH

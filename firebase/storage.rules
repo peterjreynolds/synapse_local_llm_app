@@ -2,25 +2,119 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    function isAllowedUser() {
+    function isActiveUser() {
       return request.auth != null
-        && firestore.exists(/databases/(default)/documents/profiles/$(request.auth.uid))
-        && firestore.get(/databases/(default)/documents/profiles/$(request.auth.uid)).data.allowed == true;
+        && request.auth.token.accountState == 'ACTIVE'
+        && request.auth.token.mustChangePassword == false
+        && request.auth.token.role in ['OWNER', 'ADMIN', 'USER'];
+    }
+
+    function isActiveProfile(uid) {
+      return firestore.exists(/databases/(default)/documents/profiles/$(uid))
+        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.allowed == true
+        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.accountState == 'ACTIVE'
+        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.mustChangePassword == false
+        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.role == request.auth.token.role;
+    }
+
+    function isActiveRequesterProfile() {
+      return isActiveUser()
+        && isActiveProfile(request.auth.uid);
     }
 
     function isVisibleProfile(uid) {
       return firestore.exists(/databases/(default)/documents/profiles/$(uid))
-        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.allowed == true;
+        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.allowed == true
+        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.accountState == 'ACTIVE'
+        && firestore.get(/databases/(default)/documents/profiles/$(uid)).data.directoryVisible == true;
+    }
+
+    function isActiveRoomMember(roomId) {
+      let membershipPath = /databases/(default)/documents/rooms/$(roomId)/members/$(request.auth.uid);
+      // Attachment rules also read the upload intent, so this must remain one Firestore document lookup.
+      return isActiveUser()
+        && firestore.exists(membershipPath)
+        && firestore.get(membershipPath).data.active == true;
+    }
+
+    function isGroupAdministrator(roomId) {
+      let membershipPath = /databases/(default)/documents/rooms/$(roomId)/members/$(request.auth.uid);
+      return isActiveRoomMember(roomId)
+        && firestore.get(membershipPath).data.role in ['OWNER', 'ADMIN'];
+    }
+
+    function attachmentUpload(attachmentId) {
+      return firestore.get(
+        /databases/(default)/documents/attachmentUploads/$(attachmentId)
+      ).data;
+    }
+
+    function validAttachmentUpload(roomId, messageId, attachmentId, variant) {
+      let uploadPath = /databases/(default)/documents/attachmentUploads/$(attachmentId);
+      let upload = attachmentUpload(attachmentId);
+      return isActiveRoomMember(roomId)
+        && firestore.exists(uploadPath)
+        && upload.actorUid == request.auth.uid
+        && upload.attachmentId == attachmentId
+        && upload.roomId == roomId
+        && upload.messageId == messageId
+        && upload.status == 'PENDING'
+        && request.resource.metadata.attachmentId == attachmentId
+        && request.resource.metadata.messageId == messageId
+        && request.resource.metadata.ownerUid == request.auth.uid
+        && request.resource.metadata.roomId == roomId
+        && request.resource.metadata.variant == variant;
     }
 
     match /avatars/{uid}/{fileName} {
-      allow read: if isAllowedUser() && isVisibleProfile(uid);
-      allow create, update: if isAllowedUser()
+      allow read: if isActiveRequesterProfile() && isVisibleProfile(uid);
+      allow create, update: if isActiveRequesterProfile()
         && request.auth.uid == uid
         && fileName.matches('avatar\\.(jpg|jpeg|png|webp)')
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
-      allow delete: if isAllowedUser() && request.auth.uid == uid;
+      allow delete: if isActiveRequesterProfile() && request.auth.uid == uid;
+    }
+
+    match /groupAvatars/{roomId}/{fileName} {
+      allow read: if isActiveRoomMember(roomId);
+      allow create, update: if isGroupAdministrator(roomId)
+        && roomId.matches('group_[a-f0-9]{32}')
+        && fileName.matches('avatar_[a-f0-9]{32}\\.(jpg|png|webp)')
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isGroupAdministrator(roomId);
+    }
+
+    match /roomAttachments/{roomId}/{messageId}/{attachmentId}/{variant} {
+      allow read: if isActiveRoomMember(roomId)
+        && firestore.exists(
+          /databases/(default)/documents/attachmentUploads/$(attachmentId)
+        )
+        && attachmentUpload(attachmentId).roomId == roomId
+        && attachmentUpload(attachmentId).messageId == messageId
+        && attachmentUpload(attachmentId).status == 'ATTACHED';
+      allow create, update: if attachmentId.matches(
+          'attachment-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
+        )
+        && messageId.matches('[A-Za-z0-9_-]{1,128}')
+        && validAttachmentUpload(roomId, messageId, attachmentId, variant)
+        && (
+          (
+            variant == 'content'
+            && request.resource.size == attachmentUpload(attachmentId).byteCount
+            && request.resource.contentType == attachmentUpload(attachmentId).mimeType
+          )
+          ||
+          (
+            variant == 'thumbnail'
+            && attachmentUpload(attachmentId).kind == 'IMAGE'
+            && request.resource.size > 0
+            && request.resource.size <= 256 * 1024
+            && request.resource.contentType == 'image/jpeg'
+          )
+        );
+      allow delete: if false;
     }
 
     match /{allPaths=**} {

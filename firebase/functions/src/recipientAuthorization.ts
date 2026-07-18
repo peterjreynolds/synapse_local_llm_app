@@ -1,5 +1,6 @@
 export interface MessageRecipientAuthorizationState {
   membershipActive: boolean;
+  notificationsEnabled: boolean;
   profileAllowed: boolean;
   uid: string;
 }
@@ -13,6 +14,8 @@ export function selectAuthorizedMessageRecipientUids(
   );
   return [...new Set(candidateUids)].filter((uid) => {
     const authorizationState = authorizationByUid.get(uid);
-    return authorizationState?.profileAllowed === true && authorizationState.membershipActive === true;
+    return authorizationState?.profileAllowed === true &&
+      authorizationState.membershipActive === true &&
+      authorizationState.notificationsEnabled === true;
   });
 }

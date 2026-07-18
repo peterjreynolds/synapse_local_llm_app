@@ -19,12 +19,21 @@ data class RemoteDeviceRegistrationReceipt(
     val affectedDevices: Int,
 )
 
+data class RemoteRegisteredDevice(
+    val deviceId: RemoteDeviceId,
+    val active: Boolean,
+    val isCurrentDevice: Boolean,
+    val updatedAtMillis: Long?,
+)
+
 enum class RemoteDeviceMutation {
     REGISTERED,
     REMOVED,
 }
 
 interface RemoteDeviceRegistrationGateway {
+    suspend fun listOwnDevices(accountUid: RemoteAccountUid): List<RemoteRegisteredDevice>
+
     suspend fun registerCurrentDevice(accountUid: RemoteAccountUid): RemoteDeviceRegistrationReceipt
 
     suspend fun registerRefreshedInstallation(
@@ -32,4 +41,9 @@ interface RemoteDeviceRegistrationGateway {
     ): RemoteDeviceRegistrationReceipt
 
     suspend fun removeCurrentDevice(accountUid: RemoteAccountUid): RemoteDeviceRegistrationReceipt
+
+    suspend fun removeOwnDevice(
+        accountUid: RemoteAccountUid,
+        deviceId: RemoteDeviceId,
+    ): RemoteDeviceRegistrationReceipt
 }

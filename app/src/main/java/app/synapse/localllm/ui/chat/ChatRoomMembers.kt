@@ -59,7 +59,7 @@ internal fun ChatRoomHeader(
         shape = RoundedCornerShape(0.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -81,9 +81,11 @@ internal fun ChatRoomHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            TextButton(onClick = onOpenMembers) {
-                Icon(Icons.Rounded.Group, contentDescription = null)
-                Text("Members")
+            IconButton(onClick = onOpenMembers) {
+                Icon(
+                    Icons.Rounded.Group,
+                    contentDescription = "Open ${activeMembers.size} room members",
+                )
             }
         }
     }

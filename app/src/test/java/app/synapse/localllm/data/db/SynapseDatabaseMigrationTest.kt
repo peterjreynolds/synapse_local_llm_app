@@ -183,7 +183,7 @@ class SynapseDatabaseMigrationTest {
     }
 
     @Test
-    fun migration8To10PreservesRowsAndBackfillsRoomParticipantsAndAuthors() {
+    fun migration8To16PreservesRowsAndBackfillsRoomParticipantsAndAuthors() {
         val helper = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(TEST_DATABASE_NAME)
@@ -219,13 +219,19 @@ class SynapseDatabaseMigrationTest {
             .addMigrations(
                 SYNAPSE_DATABASE_MIGRATION_8_9,
                 SYNAPSE_DATABASE_MIGRATION_9_10,
+                SYNAPSE_DATABASE_MIGRATION_10_11,
+                SYNAPSE_DATABASE_MIGRATION_11_12,
+                SYNAPSE_DATABASE_MIGRATION_12_13,
+                SYNAPSE_DATABASE_MIGRATION_13_14,
+                SYNAPSE_DATABASE_MIGRATION_14_15,
+                SYNAPSE_DATABASE_MIGRATION_15_16,
             )
             .allowMainThreadQueries()
             .build()
         try {
             val migratedDatabase = database.openHelper.writableDatabase
 
-            assertEquals(10, migratedDatabase.version)
+            assertEquals(16, migratedDatabase.version)
             assertEquals(legacyRowsBeforeMigration, readVersion8LegacyRows(migratedDatabase))
             assertMainThreadPreservedWithVersion9Defaults(migratedDatabase)
             assertArchivedThreadPreserved(migratedDatabase)
@@ -241,7 +247,7 @@ class SynapseDatabaseMigrationTest {
     }
 
     @Test
-    fun migration9To10AddsAccountScopedRemoteCacheWithoutChangingLocalState() = runTest {
+    fun migration9To16AddsAccountScopedRemoteCacheWithoutChangingLocalState() = runTest {
         val settingsStore = SynapseSettingsStore(context)
         settingsStore.updateMemoryWritesEnabled(false)
         settingsStore.updateSmsAutoReplyEnabled(true)
@@ -280,18 +286,165 @@ class SynapseDatabaseMigrationTest {
             SynapseDatabase::class.java,
             TEST_DATABASE_NAME,
         )
-            .addMigrations(SYNAPSE_DATABASE_MIGRATION_9_10)
+            .addMigrations(
+                SYNAPSE_DATABASE_MIGRATION_9_10,
+                SYNAPSE_DATABASE_MIGRATION_10_11,
+                SYNAPSE_DATABASE_MIGRATION_11_12,
+                SYNAPSE_DATABASE_MIGRATION_12_13,
+                SYNAPSE_DATABASE_MIGRATION_13_14,
+                SYNAPSE_DATABASE_MIGRATION_14_15,
+                SYNAPSE_DATABASE_MIGRATION_15_16,
+            )
             .allowMainThreadQueries()
             .build()
         try {
             val migratedDatabase = database.openHelper.writableDatabase
 
-            assertEquals(10, migratedDatabase.version)
+            assertEquals(16, migratedDatabase.version)
             assertEquals(version9RowsBeforeMigration, readVersion9LocalRows(migratedDatabase))
             assertEquals(settingsBeforeMigration, settingsStore.settingsFlow.first())
-            version10RemoteCacheTables.forEach { tableName ->
+            version12RemoteCacheTables.forEach { tableName ->
                 assertEquals(0L, queryCount(migratedDatabase, tableName))
             }
+            assertForeignKeysRemainValid(migratedDatabase)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun migration10To16PreservesRemoteMessagesAndBuildsSearchIndex() {
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(TEST_DATABASE_NAME)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(10) {
+                        override fun onConfigure(db: SupportSQLiteDatabase) {
+                            db.setForeignKeyConstraintsEnabled(true)
+                        }
+
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            createVersion8PersistenceFixture(db)
+                            seedVersion8PersistenceFixture(db)
+                            SYNAPSE_DATABASE_MIGRATION_8_9.migrate(db)
+                            SYNAPSE_DATABASE_MIGRATION_9_10.migrate(db)
+                            seedVersion10RemoteCache(db)
+                        }
+
+                        override fun onUpgrade(
+                            db: SupportSQLiteDatabase,
+                            oldVersion: Int,
+                            newVersion: Int,
+                        ) = Unit
+                    },
+                )
+                .build(),
+        )
+        helper.writableDatabase
+        helper.close()
+
+        val database = Room.databaseBuilder(
+            context,
+            SynapseDatabase::class.java,
+            TEST_DATABASE_NAME,
+        )
+            .addMigrations(
+                SYNAPSE_DATABASE_MIGRATION_10_11,
+                SYNAPSE_DATABASE_MIGRATION_11_12,
+                SYNAPSE_DATABASE_MIGRATION_12_13,
+                SYNAPSE_DATABASE_MIGRATION_13_14,
+                SYNAPSE_DATABASE_MIGRATION_14_15,
+                SYNAPSE_DATABASE_MIGRATION_15_16,
+            )
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val migratedDatabase = database.openHelper.writableDatabase
+
+            assertEquals(16, migratedDatabase.version)
+            migratedDatabase.query(
+                """
+                SELECT roomKind, directKey, peerUid, title, avatarObjectPath,
+                       currentMemberRole, notificationsEnabled, isMuted, isArchived, isPinned,
+                       joinedAtEpochMillis, lastReadAtEpochMillis
+                FROM remote_room_cache
+                WHERE accountUid = 'peter-uid' AND remoteRoomId = 'direct-room'
+                """.trimIndent(),
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("DIRECT", cursor.getString(0))
+                assertEquals("peter-uid:trish-uid", cursor.getString(1))
+                assertEquals("trish-uid", cursor.getString(2))
+                assertEquals("Peter, Trish", cursor.getString(3))
+                assertTrue(cursor.isNull(4))
+                assertEquals("MEMBER", cursor.getString(5))
+                assertEquals(1, cursor.getInt(6))
+                assertEquals(0, cursor.getInt(7))
+                assertEquals(0, cursor.getInt(8))
+                assertEquals(0, cursor.getInt(9))
+                assertEquals(4_000L, cursor.getLong(10))
+                assertEquals(4_500L, cursor.getLong(11))
+            }
+            assertEquals(1L, queryCount(migratedDatabase, "remote_message_cache"))
+            migratedDatabase.query(
+                "SELECT remoteMessageId FROM remote_message_search WHERE remote_message_search MATCH 'hello*'",
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("message-1", cursor.getString(0))
+            }
+            assertEquals(1L, queryCount(migratedDatabase, "remote_message_outbox"))
+            assertEquals(0L, queryCount(migratedDatabase, "remote_message_drafts"))
+            migratedDatabase.query(
+                """
+                SELECT replyToMessageId, editedAtEpochMillis, deletedAtEpochMillis,
+                       revision, reactionCountsJson, deliveredToCount, readByCount,
+                       attachmentsJson, aiParticipantId, aiProvenance
+                FROM remote_message_cache
+                WHERE accountUid = 'peter-uid' AND remoteMessageId = 'message-1'
+                """.trimIndent(),
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.isNull(0))
+                assertTrue(cursor.isNull(1))
+                assertTrue(cursor.isNull(2))
+                assertEquals(1L, cursor.getLong(3))
+                assertEquals("{}", cursor.getString(4))
+                assertEquals(0, cursor.getInt(5))
+                assertEquals(0, cursor.getInt(6))
+                assertEquals("[]", cursor.getString(7))
+                assertTrue(cursor.isNull(8))
+                assertTrue(cursor.isNull(9))
+            }
+            assertEquals(
+                0L,
+                queryLong(
+                    migratedDatabase,
+                    """
+                    SELECT COUNT(*) FROM sqlite_master
+                    WHERE type = 'table' AND name IN (
+                        'remote_direct_room_cache',
+                        'remote_room_membership_cache'
+                    )
+                    """.trimIndent(),
+                ),
+            )
+            migratedDatabase.execSQL(
+                """
+                INSERT INTO remote_room_local_state (
+                    accountUid, remoteRoomId, hiddenThroughRemoteUpdatedAtEpochMillis,
+                    messagesHiddenThroughEpochMillis, updatedAtEpochMillis
+                ) VALUES ('peter-uid', 'direct-room', 5000, 5000, 5200)
+                """.trimIndent(),
+            )
+            migratedDatabase.execSQL(
+                """
+                INSERT INTO remote_message_local_state (
+                    accountUid, remoteRoomId, remoteMessageId, hiddenAtEpochMillis
+                ) VALUES ('peter-uid', 'direct-room', 'message-1', 5200)
+                """.trimIndent(),
+            )
+            assertEquals(1L, queryCount(migratedDatabase, "remote_room_local_state"))
+            assertEquals(1L, queryCount(migratedDatabase, "remote_message_local_state"))
             assertForeignKeysRemainValid(migratedDatabase)
         } finally {
             database.close()
@@ -590,6 +743,56 @@ class SynapseDatabaseMigrationTest {
             """.trimIndent(),
         )
         createVersion8Indices(db)
+    }
+
+    private fun seedVersion10RemoteCache(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            """
+            INSERT INTO remote_direct_room_cache (
+                accountUid, remoteRoomId, directKey, peerUid, title, unreadCount,
+                latestMessagePreview, latestMessageSenderUid,
+                remoteUpdatedAtEpochMillis, cachedAtEpochMillis
+            ) VALUES (
+                'peter-uid', 'direct-room', 'peter-uid:trish-uid', 'trish-uid',
+                'Peter, Trish', 1, 'Hello', 'trish-uid', 5000, 5100
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO remote_room_membership_cache (
+                accountUid, remoteRoomId, memberUid, role, isActive,
+                joinedAtEpochMillis, lastReadAtEpochMillis, cachedAtEpochMillis
+            ) VALUES (
+                'peter-uid', 'direct-room', 'peter-uid', 'MEMBER', 1, 4000, 4500, 5100
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO remote_message_cache (
+                accountUid, remoteRoomId, remoteMessageId, idempotencyKey,
+                senderUid, authorKind, body, deliveryState,
+                clientCreatedAtEpochMillis, serverCreatedAtEpochMillis,
+                failureReason, cachedAtEpochMillis
+            ) VALUES (
+                'peter-uid', 'direct-room', 'message-1', 'message-1',
+                'trish-uid', 'HUMAN', 'Hello', 'SENT', 4800, 4900, NULL, 5100
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            """
+            INSERT INTO remote_message_outbox (
+                accountUid, operationId, remoteRoomId, remoteMessageId,
+                idempotencyKey, senderUid, body, state, attemptCount,
+                createdAtEpochMillis, lastAttemptAtEpochMillis, failureReason
+            ) VALUES (
+                'peter-uid', 'operation-1', 'direct-room', 'message-1',
+                'message-1', 'peter-uid', 'Hello', 'FAILED', 1, 4800, 5000, 'offline'
+            )
+            """.trimIndent(),
+        )
     }
 
     private fun createVersion8Indices(db: SupportSQLiteDatabase) {
@@ -1194,12 +1397,14 @@ class SynapseDatabaseMigrationTest {
             "trace_events",
         )
 
-        val version10RemoteCacheTables = listOf(
-            "remote_direct_room_cache",
+        val version12RemoteCacheTables = listOf(
             "remote_message_cache",
+            "remote_message_drafts",
+            "remote_message_local_state",
             "remote_message_outbox",
             "remote_profile_cache",
-            "remote_room_membership_cache",
+            "remote_room_cache",
+            "remote_room_local_state",
             "remote_sync_cursors",
         )
     }

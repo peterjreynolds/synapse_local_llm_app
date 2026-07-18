@@ -1,6 +1,7 @@
 package app.synapse.localllm.data.library
 
 import android.content.Context
+import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.domain.time.SynapseClock
@@ -20,6 +21,7 @@ import org.robolectric.annotation.Config
 class AndroidMarkdownPdfExporterTest {
     private lateinit var context: Context
     private lateinit var exporter: AndroidMarkdownPdfExporter
+    private var exportedFile: File? = null
 
     @Before
     fun setUp() {
@@ -33,6 +35,10 @@ class AndroidMarkdownPdfExporterTest {
                     "%PDF-1.4\n% Synapse test PDF\nTitle: $title\n$body\n%%EOF\n",
                     Charsets.UTF_8,
                 )
+            },
+            pdfUriFactory = MarkdownPdfUriFactory { targetFile ->
+                exportedFile = targetFile
+                Uri.parse("content://${BuildConfig.APPLICATION_ID}.fileprovider/${targetFile.name}")
             },
         )
     }
@@ -60,6 +66,7 @@ class AndroidMarkdownPdfExporterTest {
         assertEquals("application/pdf", receipt.mimeType)
         assertEquals("content", receipt.uri.scheme)
         assertEquals("${BuildConfig.APPLICATION_ID}.fileprovider", receipt.uri.authority)
+        assertEquals(pdfFile.canonicalFile, exportedFile?.canonicalFile)
         assertTrue(pdfFile.isFile)
         assertTrue(receipt.byteCount > 0)
         assertEquals("%PDF", pdfHeader)

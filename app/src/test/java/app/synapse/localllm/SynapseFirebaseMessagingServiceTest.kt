@@ -28,12 +28,47 @@ class SynapseFirebaseMessagingServiceTest {
                 "roomId" to roomId,
                 "senderUid" to "peter-uid",
                 "type" to "SYNAPSE_CHAT_MESSAGE",
+                "unreadCount" to "2",
             ),
         )
 
         assertEquals(roomId, payload?.roomId?.raw)
         assertEquals("message-1", payload?.messageId?.raw)
         assertEquals("peter-uid", payload?.senderUid?.raw)
+        assertEquals(2, payload?.unreadCount)
+    }
+
+    @Test
+    fun notificationPayloadAcceptsServerShapedGroupRoom() {
+        val roomId = "group_${"b".repeat(32)}"
+
+        val payload = parseRemoteNotificationPayload(
+            mapOf(
+                "messageId" to "message-2",
+                "roomId" to roomId,
+                "senderUid" to "trish-uid",
+                "type" to "SYNAPSE_CHAT_MESSAGE",
+                "unreadCount" to "1",
+            ),
+        )
+
+        assertEquals(roomId, payload?.roomId?.raw)
+        assertEquals(1, payload?.unreadCount)
+    }
+
+    @Test
+    fun notificationPayloadRejectsMissingOrInvalidUnreadCount() {
+        val basePayload = mapOf(
+            "messageId" to "message-3",
+            "roomId" to "direct_${"c".repeat(64)}",
+            "senderUid" to "trish-uid",
+            "type" to "SYNAPSE_CHAT_MESSAGE",
+        )
+
+        assertNull(parseRemoteNotificationPayload(basePayload))
+        assertNull(parseRemoteNotificationPayload(basePayload + ("unreadCount" to "0")))
+        assertNull(parseRemoteNotificationPayload(basePayload + ("unreadCount" to "1000")))
+        assertEquals(999, parseRemoteNotificationPayload(basePayload + ("unreadCount" to "999"))?.unreadCount)
     }
 
     @Test
@@ -45,6 +80,7 @@ class SynapseFirebaseMessagingServiceTest {
                     "roomId" to "not-a-room",
                     "senderUid" to "peter-uid",
                     "type" to "SYNAPSE_CHAT_MESSAGE",
+                    "unreadCount" to "1",
                 ),
             ),
         )
@@ -55,6 +91,7 @@ class SynapseFirebaseMessagingServiceTest {
                     "roomId" to "direct_${"b".repeat(64)}",
                     "senderUid" to "peter-uid",
                     "type" to "UNTRUSTED_TYPE",
+                    "unreadCount" to "1",
                 ),
             ),
         )

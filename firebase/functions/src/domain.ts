@@ -4,8 +4,6 @@ export const MESSAGE_BODY_LIMIT = 4_000;
 export const PROFILE_DISPLAY_NAME_LIMIT = 64;
 export const PROFILE_BIO_LIMIT = 160;
 
-export type AllowedUsername = "Peter" | "Trish";
-
 export interface DirectRoomIdentity {
   directKey: string;
   memberIds: readonly [string, string];
@@ -17,16 +15,9 @@ export interface HumanMessagePayload {
   senderUid: string;
 }
 
-export function normalizeUsername(username: string): string {
-  const normalized = username.normalize("NFKC").trim().toLocaleLowerCase("en-US");
-  if (!/^[a-z][a-z0-9_]{2,31}$/.test(normalized)) {
-    throw new Error("Username must contain 3-32 ASCII letters, digits, or underscores.");
-  }
-  return normalized;
-}
-
-export function buildSyntheticAccountEmail(username: string): string {
-  return `${normalizeUsername(username)}@accounts.synapse.invalid`;
+export interface RemoteNotificationMessagePayload extends HumanMessagePayload {
+  authorKind: "HUMAN" | "SYNAPSE_AI";
+  provenance: "PHONE_LOCAL" | "REMOTE_HOSTED" | null;
 }
 
 export function buildDirectRoomIdentity(firstUid: string, secondUid: string): DirectRoomIdentity {
@@ -55,24 +46,59 @@ export function parseTargetUid(input: unknown): string {
 }
 
 export function parseHumanMessagePayload(input: unknown): HumanMessagePayload {
+  const message = parseRemoteNotificationMessagePayload(input);
+  if (message.authorKind !== "HUMAN") {
+    throw new Error("Only human messages can use the human message boundary.");
+  }
+  return {body: message.body, senderUid: message.senderUid};
+}
+
+export function parseRemoteNotificationMessagePayload(input: unknown): RemoteNotificationMessagePayload {
   if (typeof input !== "object" || input === null) {
     throw new Error("Message payload must be an object.");
   }
-  const candidate = input as {authorKind?: unknown; body?: unknown; senderUid?: unknown};
-  if (candidate.authorKind !== "HUMAN") {
-    throw new Error("Only human messages trigger remote notifications.");
+  const candidate = input as {
+    aiParticipantId?: unknown;
+    aiProvenance?: unknown;
+    attachmentIds?: unknown;
+    authorKind?: unknown;
+    body?: unknown;
+    senderUid?: unknown;
+  };
+  if (candidate.authorKind !== "HUMAN" && candidate.authorKind !== "SYNAPSE_AI") {
+    throw new Error("Message author kind is invalid.");
   }
   if (typeof candidate.senderUid !== "string" || candidate.senderUid.length === 0) {
     throw new Error("Message sender is invalid.");
   }
-  if (
-    typeof candidate.body !== "string" ||
-    candidate.body.trim().length === 0 ||
-    candidate.body.length > MESSAGE_BODY_LIMIT
-  ) {
+  let provenance: "PHONE_LOCAL" | "REMOTE_HOSTED" | null = null;
+  if (candidate.authorKind === "SYNAPSE_AI") {
+    if (
+      candidate.senderUid !== "participant-synapse-local-ai" ||
+      candidate.aiParticipantId !== "participant-synapse-local-ai" ||
+      (candidate.aiProvenance !== "PHONE_LOCAL" && candidate.aiProvenance !== "REMOTE_HOSTED")
+    ) {
+      throw new Error("AI message provenance is invalid.");
+    }
+    provenance = candidate.aiProvenance;
+  }
+  const attachmentIds = candidate.attachmentIds ?? [];
+  if (!Array.isArray(attachmentIds) || attachmentIds.length > 8 || attachmentIds.some((attachmentId) =>
+    typeof attachmentId !== "string" || !/^attachment-[a-f0-9-]{36}$/.test(attachmentId)
+  ) || new Set(attachmentIds).size !== attachmentIds.length) {
+    throw new Error("Message attachments are invalid.");
+  }
+  if (typeof candidate.body !== "string" || candidate.body.length > MESSAGE_BODY_LIMIT) {
     throw new Error("Message body is invalid.");
   }
-  return {body: candidate.body, senderUid: candidate.senderUid};
+  const body = candidate.body.trim();
+  if (body.length === 0 && attachmentIds.length === 0) throw new Error("Message body is invalid.");
+  return {
+    authorKind: candidate.authorKind,
+    body: body || (attachmentIds.length === 1 ? "Attachment" : `${attachmentIds.length} attachments`),
+    provenance,
+    senderUid: candidate.senderUid,
+  };
 }
 
 export function buildNotificationReceiptId(eventId: string): string {

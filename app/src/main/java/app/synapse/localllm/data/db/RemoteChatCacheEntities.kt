@@ -1,8 +1,12 @@
 package app.synapse.localllm.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Fts4
+import androidx.room.FtsOptions
 import androidx.room.Index
+import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "remote_profile_cache",
@@ -28,7 +32,7 @@ data class RemoteProfileCacheEntity(
 )
 
 @Entity(
-    tableName = "remote_direct_room_cache",
+    tableName = "remote_room_cache",
     primaryKeys = ["accountUid", "remoteRoomId"],
     indices = [
         Index("accountUid"),
@@ -36,44 +40,27 @@ data class RemoteProfileCacheEntity(
         Index(value = ["accountUid", "remoteUpdatedAtEpochMillis"]),
     ],
 )
-data class RemoteDirectRoomCacheEntity(
+data class RemoteRoomCacheEntity(
     val accountUid: String,
     val remoteRoomId: String,
-    val directKey: String,
-    val peerUid: String,
+    val roomKind: String,
+    val directKey: String?,
+    val peerUid: String?,
     val title: String,
+    val avatarObjectPath: String?,
     val unreadCount: Int,
     val latestMessagePreview: String?,
     val latestMessageSenderUid: String?,
-    val remoteUpdatedAtEpochMillis: Long,
-    val cachedAtEpochMillis: Long,
-)
-
-@Entity(
-    tableName = "remote_room_membership_cache",
-    primaryKeys = ["accountUid", "remoteRoomId", "memberUid"],
-    foreignKeys = [
-        ForeignKey(
-            entity = RemoteDirectRoomCacheEntity::class,
-            parentColumns = ["accountUid", "remoteRoomId"],
-            childColumns = ["accountUid", "remoteRoomId"],
-            onDelete = ForeignKey.CASCADE,
-        ),
-    ],
-    indices = [
-        Index(value = ["accountUid", "remoteRoomId"]),
-        Index(value = ["accountUid", "memberUid"]),
-    ],
-)
-data class RemoteRoomMembershipCacheEntity(
-    val accountUid: String,
-    val remoteRoomId: String,
-    val memberUid: String,
-    val role: String,
-    val isActive: Boolean,
+    val currentMemberRole: String,
+    val notificationsEnabled: Boolean,
+    val isMuted: Boolean,
+    val isArchived: Boolean,
+    val isPinned: Boolean,
     val joinedAtEpochMillis: Long,
     val lastReadAtEpochMillis: Long?,
+    val remoteUpdatedAtEpochMillis: Long,
     val cachedAtEpochMillis: Long,
+    val mutedUntilEpochMillis: Long? = null,
 )
 
 @Entity(
@@ -81,7 +68,7 @@ data class RemoteRoomMembershipCacheEntity(
     primaryKeys = ["accountUid", "remoteRoomId", "remoteMessageId"],
     foreignKeys = [
         ForeignKey(
-            entity = RemoteDirectRoomCacheEntity::class,
+            entity = RemoteRoomCacheEntity::class,
             parentColumns = ["accountUid", "remoteRoomId"],
             childColumns = ["accountUid", "remoteRoomId"],
             onDelete = ForeignKey.CASCADE,
@@ -101,11 +88,33 @@ data class RemoteMessageCacheEntity(
     val senderUid: String,
     val authorKind: String,
     val body: String,
+    val attachmentsJson: String = "[]",
+    val replyToMessageId: String?,
+    val editedAtEpochMillis: Long?,
+    val deletedAtEpochMillis: Long?,
+    val revision: Long,
+    val reactionCountsJson: String,
+    val deliveredToCount: Int,
+    val readByCount: Int,
     val deliveryState: String,
     val clientCreatedAtEpochMillis: Long,
     val serverCreatedAtEpochMillis: Long?,
     val failureReason: String?,
     val cachedAtEpochMillis: Long,
+    val aiParticipantId: String? = null,
+    val aiProvenance: String? = null,
+)
+
+@Fts4(tokenizer = FtsOptions.TOKENIZER_UNICODE61)
+@Entity(tableName = "remote_message_search")
+data class RemoteMessageSearchEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "rowid")
+    val rowId: Long,
+    val accountUid: String,
+    val remoteRoomId: String,
+    val remoteMessageId: String,
+    val body: String,
 )
 
 @Entity(
@@ -113,7 +122,7 @@ data class RemoteMessageCacheEntity(
     primaryKeys = ["accountUid", "operationId"],
     foreignKeys = [
         ForeignKey(
-            entity = RemoteDirectRoomCacheEntity::class,
+            entity = RemoteRoomCacheEntity::class,
             parentColumns = ["accountUid", "remoteRoomId"],
             childColumns = ["accountUid", "remoteRoomId"],
             onDelete = ForeignKey.CASCADE,
@@ -133,11 +142,74 @@ data class RemoteMessageOutboxEntity(
     val idempotencyKey: String,
     val senderUid: String,
     val body: String,
+    val attachmentsJson: String = "[]",
+    val replyToMessageId: String?,
     val state: String,
     val attemptCount: Int,
     val createdAtEpochMillis: Long,
     val lastAttemptAtEpochMillis: Long?,
     val failureReason: String?,
+)
+
+@Entity(
+    tableName = "remote_message_drafts",
+    primaryKeys = ["accountUid", "remoteRoomId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RemoteRoomCacheEntity::class,
+            parentColumns = ["accountUid", "remoteRoomId"],
+            childColumns = ["accountUid", "remoteRoomId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("accountUid")],
+)
+data class RemoteMessageDraftEntity(
+    val accountUid: String,
+    val remoteRoomId: String,
+    val body: String,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "remote_room_local_state",
+    primaryKeys = ["accountUid", "remoteRoomId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RemoteRoomCacheEntity::class,
+            parentColumns = ["accountUid", "remoteRoomId"],
+            childColumns = ["accountUid", "remoteRoomId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("accountUid")],
+)
+data class RemoteRoomLocalStateEntity(
+    val accountUid: String,
+    val remoteRoomId: String,
+    val hiddenThroughRemoteUpdatedAtEpochMillis: Long?,
+    val messagesHiddenThroughEpochMillis: Long?,
+    val updatedAtEpochMillis: Long,
+)
+
+@Entity(
+    tableName = "remote_message_local_state",
+    primaryKeys = ["accountUid", "remoteRoomId", "remoteMessageId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RemoteMessageCacheEntity::class,
+            parentColumns = ["accountUid", "remoteRoomId", "remoteMessageId"],
+            childColumns = ["accountUid", "remoteRoomId", "remoteMessageId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["accountUid", "remoteRoomId"])],
+)
+data class RemoteMessageLocalStateEntity(
+    val accountUid: String,
+    val remoteRoomId: String,
+    val remoteMessageId: String,
+    val hiddenAtEpochMillis: Long,
 )
 
 @Entity(

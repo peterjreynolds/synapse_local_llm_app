@@ -23,25 +23,59 @@ interface RemoteChatCacheDao {
 
     @Query(
         """
-        SELECT * FROM remote_direct_room_cache
-        WHERE accountUid = :accountUid
-        ORDER BY remoteUpdatedAtEpochMillis DESC, remoteRoomId ASC
+        SELECT room.*
+        FROM remote_room_cache AS room
+        LEFT JOIN remote_room_local_state AS localState
+          ON localState.accountUid = room.accountUid
+         AND localState.remoteRoomId = room.remoteRoomId
+        WHERE room.accountUid = :accountUid
+          AND (
+              localState.hiddenThroughRemoteUpdatedAtEpochMillis IS NULL
+              OR room.remoteUpdatedAtEpochMillis > localState.hiddenThroughRemoteUpdatedAtEpochMillis
+          )
+        ORDER BY room.remoteUpdatedAtEpochMillis DESC, room.remoteRoomId ASC
         """,
     )
-    fun observeDirectRooms(accountUid: String): Flow<List<RemoteDirectRoomCacheEntity>>
+    fun observeRooms(accountUid: String): Flow<List<RemoteRoomCacheEntity>>
 
     @Upsert
-    suspend fun upsertDirectRooms(rooms: List<RemoteDirectRoomCacheEntity>)
+    suspend fun upsertRooms(rooms: List<RemoteRoomCacheEntity>)
 
-    @Upsert
-    suspend fun upsertMemberships(memberships: List<RemoteRoomMembershipCacheEntity>)
+    @Query("DELETE FROM remote_room_cache WHERE accountUid = :accountUid")
+    suspend fun deleteAllRooms(accountUid: String): Int
 
     @Query(
         """
-        SELECT * FROM remote_message_cache
-        WHERE accountUid = :accountUid AND remoteRoomId = :remoteRoomId
-        ORDER BY COALESCE(serverCreatedAtEpochMillis, clientCreatedAtEpochMillis) ASC,
-                 remoteMessageId ASC
+        DELETE FROM remote_room_cache
+        WHERE accountUid = :accountUid AND remoteRoomId NOT IN (:authorizedRoomIds)
+        """,
+    )
+    suspend fun deleteRoomsNotIn(
+        accountUid: String,
+        authorizedRoomIds: List<String>,
+    ): Int
+
+    @Query(
+        """
+        SELECT message.*
+        FROM remote_message_cache AS message
+        LEFT JOIN remote_room_local_state AS roomLocalState
+          ON roomLocalState.accountUid = message.accountUid
+         AND roomLocalState.remoteRoomId = message.remoteRoomId
+        LEFT JOIN remote_message_local_state AS messageLocalState
+          ON messageLocalState.accountUid = message.accountUid
+         AND messageLocalState.remoteRoomId = message.remoteRoomId
+         AND messageLocalState.remoteMessageId = message.remoteMessageId
+        WHERE message.accountUid = :accountUid
+          AND message.remoteRoomId = :remoteRoomId
+          AND messageLocalState.remoteMessageId IS NULL
+          AND (
+              roomLocalState.messagesHiddenThroughEpochMillis IS NULL
+              OR COALESCE(message.serverCreatedAtEpochMillis, message.clientCreatedAtEpochMillis) >
+                  roomLocalState.messagesHiddenThroughEpochMillis
+          )
+        ORDER BY COALESCE(message.serverCreatedAtEpochMillis, message.clientCreatedAtEpochMillis) ASC,
+                 message.remoteMessageId ASC
         """,
     )
     fun observeMessages(
@@ -54,6 +88,112 @@ interface RemoteChatCacheDao {
 
     @Upsert
     suspend fun upsertMessages(messages: List<RemoteMessageCacheEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertMessageSearchEntries(entries: List<RemoteMessageSearchEntity>)
+
+    @Query(
+        """
+        DELETE FROM remote_message_search
+        WHERE accountUid = :accountUid
+          AND remoteRoomId = :remoteRoomId
+          AND remoteMessageId IN (:remoteMessageIds)
+        """,
+    )
+    suspend fun deleteMessageSearchEntries(
+        accountUid: String,
+        remoteRoomId: String,
+        remoteMessageIds: List<String>,
+    ): Int
+
+    @Query(
+        """
+        DELETE FROM remote_message_search
+        WHERE accountUid = :accountUid AND remoteRoomId = :remoteRoomId
+        """,
+    )
+    suspend fun deleteRoomMessageSearchEntries(
+        accountUid: String,
+        remoteRoomId: String,
+    ): Int
+
+    @Query(
+        """
+        DELETE FROM remote_message_search
+        WHERE accountUid = :accountUid
+          AND EXISTS (
+              SELECT 1
+              FROM remote_message_cache AS message
+              LEFT JOIN remote_room_local_state AS roomLocalState
+                ON roomLocalState.accountUid = message.accountUid
+               AND roomLocalState.remoteRoomId = message.remoteRoomId
+              LEFT JOIN remote_message_local_state AS messageLocalState
+                ON messageLocalState.accountUid = message.accountUid
+               AND messageLocalState.remoteRoomId = message.remoteRoomId
+               AND messageLocalState.remoteMessageId = message.remoteMessageId
+              WHERE message.accountUid = remote_message_search.accountUid
+                AND message.remoteRoomId = remote_message_search.remoteRoomId
+                AND message.remoteMessageId = remote_message_search.remoteMessageId
+                AND (
+                    messageLocalState.remoteMessageId IS NOT NULL
+                    OR (
+                        roomLocalState.messagesHiddenThroughEpochMillis IS NOT NULL
+                        AND COALESCE(message.serverCreatedAtEpochMillis, message.clientCreatedAtEpochMillis) <=
+                            roomLocalState.messagesHiddenThroughEpochMillis
+                    )
+                )
+          )
+        """,
+    )
+    suspend fun deleteHiddenMessageSearchEntries(accountUid: String): Int
+
+    @Query("DELETE FROM remote_message_search WHERE accountUid = :accountUid")
+    suspend fun deleteAllMessageSearchEntries(accountUid: String): Int
+
+    @Query(
+        """
+        DELETE FROM remote_message_search
+        WHERE accountUid = :accountUid AND remoteRoomId NOT IN (:authorizedRoomIds)
+        """,
+    )
+    suspend fun deleteUnauthorizedRoomSearchEntries(
+        accountUid: String,
+        authorizedRoomIds: List<String>,
+    ): Int
+
+    @Query(
+        """
+        SELECT remoteRoomId, remoteMessageId, body
+        FROM remote_message_search
+        WHERE accountUid = :accountUid
+          AND remote_message_search MATCH :matchQuery
+        ORDER BY rowid DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchAllMessages(
+        accountUid: String,
+        matchQuery: String,
+        limit: Int,
+    ): List<RemoteMessageSearchRow>
+
+    @Query(
+        """
+        SELECT remoteRoomId, remoteMessageId, body
+        FROM remote_message_search
+        WHERE accountUid = :accountUid
+          AND remoteRoomId = :remoteRoomId
+          AND remote_message_search MATCH :matchQuery
+        ORDER BY rowid DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchRoomMessages(
+        accountUid: String,
+        remoteRoomId: String,
+        matchQuery: String,
+        limit: Int,
+    ): List<RemoteMessageSearchRow>
 
     @Query(
         """
@@ -86,6 +226,52 @@ interface RemoteChatCacheDao {
         """,
     )
     fun observePendingOutbox(accountUid: String): Flow<List<RemoteMessageOutboxEntity>>
+
+    @Query(
+        """
+        SELECT * FROM remote_message_drafts
+        WHERE accountUid = :accountUid AND remoteRoomId = :remoteRoomId
+        LIMIT 1
+        """,
+    )
+    fun observeDraft(
+        accountUid: String,
+        remoteRoomId: String,
+    ): Flow<RemoteMessageDraftEntity?>
+
+    @Upsert
+    suspend fun upsertDraft(draft: RemoteMessageDraftEntity)
+
+    @Query(
+        """
+        DELETE FROM remote_message_drafts
+        WHERE accountUid = :accountUid AND remoteRoomId = :remoteRoomId
+        """,
+    )
+    suspend fun deleteDraft(
+        accountUid: String,
+        remoteRoomId: String,
+    ): Int
+
+    @Upsert
+    suspend fun upsertRoomLocalState(localState: RemoteRoomLocalStateEntity)
+
+    @Query(
+        """
+        UPDATE remote_room_local_state
+        SET hiddenThroughRemoteUpdatedAtEpochMillis = NULL,
+            updatedAtEpochMillis = :updatedAtEpochMillis
+        WHERE accountUid = :accountUid AND remoteRoomId = :remoteRoomId
+        """,
+    )
+    suspend fun showRoomLocally(
+        accountUid: String,
+        remoteRoomId: String,
+        updatedAtEpochMillis: Long,
+    ): Int
+
+    @Upsert
+    suspend fun upsertMessageLocalState(localState: RemoteMessageLocalStateEntity)
 
     @Query(
         """
@@ -126,3 +312,9 @@ interface RemoteChatCacheDao {
         scopeId: String,
     ): RemoteSyncCursorEntity?
 }
+
+data class RemoteMessageSearchRow(
+    val remoteRoomId: String,
+    val remoteMessageId: String,
+    val body: String,
+)
