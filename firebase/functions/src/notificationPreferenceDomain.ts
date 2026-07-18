@@ -66,14 +66,35 @@ export function shouldNotifyForRemoteMessage(input: {
   return input.preferences.groupMessages || (input.preferences.mentions && mentioned);
 }
 
+export function resolveRemoteNotificationSenderDisplayName(
+  authorKind: "HUMAN" | "SYNAPSE_AI",
+  profileDisplayName: unknown,
+): string {
+  if (authorKind === "SYNAPSE_AI") return "Synapse";
+  if (typeof profileDisplayName !== "string") return "Synapse Chat member";
+  const normalized = profileDisplayName.normalize("NFKC").trim();
+  return normalized.length >= 1 && normalized.length <= 64 && !/[\u0000-\u001f\u007f]/u.test(normalized) ?
+    normalized : "Synapse Chat member";
+}
+
 export function buildRemoteMessageNotificationData(input: {
   messageId: string;
   roomId: string;
+  senderDisplayName: string;
   senderUid: string;
 }): Record<string, string> {
+  const senderDisplayName = input.senderDisplayName.normalize("NFKC").trim();
+  if (
+    senderDisplayName.length === 0 ||
+    senderDisplayName.length > 64 ||
+    /[\u0000-\u001f\u007f]/u.test(senderDisplayName)
+  ) {
+    throw new Error("Notification sender display name is invalid.");
+  }
   return {
     messageId: input.messageId,
     roomId: input.roomId,
+    senderDisplayName,
     senderUid: input.senderUid,
     type: "SYNAPSE_CHAT_MESSAGE",
   };

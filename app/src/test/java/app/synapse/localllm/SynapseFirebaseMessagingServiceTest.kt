@@ -26,6 +26,7 @@ class SynapseFirebaseMessagingServiceTest {
             mapOf(
                 "messageId" to "message-1",
                 "roomId" to roomId,
+                "senderDisplayName" to "Peter",
                 "senderUid" to "peter-uid",
                 "type" to "SYNAPSE_CHAT_MESSAGE",
             ),
@@ -33,6 +34,7 @@ class SynapseFirebaseMessagingServiceTest {
 
         assertEquals(roomId, payload?.roomId?.raw)
         assertEquals("message-1", payload?.messageId?.raw)
+        assertEquals("Peter", payload?.senderDisplayName)
         assertEquals("peter-uid", payload?.senderUid?.raw)
     }
 
@@ -50,6 +52,23 @@ class SynapseFirebaseMessagingServiceTest {
         )
 
         assertEquals(roomId, payload?.roomId?.raw)
+        assertEquals(null, payload?.senderDisplayName)
+    }
+
+    @Test
+    fun notificationPayloadDropsUnsafeSenderLabelsWithoutDroppingTheMessage() {
+        val payload = parseRemoteNotificationPayload(
+            mapOf(
+                "messageId" to "message-3",
+                "roomId" to "direct_${"c".repeat(64)}",
+                "senderDisplayName" to "Trish\nspoofed",
+                "senderUid" to "trish-uid",
+                "type" to "SYNAPSE_CHAT_MESSAGE",
+            ),
+        )
+
+        assertEquals(null, payload?.senderDisplayName)
+        assertEquals("trish-uid", payload?.senderUid?.raw)
     }
 
     @Test

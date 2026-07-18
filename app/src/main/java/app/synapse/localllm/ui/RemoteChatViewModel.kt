@@ -894,12 +894,15 @@ class RemoteChatViewModel(
                 } catch (exception: CancellationException) {
                     throw exception
                 } catch (exception: Exception) {
+                    val shouldPublishFailure = shouldPublishRoomAiRefreshFailure(
+                        mutableUiState.value.roomAiConfiguration?.localAiEnabled,
+                    )
                     mutableUiState.update { state ->
                         state.copy(
                             roomAiConfiguration = state.roomAiConfiguration?.copy(localAiHostAvailable = false),
                         )
                     }
-                    if (!reportedUnavailable) {
+                    if (shouldPublishFailure && !reportedUnavailable) {
                         publishFailureMessage(
                             (exception as? RemoteChatException)?.userMessage
                                 ?: "Could not refresh this conversation's AI participant status.",
@@ -1082,6 +1085,9 @@ internal fun resolveAuthorizedNotificationRoom(
     pendingRoomId: RemoteRoomId?,
     rooms: List<RemoteCachedRoom>,
 ): RemoteRoomId? = pendingRoomId?.takeIf { roomId -> rooms.any { room -> room.roomId == roomId } }
+
+internal fun shouldPublishRoomAiRefreshFailure(localAiEnabled: Boolean?): Boolean =
+    localAiEnabled == true
 
 class RemoteChatViewModelFactory(
     private val graph: SynapseApplicationGraph,

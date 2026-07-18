@@ -4,6 +4,7 @@ import {
   buildRemoteMessageNotificationData,
   DEFAULT_NOTIFICATION_PREFERENCES,
   readNotificationPreferences,
+  resolveRemoteNotificationSenderDisplayName,
   shouldNotifyForRemoteMessage,
 } from "./notificationPreferenceDomain.js";
 
@@ -52,8 +53,31 @@ test("notification routing payload never includes message plaintext", () => {
   const data = buildRemoteMessageNotificationData({
     messageId: "message-1",
     roomId: `direct_${"a".repeat(64)}`,
+    senderDisplayName: "Peter",
     senderUid: "peter",
   });
-  assert.deepEqual(Object.keys(data).sort(), ["messageId", "roomId", "senderUid", "type"]);
+  assert.deepEqual(
+    Object.keys(data).sort(),
+    ["messageId", "roomId", "senderDisplayName", "senderUid", "type"],
+  );
+  assert.equal(data.senderDisplayName, "Peter");
   assert.equal("body" in data, false);
+});
+
+test("notification sender labels are normalized and bounded", () => {
+  assert.equal(resolveRemoteNotificationSenderDisplayName("HUMAN", "  Trish  "), "Trish");
+  assert.equal(resolveRemoteNotificationSenderDisplayName("HUMAN", undefined), "Synapse Chat member");
+  assert.equal(resolveRemoteNotificationSenderDisplayName("SYNAPSE_AI", undefined), "Synapse");
+  assert.equal(buildRemoteMessageNotificationData({
+    messageId: "message-1",
+    roomId: `direct_${"a".repeat(64)}`,
+    senderDisplayName: "  Trish  ",
+    senderUid: "trish",
+  }).senderDisplayName, "Trish");
+  assert.throws(() => buildRemoteMessageNotificationData({
+    messageId: "message-1",
+    roomId: `direct_${"a".repeat(64)}`,
+    senderDisplayName: "Trish\nspoofed",
+    senderUid: "trish",
+  }));
 });

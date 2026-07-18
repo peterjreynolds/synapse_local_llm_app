@@ -1,5 +1,6 @@
 package app.synapse.localllm
 
+import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
@@ -31,6 +32,7 @@ class Android10FirebaseNotificationTest {
                         mapOf(
                             "messageId" to "message-api29",
                             "roomId" to roomId,
+                            "senderDisplayName" to "Trish",
                             "senderUid" to "trish-uid",
                             "type" to "SYNAPSE_CHAT_MESSAGE",
                         ),
@@ -39,6 +41,10 @@ class Android10FirebaseNotificationTest {
             )
 
             assertEquals(1, shadowNotificationManager.size())
+            val postedNotification = shadowNotificationManager.allNotifications.single()
+            assertEquals("Trish", postedNotification.extras.getString(Notification.EXTRA_TITLE))
+            assertEquals("New message", postedNotification.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals(0, postedNotification.flags and Notification.FLAG_ONLY_ALERT_ONCE)
             assertTrue(
                 shadowNotificationManager.notificationChannels.any { channel ->
                     channel.name == "Synapse Chat messages"
