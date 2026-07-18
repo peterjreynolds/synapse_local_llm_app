@@ -25,6 +25,7 @@ const TRISH_UID = "trish-uid";
 const MALLORY_UID = "mallory-uid";
 const PENDING_UID = "pending-uid";
 const ROOM_ID = `direct_${"a".repeat(64)}`;
+const CALL_ID = `call_${"b".repeat(32)}`;
 const firestoreRules = fs.readFileSync(new URL("../firestore.rules", import.meta.url), "utf8");
 
 let testEnvironment;
@@ -294,6 +295,56 @@ test("keeps FCM installation IDs server-owned", async () => {
     mentions: true,
     mutedRooms: false,
   }));
+});
+
+test("limits direct call records and signals to active participants while keeping writes server-owned", async () => {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    const firestore = context.firestore();
+    await setDoc(doc(firestore, "callSessions", CALL_ID), {
+      acceptedAt: null,
+      calleeUid: TRISH_UID,
+      callerUid: PETER_UID,
+      createdAt: Timestamp.fromMillis(1),
+      endedAt: null,
+      endedByUid: null,
+      expiresAt: Timestamp.fromMillis(Date.now() + 45_000),
+      roomId: ROOM_ID,
+      state: "RINGING",
+    });
+    await setDoc(doc(firestore, "callSessions", CALL_ID, "signals", `signal_${"c".repeat(32)}`), {
+      createdAt: Timestamp.fromMillis(2),
+      kind: "OFFER",
+      sdp: "v=0\r\n",
+      senderUid: PETER_UID,
+    });
+    await setDoc(doc(firestore, "activeCallPointers", PETER_UID), {
+      callId: CALL_ID,
+      expiresAt: Timestamp.fromMillis(Date.now() + 45_000),
+      peerUid: TRISH_UID,
+      role: "CALLER",
+      roomId: ROOM_ID,
+      updatedAt: Timestamp.fromMillis(1),
+    });
+  });
+
+  const peter = activeContext(PETER_UID).firestore();
+  const trish = activeContext(TRISH_UID).firestore();
+  const mallory = activeContext(MALLORY_UID).firestore();
+  await assertSucceeds(getDoc(doc(peter, "callSessions", CALL_ID)));
+  await assertSucceeds(getDoc(doc(trish, "callSessions", CALL_ID)));
+  await assertSucceeds(getDocs(collection(trish, "callSessions", CALL_ID, "signals")));
+  await assertSucceeds(getDoc(doc(peter, "activeCallPointers", PETER_UID)));
+  await assertFails(getDoc(doc(trish, "activeCallPointers", PETER_UID)));
+  await assertFails(getDoc(doc(mallory, "callSessions", CALL_ID)));
+  await assertFails(getDocs(collection(mallory, "callSessions", CALL_ID, "signals")));
+  await assertFails(updateDoc(doc(peter, "callSessions", CALL_ID), {state: "ACTIVE"}));
+  await assertFails(
+    setDoc(doc(peter, "callSessions", CALL_ID, "signals", `signal_${"d".repeat(32)}`), {
+      createdAt: serverTimestamp(),
+      kind: "ICE",
+      senderUid: PETER_UID,
+    }),
+  );
 });
 
 test("keeps AI participant, configuration, queue, and audit state server-owned", async () => {

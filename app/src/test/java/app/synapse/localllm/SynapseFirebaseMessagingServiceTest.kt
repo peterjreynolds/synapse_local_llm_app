@@ -96,4 +96,30 @@ class SynapseFirebaseMessagingServiceTest {
             ),
         )
     }
+
+    @Test
+    fun directCallNotificationAcceptsPrivateRoutingDataAndRejectsMalformedCalls() {
+        val callId = "call_${"a".repeat(32)}"
+        val payload = parseDirectCallNotificationPayload(
+            mapOf(
+                "callId" to callId,
+                "event" to "INCOMING",
+                "expiresAtMillis" to "12345",
+                "type" to "SYNAPSE_DIRECT_CALL",
+            ),
+        )
+
+        assertEquals(callId, payload?.callId?.raw)
+        assertEquals(DirectCallNotificationEvent.INCOMING, payload?.event)
+        assertNull(
+            parseDirectCallNotificationPayload(
+                mapOf(
+                    "callId" to "untrusted-call",
+                    "event" to "INCOMING",
+                    "expiresAtMillis" to "12345",
+                    "type" to "SYNAPSE_DIRECT_CALL",
+                ),
+            ),
+        )
+    }
 }

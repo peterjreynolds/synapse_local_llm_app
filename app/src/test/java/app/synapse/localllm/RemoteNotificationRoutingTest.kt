@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteDirectCallId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -31,5 +32,19 @@ class RemoteNotificationRoutingTest {
         assertEquals(roomId.raw, intent.getStringExtra(EXTRA_REMOTE_ROOM_ID))
         assertFalse(routerInfo.exported)
         assertTrue(launcherInfo.exported)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun callNotificationIntentTargetsTheSameNonExportedRouter() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val callId = RemoteDirectCallId("call_${"c".repeat(32)}")
+
+        val intent = buildDirectCallNotificationOpenIntent(context, callId)
+        val routerComponent = ComponentName(context, RemoteNotificationOpenActivity::class.java)
+
+        assertEquals(routerComponent, intent.component)
+        assertEquals(callId.raw, intent.getStringExtra(EXTRA_DIRECT_CALL_ID))
+        assertFalse(context.packageManager.getActivityInfo(routerComponent, 0).exported)
     }
 }

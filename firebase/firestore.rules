@@ -33,6 +33,13 @@ service cloud.firestore {
         && get(memberPath).data.active == true;
     }
 
+    function isDirectCallParticipant(callId) {
+      let callPath = /databases/$(database)/documents/callSessions/$(callId);
+      return isActiveUser()
+        && exists(callPath)
+        && request.auth.uid in [get(callPath).data.callerUid, get(callPath).data.calleeUid];
+    }
+
     function validProfilePresentation(profile) {
       return profile.displayName is string
         && profile.displayName.size() >= 1
@@ -177,6 +184,22 @@ service cloud.firestore {
 
     match /notificationPreferences/{uid} {
       allow read, write: if false;
+    }
+
+    match /activeCallPointers/{uid} {
+      allow get: if isActiveUser() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    match /callSessions/{callId} {
+      allow get: if isActiveUser()
+        && request.auth.uid in [resource.data.callerUid, resource.data.calleeUid];
+      allow list, create, update, delete: if false;
+
+      match /signals/{signalId} {
+        allow read: if isDirectCallParticipant(callId);
+        allow write: if false;
+      }
     }
 
     match /roomAiConfigurations/{roomId} {

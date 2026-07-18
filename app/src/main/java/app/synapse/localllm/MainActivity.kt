@@ -18,6 +18,8 @@ import app.synapse.localllm.ui.AppLockViewModel
 import app.synapse.localllm.ui.AppLockViewModelFactory
 import app.synapse.localllm.ui.ChatAppearanceViewModel
 import app.synapse.localllm.ui.ChatAppearanceViewModelFactory
+import app.synapse.localllm.ui.DirectCallViewModel
+import app.synapse.localllm.ui.DirectCallViewModelFactory
 import app.synapse.localllm.ui.OwnerAdminViewModel
 import app.synapse.localllm.ui.OwnerAdminViewModelFactory
 import app.synapse.localllm.ui.RemoteAccountViewModel
@@ -38,6 +40,9 @@ class MainActivity : FragmentActivity() {
     private val chatAppearanceViewModel: ChatAppearanceViewModel by viewModels {
         ChatAppearanceViewModelFactory(requireSynapseApplication().graph)
     }
+    private val directCallViewModel: DirectCallViewModel by viewModels {
+        DirectCallViewModelFactory(requireSynapseApplication().graph)
+    }
     private val localViewModel: SynapseViewModel by viewModels {
         SynapseViewModelFactory(requireSynapseApplication().graph)
     }
@@ -56,7 +61,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        consumeTrustedNotificationRoom()
+        consumeTrustedNotificationNavigation()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             SynapseTheme {
@@ -77,6 +82,7 @@ class MainActivity : FragmentActivity() {
                         appLockState = appLockState,
                         appLockViewModel = appLockViewModel,
                         chatAppearanceViewModel = chatAppearanceViewModel,
+                        directCallViewModel = directCallViewModel,
                         requestOwnerIdentityConfirmation = ::requestOwnerIdentityConfirmation,
                     )
                 }
@@ -87,7 +93,7 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        consumeTrustedNotificationRoom()
+        consumeTrustedNotificationNavigation()
     }
 
     override fun onStart() {
@@ -109,12 +115,11 @@ class MainActivity : FragmentActivity() {
         return currentApplication
     }
 
-    private fun consumeTrustedNotificationRoom() {
-        val roomId = requireSynapseApplication()
-            .graph
-            .remoteNotificationNavigationCoordinator
-            .consumeRoom()
+    private fun consumeTrustedNotificationNavigation() {
+        val coordinator = requireSynapseApplication().graph.remoteNotificationNavigationCoordinator
+        val roomId = coordinator.consumeRoom()
         remoteViewModel.openNotificationRoom(roomId)
+        coordinator.consumeCall()?.let(directCallViewModel::openNotificationCall)
     }
 
     private fun requestOwnerIdentityConfirmation(onResult: (Boolean) -> Unit) {

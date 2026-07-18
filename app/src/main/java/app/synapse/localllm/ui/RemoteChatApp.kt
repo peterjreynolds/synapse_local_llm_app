@@ -84,55 +84,82 @@ fun RemoteChatApp(
     appLockState: AppLockUiState,
     appLockViewModel: AppLockViewModel,
     chatAppearanceViewModel: ChatAppearanceViewModel,
+    directCallViewModel: DirectCallViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val state by remoteViewModel.uiState.collectAsStateWithLifecycle()
+    val directCallState by directCallViewModel.uiState.collectAsStateWithLifecycle()
     var showLocalWhileSignedOut by rememberSaveable { mutableStateOf(false) }
     val authenticationState = state.authenticationState
     val account = state.account
-    if (authenticationState == RemoteAuthenticationState.Resolving) {
-        RemoteAccountResolvingScreen()
-    } else if (authenticationState is RemoteAuthenticationState.InvalidSession) {
-        RemoteInvalidSessionScreen(
-            state = state,
-            onRefresh = remoteViewModel::refreshAccountAccess,
-            onSignOut = remoteViewModel::signOut,
-        )
-    } else if (
-        account != null &&
-        (account.state != RemoteAccountState.ACTIVE || account.mustChangePassword)
-    ) {
-        RemoteRestrictedAccountScreen(
-            state = state,
-            onChangePassword = remoteViewModel::changePassword,
-            onRefresh = remoteViewModel::refreshAccountAccess,
-            onSignOut = remoteViewModel::signOut,
-        )
-    } else if (state.account == null && showLocalWhileSignedOut) {
-        SignedOutLocalApp(
-            localViewModel = localViewModel,
-            onBackToSignIn = { showLocalWhileSignedOut = false },
-        )
-    } else if (state.account == null) {
-        RemoteLoginScreen(
-            state = state,
-            onSignIn = remoteViewModel::signIn,
-            onRegister = remoteViewModel::registerWithInvite,
-            onOpenLocalAi = { showLocalWhileSignedOut = true },
-        )
-    } else {
-        RemoteSignedInShell(
-            state = state,
-            remoteViewModel = remoteViewModel,
-            remoteAccountViewModel = remoteAccountViewModel,
-            remoteGroupViewModel = remoteGroupViewModel,
-            localViewModel = localViewModel,
-            ownerAdminViewModel = ownerAdminViewModel,
-            appLockState = appLockState,
-            appLockViewModel = appLockViewModel,
-            chatAppearanceViewModel = chatAppearanceViewModel,
-            requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
-        )
+    LaunchedEffect(account?.accountUid) {
+        directCallViewModel.bindAccount(account?.accountUid)
+    }
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (authenticationState == RemoteAuthenticationState.Resolving) {
+            RemoteAccountResolvingScreen()
+        } else if (authenticationState is RemoteAuthenticationState.InvalidSession) {
+            RemoteInvalidSessionScreen(
+                state = state,
+                onRefresh = remoteViewModel::refreshAccountAccess,
+                onSignOut = remoteViewModel::signOut,
+            )
+        } else if (
+            account != null &&
+            (account.state != RemoteAccountState.ACTIVE || account.mustChangePassword)
+        ) {
+            RemoteRestrictedAccountScreen(
+                state = state,
+                onChangePassword = remoteViewModel::changePassword,
+                onRefresh = remoteViewModel::refreshAccountAccess,
+                onSignOut = remoteViewModel::signOut,
+            )
+        } else if (state.account == null && showLocalWhileSignedOut) {
+            SignedOutLocalApp(
+                localViewModel = localViewModel,
+                onBackToSignIn = { showLocalWhileSignedOut = false },
+            )
+        } else if (state.account == null) {
+            RemoteLoginScreen(
+                state = state,
+                onSignIn = remoteViewModel::signIn,
+                onRegister = remoteViewModel::registerWithInvite,
+                onOpenLocalAi = { showLocalWhileSignedOut = true },
+            )
+        } else {
+            RemoteSignedInShell(
+                state = state,
+                remoteViewModel = remoteViewModel,
+                remoteAccountViewModel = remoteAccountViewModel,
+                remoteGroupViewModel = remoteGroupViewModel,
+                localViewModel = localViewModel,
+                ownerAdminViewModel = ownerAdminViewModel,
+                appLockState = appLockState,
+                appLockViewModel = appLockViewModel,
+                chatAppearanceViewModel = chatAppearanceViewModel,
+                directCallState = directCallState,
+                directCallViewModel = directCallViewModel,
+                requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
+            )
+        }
+        if (account != null && directCallState.phase != DirectCallUiPhase.IDLE) {
+            val session = directCallState.session
+            val peerUid = session?.let { call ->
+                if (call.callerUid == account.accountUid) call.calleeUid.raw else call.callerUid.raw
+            }
+            val peer = state.profiles.firstOrNull { profile -> profile.profileUid.raw == peerUid }
+            DirectCallOverlay(
+                state = directCallState,
+                peer = peer,
+                onAccept = directCallViewModel::acceptCall,
+                onDecline = directCallViewModel::declineCall,
+                onEnd = directCallViewModel::endCall,
+                onToggleMicrophone = directCallViewModel::toggleMicrophone,
+                onToggleSpeaker = directCallViewModel::toggleSpeaker,
+                onPermissionDenied = directCallViewModel::reportMicrophonePermissionDenied,
+                onDismissFailure = directCallViewModel::dismissFailure,
+            )
+        }
     }
 }
 
@@ -614,6 +641,8 @@ private fun RemoteSignedInShell(
     appLockState: AppLockUiState,
     appLockViewModel: AppLockViewModel,
     chatAppearanceViewModel: ChatAppearanceViewModel,
+    directCallState: DirectCallUiState,
+    directCallViewModel: DirectCallViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val localState by localViewModel.uiState.collectAsStateWithLifecycle()
@@ -742,6 +771,8 @@ private fun RemoteSignedInShell(
                         groupViewModel = remoteGroupViewModel,
                         appearanceState = chatAppearanceState,
                         appearanceViewModel = chatAppearanceViewModel,
+                        directCallState = directCallState,
+                        directCallViewModel = directCallViewModel,
                     )
                     RemoteAppSection.PEOPLE -> RemotePeoplePane(
                         state = state,

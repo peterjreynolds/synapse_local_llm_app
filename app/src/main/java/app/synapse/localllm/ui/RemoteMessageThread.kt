@@ -1,6 +1,10 @@
 package app.synapse.localllm.ui
 
+import android.Manifest
 import android.content.ClipData
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -24,6 +28,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -54,10 +59,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import app.synapse.localllm.application.RemoteLocalAiHostStatus
 import app.synapse.localllm.domain.appearance.ChatBackground
 import app.synapse.localllm.domain.appearance.clampChatMessageScale
@@ -68,6 +75,7 @@ import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
+import app.synapse.localllm.domain.remote.RemoteRoomId
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -94,6 +102,9 @@ internal fun RemoteMessageThread(
     onFinishVoiceNote: () -> Unit,
     onCancelVoiceNote: () -> Unit,
     onVoicePermissionDenied: () -> Unit,
+    onStartDirectCall: (RemoteRoomId) -> Unit,
+    onCallPermissionDenied: () -> Unit,
+    directCallActionEnabled: Boolean,
     onReply: (RemoteMessageId) -> Unit,
     onCancelReply: () -> Unit,
     onEdit: (RemoteCachedMessage, String) -> Unit,
@@ -127,6 +138,12 @@ internal fun RemoteMessageThread(
         )
     }
     val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room?.peerUid }
+    val context = LocalContext.current
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) room?.roomId?.let(onStartDirectCall) else onCallPermissionDenied()
+    }
     val currentProfile = state.profiles.firstOrNull { profile ->
         profile.profileUid.raw == state.account?.accountUid?.raw
     }
@@ -196,6 +213,23 @@ internal fun RemoteMessageThread(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+            if (room?.kind == RemoteRoomKind.DIRECT) {
+                IconButton(
+                    onClick = {
+                        if (
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            onStartDirectCall(room.roomId)
+                        } else {
+                            callPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    enabled = directCallActionEnabled,
+                ) {
+                    Icon(Icons.Default.Call, contentDescription = "Start voice call")
                 }
             }
         }

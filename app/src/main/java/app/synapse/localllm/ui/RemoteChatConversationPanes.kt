@@ -72,6 +72,8 @@ internal fun RemoteChatsPane(
     groupViewModel: RemoteGroupViewModel,
     appearanceState: ChatAppearanceUiState,
     appearanceViewModel: ChatAppearanceViewModel,
+    directCallState: DirectCallUiState,
+    directCallViewModel: DirectCallViewModel,
 ) {
     var showGroupCreation by rememberSaveable { mutableStateOf(false) }
     val selectedRoomId = state.selectedRoomId
@@ -111,6 +113,10 @@ internal fun RemoteChatsPane(
             onFinishVoiceNote = viewModel::finishVoiceNoteRecording,
             onCancelVoiceNote = viewModel::cancelVoiceNoteRecording,
             onVoicePermissionDenied = viewModel::reportVoiceNotePermissionDenied,
+            onStartDirectCall = { roomId -> directCallViewModel.startCall(roomId) },
+            onCallPermissionDenied = directCallViewModel::reportMicrophonePermissionDenied,
+            directCallActionEnabled = directCallState.phase == DirectCallUiPhase.IDLE &&
+                !directCallState.isActionRunning,
             onReply = viewModel::replyToMessage,
             onCancelReply = viewModel::cancelReply,
             onEdit = viewModel::editMessage,

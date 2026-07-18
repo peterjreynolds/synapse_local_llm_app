@@ -7,10 +7,9 @@ import android.os.Bundle
 class RemoteNotificationOpenActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val queued = requireSynapseApplication()
-            .graph
-            .remoteNotificationNavigationCoordinator
-            .queueRoom(intent.getStringExtra(EXTRA_REMOTE_ROOM_ID))
+        val coordinator = requireSynapseApplication().graph.remoteNotificationNavigationCoordinator
+        val queued = coordinator.queueRoom(intent.getStringExtra(EXTRA_REMOTE_ROOM_ID)) or
+            coordinator.queueCall(intent.getStringExtra(EXTRA_DIRECT_CALL_ID))
         if (queued) {
             startActivity(
                 Intent(this, MainActivity::class.java)

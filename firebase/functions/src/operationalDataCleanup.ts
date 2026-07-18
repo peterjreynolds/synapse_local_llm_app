@@ -2,7 +2,10 @@ import {Timestamp, type Query} from "firebase-admin/firestore";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
 import {runRecordedOperationsJob} from "./operationsJobStatus.js";
-import {OPERATIONAL_RETENTION_POLICIES} from "./operationalRetentionPolicy.js";
+import {
+  OPERATIONAL_COLLECTION_GROUP_RETENTION_POLICIES,
+  OPERATIONAL_RETENTION_POLICIES,
+} from "./operationalRetentionPolicy.js";
 
 const MAXIMUM_DELETES_PER_POLICY = 100;
 
@@ -27,6 +30,14 @@ export async function cleanupRetainedOperationalData(now = Timestamp.now()): Pro
     const cutoff = Timestamp.fromMillis(now.toMillis() - policy.retentionMillis);
     deletedDocumentCount += await deleteExpiredQuery(
       firebaseAdminFirestore.collection(policy.collectionName)
+        .where(policy.timestampField, "<=", cutoff)
+        .limit(MAXIMUM_DELETES_PER_POLICY),
+    );
+  }
+  for (const policy of OPERATIONAL_COLLECTION_GROUP_RETENTION_POLICIES) {
+    const cutoff = Timestamp.fromMillis(now.toMillis() - policy.retentionMillis);
+    deletedDocumentCount += await deleteExpiredQuery(
+      firebaseAdminFirestore.collectionGroup(policy.collectionName)
         .where(policy.timestampField, "<=", cutoff)
         .limit(MAXIMUM_DELETES_PER_POLICY),
     );

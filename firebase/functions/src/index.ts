@@ -109,6 +109,12 @@ export {
   skipLocalAiResponse,
 } from "./remoteAiLease.js";
 export {queueRemoteLocalAiResponse} from "./remoteAiQueue.js";
+export {
+  endDirectCall,
+  publishDirectCallSignal,
+  respondDirectCall,
+  startDirectCall,
+} from "./directCallMutation.js";
 
 const firestore = firebaseAdminFirestore;
 const messaging = firebaseAdminMessaging;

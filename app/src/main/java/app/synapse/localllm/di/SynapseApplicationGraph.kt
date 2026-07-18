@@ -12,6 +12,8 @@ import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.application.SmsAutoReplyCoordinator
 import app.synapse.localllm.data.appearance.AndroidChatAppearanceRepository
 import app.synapse.localllm.data.chat.RoomConversationRepository
+import app.synapse.localllm.data.calling.AndroidDirectCallForegroundController
+import app.synapse.localllm.data.calling.AndroidDirectCallMediaGateway
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
 import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
@@ -48,6 +50,7 @@ import app.synapse.localllm.data.remote.FirebaseRemoteAttachmentGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDeviceRegistrationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteDirectoryGateway
+import app.synapse.localllm.data.remote.FirebaseRemoteDirectCallGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteGroupGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteInvitationGateway
 import app.synapse.localllm.data.remote.FirebaseRemotePrivacyGateway
@@ -173,6 +176,15 @@ class SynapseApplicationGraph private constructor(context: Context) {
             functions = firebaseFunctions,
             sessionController = remoteAccountSessionController,
         )
+    val remoteDirectCallGateway =
+        FirebaseRemoteDirectCallGateway(
+            firebaseAuth = firebaseAuth,
+            firestore = firestore,
+            functions = firebaseFunctions,
+            sessionController = remoteAccountSessionController,
+        )
+    val directCallMediaGateway = AndroidDirectCallMediaGateway(applicationContext)
+    val directCallForegroundController = AndroidDirectCallForegroundController(applicationContext)
     val remoteAiParticipantGateway =
         FirebaseRemoteAiParticipantGateway(
             firebaseAuth = firebaseAuth,
