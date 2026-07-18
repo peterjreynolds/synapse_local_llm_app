@@ -2,6 +2,7 @@ package app.synapse.localllm
 
 import app.synapse.localllm.domain.notifications.NotificationPermissionState
 import app.synapse.localllm.domain.notifications.notificationPermissionState
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -105,18 +106,42 @@ class SynapseFirebaseMessagingServiceTest {
                 "callId" to callId,
                 "event" to "INCOMING",
                 "expiresAtMillis" to "12345",
+                "mediaKind" to "VIDEO",
                 "type" to "SYNAPSE_DIRECT_CALL",
             ),
         )
 
         assertEquals(callId, payload?.callId?.raw)
         assertEquals(DirectCallNotificationEvent.INCOMING, payload?.event)
+        assertEquals(RemoteDirectCallMediaKind.VIDEO, payload?.mediaKind)
+        assertEquals(
+            RemoteDirectCallMediaKind.AUDIO,
+            parseDirectCallNotificationPayload(
+                mapOf(
+                    "callId" to callId,
+                    "event" to "INCOMING",
+                    "expiresAtMillis" to "12345",
+                    "type" to "SYNAPSE_DIRECT_CALL",
+                ),
+            )?.mediaKind,
+        )
         assertNull(
             parseDirectCallNotificationPayload(
                 mapOf(
                     "callId" to "untrusted-call",
                     "event" to "INCOMING",
                     "expiresAtMillis" to "12345",
+                    "type" to "SYNAPSE_DIRECT_CALL",
+                ),
+            ),
+        )
+        assertNull(
+            parseDirectCallNotificationPayload(
+                mapOf(
+                    "callId" to callId,
+                    "event" to "INCOMING",
+                    "expiresAtMillis" to "12345",
+                    "mediaKind" to "SCREEN",
                     "type" to "SYNAPSE_DIRECT_CALL",
                 ),
             ),

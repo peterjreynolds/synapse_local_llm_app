@@ -4,9 +4,20 @@ import {
   buildDirectCallNotificationData,
   isDirectCallPointerBusy,
   parseDirectCallSignalCommand,
+  parseStartDirectCallCommand,
 } from "./directCallDomain.js";
 
 const callId = `call_${"a".repeat(32)}`;
+const roomId = `direct_${"b".repeat(64)}`;
+
+test("narrows video calls while keeping old clients audio-only", () => {
+  assert.deepEqual(parseStartDirectCallCommand({roomId}), {mediaKind: "AUDIO", roomId});
+  assert.deepEqual(
+    parseStartDirectCallCommand({mediaKind: "VIDEO", roomId}),
+    {mediaKind: "VIDEO", roomId},
+  );
+  assert.throws(() => parseStartDirectCallCommand({mediaKind: "SCREEN", roomId}));
+});
 
 test("narrows offer and ICE call signals", () => {
   assert.deepEqual(
@@ -50,11 +61,13 @@ test("builds private call routing data without names or message text", () => {
       callId,
       event: "INCOMING",
       expiresAtMillis: 12_345,
+      mediaKind: "VIDEO",
     }),
     {
       callId,
       event: "INCOMING",
       expiresAtMillis: "12345",
+      mediaKind: "VIDEO",
       type: "SYNAPSE_DIRECT_CALL",
     },
   );

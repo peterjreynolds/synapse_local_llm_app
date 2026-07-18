@@ -7,6 +7,7 @@ import app.synapse.localllm.domain.calling.DirectCallMediaGateway
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteDirectCallGateway
 import app.synapse.localllm.domain.remote.RemoteDirectCallId
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import app.synapse.localllm.domain.remote.RemoteDirectCallResponse
 import app.synapse.localllm.domain.remote.RemoteDirectCallRole
 import app.synapse.localllm.domain.remote.RemoteDirectCallSession
@@ -138,6 +139,7 @@ class DirectCallViewModelTest {
         override suspend fun startCall(
             accountUid: RemoteAccountUid,
             roomId: RemoteRoomId,
+            mediaKind: RemoteDirectCallMediaKind,
         ): RemoteDirectCallSession = directCallSession(callerUid = accountUid, calleeUid = TRISH_UID).also {
             activeCallId.value = it.callId
             session.value = it
@@ -240,6 +242,7 @@ class DirectCallViewModelTest {
             callerUid = callerUid,
             calleeUid = calleeUid,
             roomId = ROOM_ID,
+            mediaKind = RemoteDirectCallMediaKind.AUDIO,
             state = RemoteDirectCallState.RINGING,
             expiresAtMillis = Long.MAX_VALUE,
         )

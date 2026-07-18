@@ -3,6 +3,7 @@ const DIRECT_CALL_SIGNAL_ID_PATTERN = /^signal_[a-f0-9]{32}$/;
 const DIRECT_ROOM_ID_PATTERN = /^direct_[a-f0-9]{64}$/;
 
 export type DirectCallSignalKind = "ANSWER" | "ICE" | "OFFER";
+export type DirectCallMediaKind = "AUDIO" | "VIDEO";
 
 export type DirectCallSignalCommand =
   | {
@@ -27,11 +28,18 @@ export function parseDirectCallId(input: unknown): string {
   return input.callId;
 }
 
-export function parseStartDirectCallCommand(input: unknown): {roomId: string} {
+export function parseStartDirectCallCommand(input: unknown): {
+  mediaKind: DirectCallMediaKind;
+  roomId: string;
+} {
   if (!isRecord(input) || typeof input.roomId !== "string" || !DIRECT_ROOM_ID_PATTERN.test(input.roomId)) {
     throw new Error("Direct call room is invalid.");
   }
-  return {roomId: input.roomId};
+  const mediaKind = input.mediaKind ?? "AUDIO";
+  if (mediaKind !== "AUDIO" && mediaKind !== "VIDEO") {
+    throw new Error("Direct call media kind is invalid.");
+  }
+  return {mediaKind, roomId: input.roomId};
 }
 
 export function parseDirectCallResponseCommand(input: unknown): {
@@ -87,6 +95,7 @@ export function buildDirectCallNotificationData(input: {
   callId: string;
   event: "ENDED" | "INCOMING";
   expiresAtMillis: number;
+  mediaKind: DirectCallMediaKind;
 }): Record<string, string> {
   if (
     !DIRECT_CALL_ID_PATTERN.test(input.callId) ||
@@ -99,6 +108,7 @@ export function buildDirectCallNotificationData(input: {
     callId: input.callId,
     event: input.event,
     expiresAtMillis: String(input.expiresAtMillis),
+    mediaKind: input.mediaKind,
     type: "SYNAPSE_DIRECT_CALL",
   };
 }

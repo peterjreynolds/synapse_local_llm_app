@@ -116,12 +116,14 @@ test("a direct call rings, answers, exchanges signaling, and clears both active 
   const trishClient = await signIn("trish", trish);
   const room = await call(peterClient, "openDirectRoom")({targetUid: trish.uid});
 
-  const started = await call(peterClient, "startDirectCall")({roomId: room.data.roomId});
+  const started = await call(peterClient, "startDirectCall")({mediaKind: "VIDEO", roomId: room.data.roomId});
   assert.equal(started.data.state, "RINGING");
   assert.equal(started.data.callerUid, peter.uid);
   assert.equal(started.data.calleeUid, trish.uid);
+  assert.equal(started.data.mediaKind, "VIDEO");
   assert.match(started.data.callId, /^call_[a-f0-9]{32}$/);
   const callId = started.data.callId;
+  assert.equal((await adminFirestore.doc(`callSessions/${callId}`).get()).get("mediaKind"), "VIDEO");
 
   const peterPointer = await adminFirestore.doc(`activeCallPointers/${peter.uid}`).get();
   const trishPointer = await adminFirestore.doc(`activeCallPointers/${trish.uid}`).get();
@@ -150,6 +152,7 @@ test("a direct call rings, answers, exchanges signaling, and clears both active 
 
   const accepted = await call(trishClient, "respondDirectCall")({action: "ACCEPT", callId});
   assert.equal(accepted.data.state, "ACTIVE");
+  assert.equal(accepted.data.mediaKind, "VIDEO");
   assert.equal(accepted.data.expiresAtMillis > started.data.expiresAtMillis, true);
 
   const offer = {
@@ -190,6 +193,7 @@ test("a direct call rings, answers, exchanges signaling, and clears both active 
 
   const ended = await call(trishClient, "endDirectCall")({callId});
   assert.equal(ended.data.state, "ENDED");
+  assert.equal(ended.data.mediaKind, "VIDEO");
   assert.equal((await adminFirestore.doc(`activeCallPointers/${peter.uid}`).get()).exists, false);
   assert.equal((await adminFirestore.doc(`activeCallPointers/${trish.uid}`).get()).exists, false);
   assert.equal((await adminFirestore.doc(`callSessions/${callId}`).get()).get("endedByUid"), trish.uid);

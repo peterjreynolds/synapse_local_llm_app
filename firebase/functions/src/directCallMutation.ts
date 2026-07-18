@@ -9,6 +9,7 @@ import {
 import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {
   buildDirectCallNotificationData,
+  DirectCallMediaKind,
   DirectCallSignalCommand,
   isDirectCallPointerBusy,
   parseDirectCallId,
@@ -33,6 +34,7 @@ interface DirectCallReceipt {
   callerUid: string;
   calleeUid: string;
   expiresAtMillis: number;
+  mediaKind: DirectCallMediaKind;
   roomId: string;
   state: DirectCallState;
 }
@@ -48,7 +50,7 @@ export const startDirectCall = onCall(
   async (request): Promise<DirectCallReceipt> => {
     const {uid: callerUid} = await requireActiveAccount(request.auth);
     await enforceCallableRateLimit(callerUid, "callMutation");
-    const {roomId} = parseCommand(() => parseStartDirectCallCommand(request.data));
+    const {mediaKind, roomId} = parseCommand(() => parseStartDirectCallCommand(request.data));
     const roomReference = firebaseAdminFirestore.doc(`rooms/${roomId}`);
     const initialRoom = await roomReference.get();
     const calleeUid = readDirectCallPeerUid(initialRoom.data(), callerUid);
@@ -107,6 +109,7 @@ export const startDirectCall = onCall(
         endedAt: null,
         endedByUid: null,
         expiresAt,
+        mediaKind,
         roomId,
         state: "RINGING",
       });
@@ -118,8 +121,17 @@ export const startDirectCall = onCall(
       callId,
       event: "INCOMING",
       expiresAtMillis: expiresAt.toMillis(),
+      mediaKind,
     }));
-    return {callId, calleeUid, callerUid, expiresAtMillis: expiresAt.toMillis(), roomId, state: "RINGING"};
+    return {
+      callId,
+      calleeUid,
+      callerUid,
+      expiresAtMillis: expiresAt.toMillis(),
+      mediaKind,
+      roomId,
+      state: "RINGING",
+    };
   },
 );
 
@@ -211,6 +223,7 @@ export const endDirectCall = onCall(
       callId,
       event: "ENDED",
       expiresAtMillis: completed.expiresAtMillis,
+      mediaKind: completed.mediaKind,
     }));
     return completed;
   },
@@ -297,6 +310,7 @@ function readDirectCallSession(input: unknown, callId: string): DirectCallReceip
   }
   const session = input as Record<string, unknown>;
   const expiresAt = session.expiresAt;
+  const mediaKind = readDirectCallMediaKind(session.mediaKind);
   if (
     typeof session.callerUid !== "string" ||
     typeof session.calleeUid !== "string" ||
@@ -316,9 +330,16 @@ function readDirectCallSession(input: unknown, callId: string): DirectCallReceip
     calleeUid: session.calleeUid,
     callerUid: session.callerUid,
     expiresAtMillis: expiresAt.toMillis(),
+    mediaKind,
     roomId: session.roomId,
     state: session.state,
   };
+}
+
+function readDirectCallMediaKind(input: unknown): DirectCallMediaKind {
+  if (input === undefined) return "AUDIO";
+  if (input === "AUDIO" || input === "VIDEO") return input;
+  throw new HttpsError("data-loss", "The call record is malformed.");
 }
 
 function clearMatchingPointers(

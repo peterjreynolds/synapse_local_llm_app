@@ -11,6 +11,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteDirectCallId
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.isValidRemoteConversationRoomId
@@ -89,7 +90,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
         val notification = NotificationCompat.Builder(this, DIRECT_CALL_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle("Synapse Chat")
-            .setContentText(DIRECT_CALL_PRIVATE_NOTIFICATION_TEXT)
+            .setContentText(payload.privateNotificationText)
             .setContentIntent(openCallPendingIntent(payload.callId))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -158,7 +159,6 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
         const val REMOTE_CHAT_NOTIFICATION_CHANNEL_ID = "synapse_remote_chat_messages"
         const val REMOTE_CHAT_NOTIFICATION_GROUP = "synapse_remote_chat"
         const val REMOTE_CHAT_PRIVATE_NOTIFICATION_TEXT = "You received a message from Synapse."
-        const val DIRECT_CALL_PRIVATE_NOTIFICATION_TEXT = "Incoming Synapse voice call."
     }
 }
 
@@ -217,7 +217,15 @@ internal data class DirectCallNotificationPayload(
     val callId: RemoteDirectCallId,
     val event: DirectCallNotificationEvent,
     val expiresAtMillis: Long,
+    val mediaKind: RemoteDirectCallMediaKind,
 )
+
+private val DirectCallNotificationPayload.privateNotificationText: String
+    get() = if (mediaKind == RemoteDirectCallMediaKind.VIDEO) {
+        "Incoming Synapse video call."
+    } else {
+        "Incoming Synapse voice call."
+    }
 
 internal fun parseRemoteNotificationPayload(data: Map<String, String>): RemoteNotificationPayload? {
     if (data["type"] != REMOTE_CHAT_MESSAGE_TYPE) return null
@@ -247,10 +255,14 @@ internal fun parseDirectCallNotificationPayload(data: Map<String, String>): Dire
         runCatching { DirectCallNotificationEvent.valueOf(value) }.getOrNull()
     } ?: return null
     val expiresAtMillis = data["expiresAtMillis"]?.toLongOrNull()?.takeIf { value -> value >= 0 } ?: return null
+    val mediaKind = data["mediaKind"]?.let { value ->
+        runCatching { RemoteDirectCallMediaKind.valueOf(value) }.getOrNull()
+    } ?: if ("mediaKind" in data) return null else RemoteDirectCallMediaKind.AUDIO
     return DirectCallNotificationPayload(
         callId = RemoteDirectCallId(callId),
         event = event,
         expiresAtMillis = expiresAtMillis,
+        mediaKind = mediaKind,
     )
 }
 

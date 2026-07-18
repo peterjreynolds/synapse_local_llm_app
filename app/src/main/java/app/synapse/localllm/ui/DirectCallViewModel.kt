@@ -11,6 +11,7 @@ import app.synapse.localllm.domain.calling.DirectCallMediaGateway
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteDirectCallGateway
 import app.synapse.localllm.domain.remote.RemoteDirectCallId
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import app.synapse.localllm.domain.remote.RemoteDirectCallResponse
 import app.synapse.localllm.domain.remote.RemoteDirectCallRole
 import app.synapse.localllm.domain.remote.RemoteDirectCallSession
@@ -103,10 +104,13 @@ class DirectCallViewModel(
         accountUid?.let { activeAccountUid -> observeCall(activeAccountUid, callId) }
     }
 
-    fun startCall(roomId: RemoteRoomId) = launchAction {
+    fun startCall(
+        roomId: RemoteRoomId,
+        mediaKind: RemoteDirectCallMediaKind = RemoteDirectCallMediaKind.AUDIO,
+    ) = launchAction {
         val activeAccountUid = requireNotNull(accountUid) { "Sign in before starting a call." }
         mutableUiState.update { state -> state.copy(phase = DirectCallUiPhase.STARTING, notice = null) }
-        val session = callGateway.startCall(activeAccountUid, roomId)
+        val session = callGateway.startCall(activeAccountUid, roomId, mediaKind)
         observeCall(activeAccountUid, session.callId)
         presentSession(activeAccountUid, session)
     }

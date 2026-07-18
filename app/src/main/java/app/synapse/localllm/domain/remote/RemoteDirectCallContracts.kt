@@ -26,11 +26,17 @@ enum class RemoteDirectCallRole {
     CALLEE,
 }
 
+enum class RemoteDirectCallMediaKind {
+    AUDIO,
+    VIDEO,
+}
+
 data class RemoteDirectCallSession(
     val callId: RemoteDirectCallId,
     val callerUid: RemoteAccountUid,
     val calleeUid: RemoteAccountUid,
     val roomId: RemoteRoomId,
+    val mediaKind: RemoteDirectCallMediaKind,
     val state: RemoteDirectCallState,
     val expiresAtMillis: Long,
 )
@@ -76,6 +82,7 @@ interface RemoteDirectCallGateway {
     suspend fun startCall(
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
+        mediaKind: RemoteDirectCallMediaKind,
     ): RemoteDirectCallSession
 
     suspend fun respondToCall(

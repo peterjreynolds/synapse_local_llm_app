@@ -5,6 +5,7 @@ import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteDirectCallGateway
 import app.synapse.localllm.domain.remote.RemoteDirectCallId
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import app.synapse.localllm.domain.remote.RemoteDirectCallResponse
 import app.synapse.localllm.domain.remote.RemoteDirectCallSession
 import app.synapse.localllm.domain.remote.RemoteDirectCallSignal
@@ -124,10 +125,15 @@ class FirebaseRemoteDirectCallGateway(
     override suspend fun startCall(
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
+        mediaKind: RemoteDirectCallMediaKind,
     ): RemoteDirectCallSession {
         requireAuthenticatedUid(accountUid)
         require(isValidRemoteDirectRoomId(roomId.raw)) { "Voice calls require a direct conversation." }
-        return callForSession("startDirectCall", mapOf("roomId" to roomId.raw), "start the call")
+        return callForSession(
+            "startDirectCall",
+            mapOf("mediaKind" to mediaKind.name, "roomId" to roomId.raw),
+            "start the call",
+        )
     }
 
     override suspend fun respondToCall(
@@ -225,6 +231,7 @@ internal fun Any?.toDirectCallSessionReceipt(): RemoteDirectCallSession {
     val callerUid = value.stringField("callerUid")
     val calleeUid = value.stringField("calleeUid")
     val roomId = value.stringField("roomId")
+    val mediaKind = value.optionalStringField("mediaKind", "AUDIO").toDirectCallMediaKind()
     val state = value.stringField("state").toDirectCallState()
     val expiresAtMillis = (value["expiresAtMillis"] as? Number)?.toLong()
         ?: throw RemoteChatException("Firebase returned an invalid call expiry.")
@@ -236,6 +243,7 @@ internal fun Any?.toDirectCallSessionReceipt(): RemoteDirectCallSession {
         callerUid = RemoteAccountUid(callerUid),
         calleeUid = RemoteAccountUid(calleeUid),
         roomId = RemoteRoomId(roomId),
+        mediaKind = mediaKind,
         state = state,
         expiresAtMillis = expiresAtMillis,
     )
@@ -245,6 +253,7 @@ private fun DocumentSnapshot.toDirectCallSession(callId: RemoteDirectCallId): Re
     val callerUid = getString("callerUid") ?: malformedCall()
     val calleeUid = getString("calleeUid") ?: malformedCall()
     val roomId = getString("roomId") ?: malformedCall()
+    val mediaKind = (getString("mediaKind") ?: "AUDIO").toDirectCallMediaKind()
     val state = getString("state")?.toDirectCallState() ?: malformedCall()
     val expiresAt = getTimestamp("expiresAt") ?: malformedCall()
     if (!isValidRemoteDirectRoomId(roomId)) malformedCall()
@@ -253,6 +262,7 @@ private fun DocumentSnapshot.toDirectCallSession(callId: RemoteDirectCallId): Re
         callerUid = RemoteAccountUid(callerUid),
         calleeUid = RemoteAccountUid(calleeUid),
         roomId = RemoteRoomId(roomId),
+        mediaKind = mediaKind,
         state = state,
         expiresAtMillis = expiresAt.toDate().time,
     )
@@ -288,8 +298,15 @@ private fun String.toDirectCallState(): RemoteDirectCallState =
     runCatching { RemoteDirectCallState.valueOf(this) }
         .getOrElse { throw RemoteChatException("Firebase returned an invalid call state.") }
 
+private fun String.toDirectCallMediaKind(): RemoteDirectCallMediaKind =
+    runCatching { RemoteDirectCallMediaKind.valueOf(this) }
+        .getOrElse { throw RemoteChatException("Firebase returned an invalid call media kind.") }
+
 private fun Map<*, *>.stringField(name: String): String =
     this[name] as? String ?: throw RemoteChatException("Firebase returned an invalid $name.")
+
+private fun Map<*, *>.optionalStringField(name: String, defaultValue: String): String =
+    if (containsKey(name)) stringField(name) else defaultValue
 
 private fun malformedCall(): Nothing = throw RemoteChatException("Firebase returned a malformed call record.")
 
