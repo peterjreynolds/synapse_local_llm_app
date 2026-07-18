@@ -12,6 +12,12 @@ enum class DirectCallMediaConnectionState {
     FAILED,
 }
 
+interface DirectCallAlertGateway {
+    fun startOutgoingRingback()
+
+    fun stop()
+}
+
 interface DirectCallMediaGateway {
     suspend fun start(
         accountUid: RemoteAccountUid,

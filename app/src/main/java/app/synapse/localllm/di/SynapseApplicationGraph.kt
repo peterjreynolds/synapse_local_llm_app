@@ -12,6 +12,7 @@ import app.synapse.localllm.application.SynapseTurnCoordinator
 import app.synapse.localllm.application.SmsAutoReplyCoordinator
 import app.synapse.localllm.data.appearance.AndroidChatAppearanceRepository
 import app.synapse.localllm.data.chat.RoomConversationRepository
+import app.synapse.localllm.data.calling.AndroidDirectCallAlertGateway
 import app.synapse.localllm.data.calling.AndroidDirectCallForegroundController
 import app.synapse.localllm.data.calling.AndroidDirectCallMediaGateway
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
@@ -184,6 +185,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
             sessionController = remoteAccountSessionController,
         )
     val directCallMediaGateway = AndroidDirectCallMediaGateway(applicationContext)
+    val directCallAlertGateway = AndroidDirectCallAlertGateway()
     val directCallForegroundController = AndroidDirectCallForegroundController(applicationContext)
     val remoteAiParticipantGateway =
         FirebaseRemoteAiParticipantGateway(

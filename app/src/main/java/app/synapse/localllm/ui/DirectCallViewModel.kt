@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.di.SynapseApplicationGraph
+import app.synapse.localllm.domain.calling.DirectCallAlertGateway
 import app.synapse.localllm.domain.calling.DirectCallForegroundController
 import app.synapse.localllm.domain.calling.DirectCallMediaConnectionState
 import app.synapse.localllm.domain.calling.DirectCallMediaGateway
@@ -49,6 +50,7 @@ data class DirectCallUiState(
 class DirectCallViewModel(
     private val callGateway: RemoteDirectCallGateway,
     private val mediaGateway: DirectCallMediaGateway,
+    private val alertGateway: DirectCallAlertGateway,
     private val foregroundController: DirectCallForegroundController,
     private val nowEpochMillis: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
@@ -204,6 +206,7 @@ class DirectCallViewModel(
                 }
                 mutableUiState.update { state -> state.copy(phase = phase, session = session, notice = null) }
                 if (phase == DirectCallUiPhase.OUTGOING_RINGING) {
+                    alertGateway.startOutgoingRingback()
                     runCatching { ensureCallForeground(session.callId) }
                         .onFailure { failure ->
                             failAndEndCall(failure.message ?: "Android could not keep the outgoing call active.")
@@ -214,6 +217,7 @@ class DirectCallViewModel(
             }
             RemoteDirectCallState.ACTIVE -> {
                 callExpiryJob?.cancel()
+                alertGateway.stop()
                 mutableUiState.update { state ->
                     state.copy(phase = DirectCallUiPhase.CONNECTING, session = session, notice = null)
                 }
@@ -334,6 +338,7 @@ class DirectCallViewModel(
         callSignalJob?.cancel()
         callSignalJob = null
         mediaGateway.stop()
+        alertGateway.stop()
         foregroundController.stop()
         foregroundCallId = null
         mediaCallId = null
@@ -386,6 +391,7 @@ class DirectCallViewModelFactory(
                 DirectCallViewModel(
                     callGateway = graph.remoteDirectCallGateway,
                     mediaGateway = graph.directCallMediaGateway,
+                    alertGateway = graph.directCallAlertGateway,
                     foregroundController = graph.directCallForegroundController,
                 ),
             ) ?: throw IllegalArgumentException("Unable to create DirectCallViewModel.")

@@ -1,5 +1,6 @@
 package app.synapse.localllm.ui
 
+import app.synapse.localllm.domain.calling.DirectCallAlertGateway
 import app.synapse.localllm.domain.calling.DirectCallForegroundController
 import app.synapse.localllm.domain.calling.DirectCallMediaConnectionState
 import app.synapse.localllm.domain.calling.DirectCallMediaGateway
@@ -39,8 +40,9 @@ class DirectCallViewModelTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val gateway = RecordingCallGateway()
         val mediaGateway = RecordingMediaGateway()
+        val alertGateway = RecordingAlertGateway()
         val foregroundController = RecordingForegroundController()
-        val viewModel = DirectCallViewModel(gateway, mediaGateway, foregroundController)
+        val viewModel = DirectCallViewModel(gateway, mediaGateway, alertGateway, foregroundController)
         viewModel.bindAccount(PETER_UID)
         runCurrent()
 
@@ -50,6 +52,7 @@ class DirectCallViewModelTest {
         assertEquals(DirectCallUiPhase.OUTGOING_RINGING, viewModel.uiState.value.phase)
         assertEquals(CALL_ID, viewModel.uiState.value.session?.callId)
         assertTrue(foregroundController.started)
+        assertTrue(alertGateway.ringbackPlaying)
 
         gateway.session.value = gateway.session.value?.copy(state = RemoteDirectCallState.ACTIVE)
         runCurrent()
@@ -57,6 +60,7 @@ class DirectCallViewModelTest {
         assertEquals(DirectCallUiPhase.ACTIVE, viewModel.uiState.value.phase)
         assertTrue(mediaGateway.started)
         assertTrue(foregroundController.started)
+        assertFalse(alertGateway.ringbackPlaying)
 
         viewModel.endCall()
         runCurrent()
@@ -74,7 +78,12 @@ class DirectCallViewModelTest {
             initialSession = directCallSession(callerUid = TRISH_UID, calleeUid = PETER_UID),
         )
         val mediaGateway = RecordingMediaGateway()
-        val viewModel = DirectCallViewModel(gateway, mediaGateway, RecordingForegroundController())
+        val viewModel = DirectCallViewModel(
+            gateway,
+            mediaGateway,
+            RecordingAlertGateway(),
+            RecordingForegroundController(),
+        )
         viewModel.bindAccount(PETER_UID)
         runCurrent()
 
@@ -95,6 +104,7 @@ class DirectCallViewModelTest {
         val viewModel = DirectCallViewModel(
             RecordingCallGateway(),
             RecordingMediaGateway(),
+            RecordingAlertGateway(),
             RecordingForegroundController(),
         )
 
@@ -184,6 +194,18 @@ class DirectCallViewModelTest {
         override fun stop() {
             started = false
             role = null
+        }
+    }
+
+    private class RecordingAlertGateway : DirectCallAlertGateway {
+        var ringbackPlaying = false
+
+        override fun startOutgoingRingback() {
+            ringbackPlaying = true
+        }
+
+        override fun stop() {
+            ringbackPlaying = false
         }
     }
 
