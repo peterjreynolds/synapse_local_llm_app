@@ -72,6 +72,7 @@ import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
 import app.synapse.localllm.domain.remote.validateRemoteInviteRegistrationCommand
 import app.synapse.localllm.dismissRemoteRoomNotification
+import app.synapse.localllm.data.calling.DirectCallVideoRendererController
 import kotlinx.coroutines.launch
 
 @Composable
@@ -85,6 +86,7 @@ fun RemoteChatApp(
     appLockViewModel: AppLockViewModel,
     chatAppearanceViewModel: ChatAppearanceViewModel,
     directCallViewModel: DirectCallViewModel,
+    directCallVideoRendererController: DirectCallVideoRendererController,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val state by remoteViewModel.uiState.collectAsStateWithLifecycle()
@@ -151,12 +153,15 @@ fun RemoteChatApp(
             DirectCallOverlay(
                 state = directCallState,
                 peer = peer,
+                videoRendererController = directCallVideoRendererController,
                 onAccept = directCallViewModel::acceptCall,
                 onDecline = directCallViewModel::declineCall,
                 onEnd = directCallViewModel::endCall,
+                onToggleCamera = directCallViewModel::toggleCamera,
+                onSwitchCamera = directCallViewModel::switchCamera,
                 onToggleMicrophone = directCallViewModel::toggleMicrophone,
                 onToggleSpeaker = directCallViewModel::toggleSpeaker,
-                onPermissionDenied = directCallViewModel::reportMicrophonePermissionDenied,
+                onPermissionDenied = directCallViewModel::reportCallPermissionDenied,
                 onDismissFailure = directCallViewModel::dismissFailure,
             )
         }

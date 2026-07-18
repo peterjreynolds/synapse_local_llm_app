@@ -5,14 +5,26 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import app.synapse.localllm.domain.remote.isValidRemoteDirectCallId
 
 class DirectCallForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val callId = intent?.getStringExtra(EXTRA_CALL_ID)
-        if (intent?.action != ACTION_START || callId == null || !isValidRemoteDirectCallId(callId)) {
+        val mediaKind = intent?.getStringExtra(EXTRA_MEDIA_KIND)?.let { rawValue ->
+            runCatching { RemoteDirectCallMediaKind.valueOf(rawValue) }.getOrNull()
+        }
+        if (
+            intent?.action != ACTION_START ||
+            callId == null ||
+            !isValidRemoteDirectCallId(callId) ||
+            mediaKind == null
+        ) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -20,10 +32,10 @@ class DirectCallForegroundService : Service() {
         manager.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_ID,
-                "Synapse voice calls",
+                "Synapse calls",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Keeps an active Synapse voice call connected."
+                description = "Keeps an active Synapse call connected."
                 setShowBadge(false)
             },
         )
@@ -36,7 +48,7 @@ class DirectCallForegroundService : Service() {
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle("Synapse voice call")
+            .setContentTitle(if (mediaKind == RemoteDirectCallMediaKind.VIDEO) "Synapse video call" else "Synapse voice call")
             .setContentText("Call in progress")
             .setContentIntent(openApp)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -44,7 +56,8 @@ class DirectCallForegroundService : Service() {
             .setOngoing(true)
             .setSilent(true)
             .build()
-        startForeground(ACTIVE_CALL_NOTIFICATION_ID, notification)
+        val foregroundTypes = directCallForegroundServiceTypes(mediaKind)
+        ServiceCompat.startForeground(this, ACTIVE_CALL_NOTIFICATION_ID, notification, foregroundTypes)
         return START_NOT_STICKY
     }
 
@@ -53,7 +66,20 @@ class DirectCallForegroundService : Service() {
     companion object {
         const val ACTION_START = "app.synapse.localllm.action.START_DIRECT_CALL"
         const val EXTRA_CALL_ID = "app.synapse.localllm.extra.DIRECT_CALL_ID"
+        const val EXTRA_MEDIA_KIND = "app.synapse.localllm.extra.DIRECT_CALL_MEDIA_KIND"
         private const val CHANNEL_ID = "synapse_active_voice_call"
         private const val ACTIVE_CALL_NOTIFICATION_ID = 4_303
     }
 }
+
+internal fun directCallForegroundServiceTypes(mediaKind: RemoteDirectCallMediaKind): Int =
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        0
+    } else {
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+            if (mediaKind == RemoteDirectCallMediaKind.VIDEO) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            } else {
+                0
+            }
+    }

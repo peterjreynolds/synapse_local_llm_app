@@ -2,6 +2,7 @@ package app.synapse.localllm.domain.calling
 
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteDirectCallId
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import app.synapse.localllm.domain.remote.RemoteDirectCallRole
 import app.synapse.localllm.domain.remote.RemoteDirectCallSignal
 
@@ -21,6 +22,7 @@ interface DirectCallAlertGateway {
 interface DirectCallMediaGateway {
     suspend fun start(
         accountUid: RemoteAccountUid,
+        mediaKind: RemoteDirectCallMediaKind,
         role: RemoteDirectCallRole,
         onLocalSignal: (RemoteDirectCallSignal) -> Unit,
         onConnectionStateChanged: (DirectCallMediaConnectionState) -> Unit,
@@ -30,13 +32,20 @@ interface DirectCallMediaGateway {
 
     fun setMicrophoneMuted(muted: Boolean)
 
+    fun setCameraEnabled(enabled: Boolean)
+
+    fun switchCamera()
+
     fun setSpeakerEnabled(enabled: Boolean)
 
     fun stop()
 }
 
 interface DirectCallForegroundController {
-    fun start(callId: RemoteDirectCallId)
+    fun start(
+        callId: RemoteDirectCallId,
+        mediaKind: RemoteDirectCallMediaKind,
+    )
 
     fun stop()
 

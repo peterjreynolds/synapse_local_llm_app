@@ -100,6 +100,40 @@ class DirectCallViewModelTest {
     }
 
     @Test
+    fun videoCallStartsCameraMediaOnSpeakerAndExposesCameraControls() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway()
+        val mediaGateway = RecordingMediaGateway()
+        val foregroundController = RecordingForegroundController()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            mediaGateway,
+            RecordingAlertGateway(),
+            foregroundController,
+        )
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+
+        viewModel.startCall(ROOM_ID, RemoteDirectCallMediaKind.VIDEO)
+        runCurrent()
+        gateway.session.value = gateway.session.value?.copy(state = RemoteDirectCallState.ACTIVE)
+        runCurrent()
+
+        assertEquals(RemoteDirectCallMediaKind.VIDEO, mediaGateway.mediaKind)
+        assertEquals(RemoteDirectCallMediaKind.VIDEO, foregroundController.mediaKind)
+        assertTrue(viewModel.uiState.value.isCameraEnabled)
+        assertTrue(viewModel.uiState.value.isSpeakerEnabled)
+        assertTrue(mediaGateway.speakerEnabledValue)
+
+        viewModel.toggleCamera()
+        viewModel.switchCamera()
+
+        assertFalse(viewModel.uiState.value.isCameraEnabled)
+        assertFalse(mediaGateway.cameraEnabledValue)
+        assertEquals(1, mediaGateway.cameraSwitchCount)
+    }
+
+    @Test
     fun deniedOutgoingMicrophonePermissionSurfacesAClosableFailure() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val viewModel = DirectCallViewModel(
@@ -118,9 +152,9 @@ class DirectCallViewModelTest {
     }
 
     private class RecordingCallGateway(
-        initialSession: RemoteDirectCallSession = directCallSession(),
+        initialSession: RemoteDirectCallSession? = null,
     ) : RemoteDirectCallGateway {
-        val activeCallId = MutableStateFlow<RemoteDirectCallId?>(CALL_ID)
+        val activeCallId = MutableStateFlow(initialSession?.callId)
         val session = MutableStateFlow<RemoteDirectCallSession?>(initialSession)
         val signals = MutableStateFlow<List<RemoteDirectCallSignal>>(emptyList())
 
@@ -140,7 +174,11 @@ class DirectCallViewModelTest {
             accountUid: RemoteAccountUid,
             roomId: RemoteRoomId,
             mediaKind: RemoteDirectCallMediaKind,
-        ): RemoteDirectCallSession = directCallSession(callerUid = accountUid, calleeUid = TRISH_UID).also {
+        ): RemoteDirectCallSession = directCallSession(
+            callerUid = accountUid,
+            calleeUid = TRISH_UID,
+            mediaKind = mediaKind,
+        ).also {
             activeCallId.value = it.callId
             session.value = it
         }
@@ -174,15 +212,21 @@ class DirectCallViewModelTest {
 
     private class RecordingMediaGateway : DirectCallMediaGateway {
         var started = false
+        var cameraEnabledValue = true
+        var cameraSwitchCount = 0
+        var mediaKind: RemoteDirectCallMediaKind? = null
         var role: RemoteDirectCallRole? = null
+        var speakerEnabledValue = false
 
         override suspend fun start(
             accountUid: RemoteAccountUid,
+            mediaKind: RemoteDirectCallMediaKind,
             role: RemoteDirectCallRole,
             onLocalSignal: (RemoteDirectCallSignal) -> Unit,
             onConnectionStateChanged: (DirectCallMediaConnectionState) -> Unit,
         ) {
             started = true
+            this.mediaKind = mediaKind
             this.role = role
             onConnectionStateChanged(DirectCallMediaConnectionState.CONNECTED)
         }
@@ -191,10 +235,21 @@ class DirectCallViewModelTest {
 
         override fun setMicrophoneMuted(muted: Boolean) = Unit
 
-        override fun setSpeakerEnabled(enabled: Boolean) = Unit
+        override fun setCameraEnabled(enabled: Boolean) {
+            cameraEnabledValue = enabled
+        }
+
+        override fun switchCamera() {
+            cameraSwitchCount += 1
+        }
+
+        override fun setSpeakerEnabled(enabled: Boolean) {
+            speakerEnabledValue = enabled
+        }
 
         override fun stop() {
             started = false
+            mediaKind = null
             role = null
         }
     }
@@ -214,9 +269,14 @@ class DirectCallViewModelTest {
     private class RecordingForegroundController : DirectCallForegroundController {
         var started = false
         var dismissedCallId: RemoteDirectCallId? = null
+        var mediaKind: RemoteDirectCallMediaKind? = null
 
-        override fun start(callId: RemoteDirectCallId) {
+        override fun start(
+            callId: RemoteDirectCallId,
+            mediaKind: RemoteDirectCallMediaKind,
+        ) {
             started = true
+            this.mediaKind = mediaKind
         }
 
         override fun stop() {
@@ -237,12 +297,13 @@ class DirectCallViewModelTest {
         fun directCallSession(
             callerUid: RemoteAccountUid = PETER_UID,
             calleeUid: RemoteAccountUid = TRISH_UID,
+            mediaKind: RemoteDirectCallMediaKind = RemoteDirectCallMediaKind.AUDIO,
         ) = RemoteDirectCallSession(
             callId = CALL_ID,
             callerUid = callerUid,
             calleeUid = calleeUid,
             roomId = ROOM_ID,
-            mediaKind = RemoteDirectCallMediaKind.AUDIO,
+            mediaKind = mediaKind,
             state = RemoteDirectCallState.RINGING,
             expiresAtMillis = Long.MAX_VALUE,
         )

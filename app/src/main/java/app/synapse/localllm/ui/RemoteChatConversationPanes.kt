@@ -113,8 +113,8 @@ internal fun RemoteChatsPane(
             onFinishVoiceNote = viewModel::finishVoiceNoteRecording,
             onCancelVoiceNote = viewModel::cancelVoiceNoteRecording,
             onVoicePermissionDenied = viewModel::reportVoiceNotePermissionDenied,
-            onStartDirectCall = { roomId -> directCallViewModel.startCall(roomId) },
-            onCallPermissionDenied = directCallViewModel::reportMicrophonePermissionDenied,
+            onStartDirectCall = directCallViewModel::startCall,
+            onCallPermissionDenied = directCallViewModel::reportCallPermissionDenied,
             directCallActionEnabled = directCallState.phase == DirectCallUiPhase.IDLE &&
                 !directCallState.isActionRunning,
             onReply = viewModel::replyToMessage,

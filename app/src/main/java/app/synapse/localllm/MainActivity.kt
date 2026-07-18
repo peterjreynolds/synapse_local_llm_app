@@ -83,6 +83,7 @@ class MainActivity : FragmentActivity() {
                         appLockViewModel = appLockViewModel,
                         chatAppearanceViewModel = chatAppearanceViewModel,
                         directCallViewModel = directCallViewModel,
+                        directCallVideoRendererController = requireSynapseApplication().graph.directCallMediaGateway,
                         requestOwnerIdentityConfirmation = ::requestOwnerIdentityConfirmation,
                     )
                 }

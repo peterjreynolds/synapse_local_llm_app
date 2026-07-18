@@ -43,6 +43,7 @@ data class DirectCallUiState(
     val phase: DirectCallUiPhase = DirectCallUiPhase.IDLE,
     val session: RemoteDirectCallSession? = null,
     val isActionRunning: Boolean = false,
+    val isCameraEnabled: Boolean = false,
     val isMicrophoneMuted: Boolean = false,
     val isSpeakerEnabled: Boolean = false,
     val notice: String? = null,
@@ -147,6 +148,20 @@ class DirectCallViewModel(
         mutableUiState.update { state -> state.copy(isMicrophoneMuted = muted) }
     }
 
+    fun toggleCamera() {
+        val session = mutableUiState.value.session ?: return
+        if (session.mediaKind != RemoteDirectCallMediaKind.VIDEO) return
+        val enabled = !mutableUiState.value.isCameraEnabled
+        mediaGateway.setCameraEnabled(enabled)
+        mutableUiState.update { state -> state.copy(isCameraEnabled = enabled) }
+    }
+
+    fun switchCamera() {
+        if (mutableUiState.value.session?.mediaKind == RemoteDirectCallMediaKind.VIDEO) {
+            mediaGateway.switchCamera()
+        }
+    }
+
     fun toggleSpeaker() {
         val enabled = !mutableUiState.value.isSpeakerEnabled
         mediaGateway.setSpeakerEnabled(enabled)
@@ -154,10 +169,18 @@ class DirectCallViewModel(
     }
 
     fun reportMicrophonePermissionDenied() {
+        reportCallPermissionDenied(RemoteDirectCallMediaKind.AUDIO)
+    }
+
+    fun reportCallPermissionDenied(mediaKind: RemoteDirectCallMediaKind) {
         mutableUiState.update { state ->
             state.copy(
                 phase = if (state.phase == DirectCallUiPhase.IDLE) DirectCallUiPhase.FAILED else state.phase,
-                notice = "Microphone permission is required for voice calls.",
+                notice = if (mediaKind == RemoteDirectCallMediaKind.VIDEO) {
+                    "Camera and microphone permissions are required for video calls."
+                } else {
+                    "Microphone permission is required for voice calls."
+                },
             )
         }
     }
@@ -211,7 +234,7 @@ class DirectCallViewModel(
                 mutableUiState.update { state -> state.copy(phase = phase, session = session, notice = null) }
                 if (phase == DirectCallUiPhase.OUTGOING_RINGING) {
                     alertGateway.startOutgoingRingback()
-                    runCatching { ensureCallForeground(session.callId) }
+                    runCatching { ensureCallForeground(session) }
                         .onFailure { failure ->
                             failAndEndCall(failure.message ?: "Android could not keep the outgoing call active.")
                             return
@@ -241,7 +264,7 @@ class DirectCallViewModel(
         processedSignalIds.clear()
         viewModelScope.launch {
             try {
-                ensureCallForeground(session.callId)
+                ensureCallForeground(session)
                 val role = if (activeAccountUid == session.callerUid) {
                     RemoteDirectCallRole.CALLER
                 } else {
@@ -249,10 +272,17 @@ class DirectCallViewModel(
                 }
                 mediaGateway.start(
                     accountUid = activeAccountUid,
+                    mediaKind = session.mediaKind,
                     role = role,
                     onLocalSignal = { signal -> publishLocalSignal(activeAccountUid, session.callId, signal) },
                     onConnectionStateChanged = ::onMediaConnectionStateChanged,
                 )
+                if (session.mediaKind == RemoteDirectCallMediaKind.VIDEO) {
+                    mediaGateway.setSpeakerEnabled(true)
+                    mutableUiState.update { state ->
+                        state.copy(isCameraEnabled = true, isSpeakerEnabled = true)
+                    }
+                }
                 callSignalJob?.cancel()
                 callSignalJob = viewModelScope.launch {
                     callGateway.observeSignals(activeAccountUid, session.callId).collectLatest { signals ->
@@ -266,7 +296,7 @@ class DirectCallViewModel(
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
-                failAndEndCall(exception.message ?: "Could not connect the voice call.")
+                failAndEndCall(exception.message ?: "Could not connect the call.")
             }
         }
     }
@@ -282,7 +312,7 @@ class DirectCallViewModel(
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
-                failAndEndCall(exception.message ?: "Could not exchange voice-call setup data.")
+                failAndEndCall(exception.message ?: "Could not exchange call setup data.")
             }
         }
     }
@@ -294,9 +324,9 @@ class DirectCallViewModel(
                 state.copy(phase = DirectCallUiPhase.ACTIVE, notice = null)
             }
             DirectCallMediaConnectionState.DISCONNECTED ->
-                mutableUiState.update { state -> state.copy(notice = "Voice connection interrupted. Reconnecting…") }
+                mutableUiState.update { state -> state.copy(notice = "Call connection interrupted. Reconnecting…") }
             DirectCallMediaConnectionState.FAILED ->
-                failAndEndCall("The voice connection failed on this network. Try Wi-Fi or another network.")
+                failAndEndCall("The call connection failed on this network. Try Wi-Fi or another network.")
         }
     }
 
@@ -349,13 +379,13 @@ class DirectCallViewModel(
         processedSignalIds.clear()
     }
 
-    private fun ensureCallForeground(callId: RemoteDirectCallId) {
-        if (foregroundCallId == callId) return
+    private fun ensureCallForeground(session: RemoteDirectCallSession) {
+        if (foregroundCallId == session.callId) return
         try {
-            foregroundController.start(callId)
-            foregroundCallId = callId
+            foregroundController.start(session.callId, session.mediaKind)
+            foregroundCallId = session.callId
         } catch (exception: RuntimeException) {
-            throw IllegalStateException("Android could not keep the voice call active.", exception)
+            throw IllegalStateException("Android could not keep the call active.", exception)
         }
     }
 

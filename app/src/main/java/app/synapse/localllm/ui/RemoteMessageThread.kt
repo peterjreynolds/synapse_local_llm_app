@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -89,6 +90,7 @@ import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
 import app.synapse.localllm.domain.remote.RemoteRoomId
@@ -118,8 +120,8 @@ internal fun RemoteMessageThread(
     onFinishVoiceNote: () -> Unit,
     onCancelVoiceNote: () -> Unit,
     onVoicePermissionDenied: () -> Unit,
-    onStartDirectCall: (RemoteRoomId) -> Unit,
-    onCallPermissionDenied: () -> Unit,
+    onStartDirectCall: (RemoteRoomId, RemoteDirectCallMediaKind) -> Unit,
+    onCallPermissionDenied: (RemoteDirectCallMediaKind) -> Unit,
     directCallActionEnabled: Boolean,
     onReply: (RemoteMessageId) -> Unit,
     onToggleReaction: (RemoteCachedMessage, String) -> Unit,
@@ -159,7 +161,20 @@ internal fun RemoteMessageThread(
     val callPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) room?.roomId?.let(onStartDirectCall) else onCallPermissionDenied()
+        if (granted) {
+            room?.roomId?.let { roomId -> onStartDirectCall(roomId, RemoteDirectCallMediaKind.AUDIO) }
+        } else {
+            onCallPermissionDenied(RemoteDirectCallMediaKind.AUDIO)
+        }
+    }
+    val videoCallPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (VIDEO_CALL_PERMISSIONS.all { permission -> grants[permission] == true }) {
+            room?.roomId?.let { roomId -> onStartDirectCall(roomId, RemoteDirectCallMediaKind.VIDEO) }
+        } else {
+            onCallPermissionDenied(RemoteDirectCallMediaKind.VIDEO)
+        }
     }
     val currentProfile = state.profiles.firstOrNull { profile ->
         profile.profileUid.raw == state.account?.accountUid?.raw
@@ -239,7 +254,7 @@ internal fun RemoteMessageThread(
                             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                             PackageManager.PERMISSION_GRANTED
                         ) {
-                            onStartDirectCall(room.roomId)
+                            onStartDirectCall(room.roomId, RemoteDirectCallMediaKind.AUDIO)
                         } else {
                             callPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
@@ -247,6 +262,23 @@ internal fun RemoteMessageThread(
                     enabled = directCallActionEnabled,
                 ) {
                     Icon(Icons.Default.Call, contentDescription = "Start voice call")
+                }
+                IconButton(
+                    onClick = {
+                        if (
+                            VIDEO_CALL_PERMISSIONS.all { permission ->
+                                ContextCompat.checkSelfPermission(context, permission) ==
+                                    PackageManager.PERMISSION_GRANTED
+                            }
+                        ) {
+                            onStartDirectCall(room.roomId, RemoteDirectCallMediaKind.VIDEO)
+                        } else {
+                            videoCallPermissionLauncher.launch(VIDEO_CALL_PERMISSIONS)
+                        }
+                    },
+                    enabled = directCallActionEnabled,
+                ) {
+                    Icon(Icons.Default.Videocam, contentDescription = "Start video call")
                 }
             }
         }
@@ -999,3 +1031,7 @@ internal fun remoteMessageDeliveryLabel(message: RemoteCachedMessage): String =
 
 private const val MAXIMUM_MESSAGE_LENGTH = 4_000
 private const val MAXIMUM_VISIBLE_REACTION_TYPES = 4
+private val VIDEO_CALL_PERMISSIONS = arrayOf(
+    Manifest.permission.RECORD_AUDIO,
+    Manifest.permission.CAMERA,
+)

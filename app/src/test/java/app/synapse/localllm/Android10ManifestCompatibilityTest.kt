@@ -1,7 +1,9 @@
 package app.synapse.localllm
 
 import android.content.Context
+import android.content.ComponentName
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -31,5 +33,31 @@ class Android10ManifestCompatibilityTest {
         assertNotNull(packageInfo.activities)
         assertFalse(remoteRouterInfo.exported)
         assertTrue(resolveNotificationPermissionState(context).allowsNotifications)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun manifestKeepsVideoCallingOptionalAndDeclaresScopedForegroundMedia() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val packageInfo = context.packageManager.getPackageInfo(
+            context.packageName,
+            PackageManager.GET_CONFIGURATIONS or PackageManager.GET_PERMISSIONS or PackageManager.GET_SERVICES,
+        )
+        val directCallService = context.packageManager.getServiceInfo(
+            ComponentName(context, DirectCallForegroundService::class.java),
+            0,
+        )
+        val cameraFeature = packageInfo.reqFeatures.orEmpty().firstOrNull { feature ->
+            feature.name == PackageManager.FEATURE_CAMERA_ANY
+        }
+
+        assertTrue(packageInfo.requestedPermissions.orEmpty().contains(android.Manifest.permission.CAMERA))
+        assertTrue(packageInfo.requestedPermissions.orEmpty().contains(android.Manifest.permission.RECORD_AUDIO))
+        assertNotNull(cameraFeature)
+        assertEquals(0, requireNotNull(cameraFeature).flags and android.content.pm.FeatureInfo.FLAG_REQUIRED)
+        assertEquals(
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+            directCallService.foregroundServiceType,
+        )
     }
 }

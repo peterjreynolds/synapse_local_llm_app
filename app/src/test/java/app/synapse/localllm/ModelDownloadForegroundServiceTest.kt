@@ -6,6 +6,7 @@ import android.content.pm.ServiceInfo
 import androidx.test.core.app.ApplicationProvider
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
+import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import app.synapse.localllm.domain.sms.InboundSmsAutoReplyCommand
 import app.synapse.localllm.domain.sms.SmsInboundMessageKey
 import app.synapse.localllm.domain.sms.SmsSenderAddress
@@ -24,6 +25,8 @@ class ModelDownloadForegroundServiceTest {
     fun api29ForegroundServiceTypesMatchDeclaredCompatibilityPaths() {
         assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, modelDownloadForegroundServiceType())
         assertEquals(0, smsAutoReplyForegroundServiceType())
+        assertEquals(0, directCallForegroundServiceTypes(RemoteDirectCallMediaKind.AUDIO))
+        assertEquals(0, directCallForegroundServiceTypes(RemoteDirectCallMediaKind.VIDEO))
     }
 
     @Test
@@ -32,6 +35,19 @@ class ModelDownloadForegroundServiceTest {
         assertEquals(
             ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
             smsAutoReplyForegroundServiceType(),
+        )
+    }
+
+    @Test
+    @Config(sdk = [34])
+    fun api34DirectCallsDeclareOnlyTheMediaCurrentlyInUse() {
+        assertEquals(
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+            directCallForegroundServiceTypes(RemoteDirectCallMediaKind.AUDIO),
+        )
+        assertEquals(
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA,
+            directCallForegroundServiceTypes(RemoteDirectCallMediaKind.VIDEO),
         )
     }
 
