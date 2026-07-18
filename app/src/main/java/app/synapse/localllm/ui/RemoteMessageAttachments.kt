@@ -90,7 +90,7 @@ internal fun RemotePendingAttachmentList(
                     )
                     Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
                         Text(
-                            pending.selection.displayName,
+                            remotePendingAttachmentTitle(pending),
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -131,13 +131,25 @@ internal fun RemotePendingAttachmentList(
 
 private fun pendingAttachmentStatus(pending: RemotePendingAttachmentUi): String =
     when (pending.state) {
-        RemoteAttachmentTransferState.UPLOADING -> "Uploading · ${formatAttachmentBytes(pending.selection.byteCount)}"
+        RemoteAttachmentTransferState.UPLOADING -> if (pending.selection.kind == RemoteAttachmentKind.VOICE_NOTE) {
+            "Uploading voice message"
+        } else {
+            "Uploading · ${formatAttachmentBytes(pending.selection.byteCount)}"
+        }
         RemoteAttachmentTransferState.READY -> {
             val duration = pending.selection.durationMillis?.let(::formatAttachmentDuration)
-            listOfNotNull(duration, formatAttachmentBytes(pending.selection.byteCount), "Ready to send").joinToString(" · ")
+            if (pending.selection.kind == RemoteAttachmentKind.VOICE_NOTE) {
+                listOfNotNull(duration, "Ready to send").joinToString(" · ")
+            } else {
+                listOfNotNull(duration, formatAttachmentBytes(pending.selection.byteCount), "Ready to send")
+                    .joinToString(" · ")
+            }
         }
         RemoteAttachmentTransferState.FAILED -> pending.failureReason ?: "Upload failed."
     }
+
+internal fun remotePendingAttachmentTitle(pending: RemotePendingAttachmentUi): String =
+    if (pending.selection.kind == RemoteAttachmentKind.VOICE_NOTE) "Voice message" else pending.selection.displayName
 
 @Composable
 internal fun RemoteMessageAttachmentCard(
@@ -146,6 +158,15 @@ internal fun RemoteMessageAttachmentCard(
     onDownload: (RemoteAttachmentId, Boolean) -> Unit,
     onCancelDownload: (RemoteAttachmentId, Boolean) -> Unit,
 ) {
+    if (attachment.kind == RemoteAttachmentKind.VOICE_NOTE) {
+        RemoteVoiceNoteAttachment(
+            attachment = attachment,
+            download = downloads[remoteAttachmentDownloadKey(attachment.attachmentId, thumbnail = false)],
+            onDownload = onDownload,
+            onCancelDownload = onCancelDownload,
+        )
+        return
+    }
     val context = LocalContext.current
     val thumbnailDownload = downloads[remoteAttachmentDownloadKey(attachment.attachmentId, thumbnail = true)]
     val contentDownload = downloads[remoteAttachmentDownloadKey(attachment.attachmentId, thumbnail = false)]
@@ -334,10 +355,7 @@ internal fun RemoteMessageAttachmentCard(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                } else if (
-                    attachment.kind == RemoteAttachmentKind.AUDIO ||
-                    attachment.kind == RemoteAttachmentKind.VOICE_NOTE
-                ) {
+                } else if (attachment.kind == RemoteAttachmentKind.AUDIO) {
                     RemoteAudioPlaybackButton(download.localUri)
                 } else {
                     Text("Downloaded · tap to open", style = MaterialTheme.typography.labelSmall)
@@ -433,7 +451,7 @@ private fun formatAttachmentBytes(byteCount: Long): String =
         else -> "$byteCount B"
     }
 
-private fun formatAttachmentDuration(durationMillis: Long): String {
+internal fun formatAttachmentDuration(durationMillis: Long): String {
     val totalSeconds = durationMillis / 1_000L
     return "%d:%02d".format(totalSeconds / 60L, totalSeconds % 60L)
 }
