@@ -15,8 +15,8 @@ import {
 import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js";
 import {
   buildRemoteMessageNotificationData,
+  nextRemoteNotificationUnreadCount,
   readNotificationPreferences,
-  resolveRemoteNotificationSenderDisplayName,
   shouldNotifyForRemoteMessage,
 } from "./notificationPreferenceDomain.js";
 import {isRoomMuteActive} from "./roomPreferenceDomain.js";
@@ -293,10 +293,9 @@ export const notifyRemoteMessage = onDocumentCreated(
     const roomId = event.params.roomId;
     const messageId = event.params.messageId;
     const roomReference = firestore.doc(`rooms/${roomId}`);
-    const [roomSnapshot, aiParticipantSnapshot, senderProfileSnapshot] = await Promise.all([
+    const [roomSnapshot, aiParticipantSnapshot] = await Promise.all([
       roomReference.get(),
       roomReference.collection("participants").doc("participant-synapse-local-ai").get(),
-      firestore.doc(`profiles/${message.senderUid}`).get(),
     ]);
     if (!roomSnapshot.exists) {
       return;
@@ -348,6 +347,7 @@ export const notifyRemoteMessage = onDocumentCreated(
       const username = profileSnapshot?.get("usernameNormalized") ?? profileSnapshot?.get("username");
       return {
         membershipActive: membershipSnapshot?.get("active") === true,
+        nextUnreadCount: nextRemoteNotificationUnreadCount(membershipSnapshot?.get("unreadCount")),
         notificationsEnabled: typeof username === "string" && shouldNotifyForRemoteMessage({
           body: message.body,
           muted,
@@ -404,24 +404,25 @@ export const notifyRemoteMessage = onDocumentCreated(
       let successCount = 0;
       let failureCount = 0;
       if (deviceRecords.length > 0) {
-        const senderDisplayName = resolveRemoteNotificationSenderDisplayName(
-          message.authorKind,
-          senderProfileSnapshot.get("displayName"),
+        const unreadCountsByRecipientUid = new Map(
+          authorizationStates.map((authorization) => [authorization.uid, authorization.nextUnreadCount]),
         );
-        const sendResult = await messaging.sendEachForMulticast({
-          android: {
-            collapseKey: `room_${roomId}`,
-            priority: "high",
-            ttl: 24 * 60 * 60 * 1000,
-          },
-          data: buildRemoteMessageNotificationData({
-            messageId,
-            roomId,
-            senderDisplayName,
-            senderUid: message.senderUid,
-          }),
-          fids: deviceRecords.map((device) => device.value.installationId),
-        });
+        const sendResult = await messaging.sendEach(
+          deviceRecords.map((device) => ({
+            android: {
+              collapseKey: `room_${roomId}`,
+              priority: "high" as const,
+              ttl: 24 * 60 * 60 * 1000,
+            },
+            data: buildRemoteMessageNotificationData({
+              messageId,
+              roomId,
+              senderUid: message.senderUid,
+              unreadCount: unreadCountsByRecipientUid.get(String(device.value.ownerUid)) ?? 1,
+            }),
+            fid: device.value.installationId,
+          })),
+        );
         successCount = sendResult.successCount;
         failureCount = sendResult.failureCount;
 

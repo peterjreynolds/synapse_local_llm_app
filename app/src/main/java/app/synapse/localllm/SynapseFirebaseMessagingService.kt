@@ -44,12 +44,13 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
         ensureNotificationChannel()
         val notification = NotificationCompat.Builder(this, REMOTE_CHAT_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle(payload.senderDisplayName ?: "Synapse Chat")
-            .setContentText("New message")
-            .setSubText("Synapse Chat")
+            .setContentTitle("Synapse Chat")
+            .setContentText(REMOTE_CHAT_PRIVATE_NOTIFICATION_TEXT)
             .setContentIntent(openRoomPendingIntent(payload.roomId))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setGroup(REMOTE_CHAT_NOTIFICATION_GROUP)
+            .setNumber(payload.unreadCount)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
@@ -85,6 +86,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
                 description = "Alerts for Synapse Chat messages."
+                setShowBadge(true)
             },
         )
     }
@@ -99,9 +101,16 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
 
     private companion object {
         const val REMOTE_CHAT_NOTIFICATION_CHANNEL_ID = "synapse_remote_chat_messages"
-        const val REMOTE_CHAT_NOTIFICATION_ID = 4_301
         const val REMOTE_CHAT_NOTIFICATION_GROUP = "synapse_remote_chat"
+        const val REMOTE_CHAT_PRIVATE_NOTIFICATION_TEXT = "You received a message from Synapse."
     }
+}
+
+internal fun dismissRemoteRoomNotification(
+    context: Context,
+    roomId: RemoteRoomId,
+) {
+    NotificationManagerCompat.from(context).cancel(roomId.raw, REMOTE_CHAT_NOTIFICATION_ID)
 }
 
 internal fun buildRemoteNotificationOpenIntent(
@@ -115,7 +124,7 @@ internal data class RemoteNotificationPayload(
     val roomId: RemoteRoomId,
     val messageId: RemoteMessageId,
     val senderUid: RemoteProfileUid,
-    val senderDisplayName: String?,
+    val unreadCount: Int,
 )
 
 internal fun parseRemoteNotificationPayload(data: Map<String, String>): RemoteNotificationPayload? {
@@ -127,22 +136,20 @@ internal fun parseRemoteNotificationPayload(data: Map<String, String>): RemoteNo
     val senderUid = data["senderUid"]?.takeIf { value ->
         value.isNotBlank() && value.length <= MAXIMUM_REMOTE_NOTIFICATION_IDENTIFIER_LENGTH
     } ?: return null
-    val senderDisplayName = data["senderDisplayName"]
-        ?.trim()
-        ?.takeIf { value ->
-            value.isNotEmpty() &&
-                value.length <= MAXIMUM_REMOTE_NOTIFICATION_SENDER_NAME_LENGTH &&
-                value.none(Char::isISOControl)
-        }
+    val unreadCount = data["unreadCount"]
+        ?.toIntOrNull()
+        ?.takeIf { value -> value in 1..MAXIMUM_REMOTE_NOTIFICATION_UNREAD_COUNT }
+        ?: return null
     return RemoteNotificationPayload(
         roomId = RemoteRoomId(roomId),
         messageId = RemoteMessageId(messageId),
         senderUid = RemoteProfileUid(senderUid),
-        senderDisplayName = senderDisplayName,
+        unreadCount = unreadCount,
     )
 }
 
 const val EXTRA_REMOTE_ROOM_ID = "app.synapse.localllm.extra.REMOTE_ROOM_ID"
 private const val REMOTE_CHAT_MESSAGE_TYPE = "SYNAPSE_CHAT_MESSAGE"
+internal const val REMOTE_CHAT_NOTIFICATION_ID = 4_301
 private const val MAXIMUM_REMOTE_NOTIFICATION_IDENTIFIER_LENGTH = 512
-private const val MAXIMUM_REMOTE_NOTIFICATION_SENDER_NAME_LENGTH = 64
+private const val MAXIMUM_REMOTE_NOTIFICATION_UNREAD_COUNT = 999

@@ -51,6 +51,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -65,6 +66,7 @@ import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteInviteRegistrationCommand
 import app.synapse.localllm.domain.remote.validateRemoteInviteRegistrationCommand
+import app.synapse.localllm.dismissRemoteRoomNotification
 import kotlinx.coroutines.launch
 
 @Composable
@@ -613,6 +615,7 @@ private fun RemoteSignedInShell(
     val remoteAccountState by remoteAccountViewModel.uiState.collectAsStateWithLifecycle()
     val remoteGroupState by remoteGroupViewModel.uiState.collectAsStateWithLifecycle()
     val chatAppearanceState by chatAppearanceViewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var selectedSection by rememberSaveable { mutableStateOf(RemoteAppSection.CHATS) }
     val availableSections = availableRemoteAppSections(state.account?.role)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -621,6 +624,13 @@ private fun RemoteSignedInShell(
 
     LaunchedEffect(state.selectedRoomId) {
         if (state.selectedRoomId != null) selectedSection = RemoteAppSection.CHATS
+    }
+    LaunchedEffect(state.selectedRoomId, state.rooms) {
+        state.selectedRoomId?.let { roomId -> dismissRemoteRoomNotification(context, roomId) }
+        state.rooms
+            .asSequence()
+            .filter { room -> room.unreadCount == 0 }
+            .forEach { room -> dismissRemoteRoomNotification(context, room.roomId) }
     }
     LaunchedEffect(state.account?.accountUid, state.selectedRoomId) {
         chatAppearanceViewModel.selectConversation(state.account?.accountUid, state.selectedRoomId)

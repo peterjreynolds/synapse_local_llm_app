@@ -26,16 +26,16 @@ class SynapseFirebaseMessagingServiceTest {
             mapOf(
                 "messageId" to "message-1",
                 "roomId" to roomId,
-                "senderDisplayName" to "Peter",
                 "senderUid" to "peter-uid",
                 "type" to "SYNAPSE_CHAT_MESSAGE",
+                "unreadCount" to "2",
             ),
         )
 
         assertEquals(roomId, payload?.roomId?.raw)
         assertEquals("message-1", payload?.messageId?.raw)
-        assertEquals("Peter", payload?.senderDisplayName)
         assertEquals("peter-uid", payload?.senderUid?.raw)
+        assertEquals(2, payload?.unreadCount)
     }
 
     @Test
@@ -48,27 +48,27 @@ class SynapseFirebaseMessagingServiceTest {
                 "roomId" to roomId,
                 "senderUid" to "trish-uid",
                 "type" to "SYNAPSE_CHAT_MESSAGE",
+                "unreadCount" to "1",
             ),
         )
 
         assertEquals(roomId, payload?.roomId?.raw)
-        assertEquals(null, payload?.senderDisplayName)
+        assertEquals(1, payload?.unreadCount)
     }
 
     @Test
-    fun notificationPayloadDropsUnsafeSenderLabelsWithoutDroppingTheMessage() {
-        val payload = parseRemoteNotificationPayload(
-            mapOf(
-                "messageId" to "message-3",
-                "roomId" to "direct_${"c".repeat(64)}",
-                "senderDisplayName" to "Trish\nspoofed",
-                "senderUid" to "trish-uid",
-                "type" to "SYNAPSE_CHAT_MESSAGE",
-            ),
+    fun notificationPayloadRejectsMissingOrInvalidUnreadCount() {
+        val basePayload = mapOf(
+            "messageId" to "message-3",
+            "roomId" to "direct_${"c".repeat(64)}",
+            "senderUid" to "trish-uid",
+            "type" to "SYNAPSE_CHAT_MESSAGE",
         )
 
-        assertEquals(null, payload?.senderDisplayName)
-        assertEquals("trish-uid", payload?.senderUid?.raw)
+        assertNull(parseRemoteNotificationPayload(basePayload))
+        assertNull(parseRemoteNotificationPayload(basePayload + ("unreadCount" to "0")))
+        assertNull(parseRemoteNotificationPayload(basePayload + ("unreadCount" to "1000")))
+        assertEquals(999, parseRemoteNotificationPayload(basePayload + ("unreadCount" to "999"))?.unreadCount)
     }
 
     @Test
@@ -80,6 +80,7 @@ class SynapseFirebaseMessagingServiceTest {
                     "roomId" to "not-a-room",
                     "senderUid" to "peter-uid",
                     "type" to "SYNAPSE_CHAT_MESSAGE",
+                    "unreadCount" to "1",
                 ),
             ),
         )
@@ -90,6 +91,7 @@ class SynapseFirebaseMessagingServiceTest {
                     "roomId" to "direct_${"b".repeat(64)}",
                     "senderUid" to "peter-uid",
                     "type" to "UNTRUSTED_TYPE",
+                    "unreadCount" to "1",
                 ),
             ),
         )

@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   buildRemoteMessageNotificationData,
   DEFAULT_NOTIFICATION_PREFERENCES,
+  nextRemoteNotificationUnreadCount,
   readNotificationPreferences,
-  resolveRemoteNotificationSenderDisplayName,
   shouldNotifyForRemoteMessage,
 } from "./notificationPreferenceDomain.js";
 
@@ -53,31 +53,27 @@ test("notification routing payload never includes message plaintext", () => {
   const data = buildRemoteMessageNotificationData({
     messageId: "message-1",
     roomId: `direct_${"a".repeat(64)}`,
-    senderDisplayName: "Peter",
     senderUid: "peter",
+    unreadCount: 3,
   });
   assert.deepEqual(
     Object.keys(data).sort(),
-    ["messageId", "roomId", "senderDisplayName", "senderUid", "type"],
+    ["messageId", "roomId", "senderUid", "type", "unreadCount"],
   );
-  assert.equal(data.senderDisplayName, "Peter");
+  assert.equal(data.unreadCount, "3");
   assert.equal("body" in data, false);
+  assert.equal("senderDisplayName" in data, false);
 });
 
-test("notification sender labels are normalized and bounded", () => {
-  assert.equal(resolveRemoteNotificationSenderDisplayName("HUMAN", "  Trish  "), "Trish");
-  assert.equal(resolveRemoteNotificationSenderDisplayName("HUMAN", undefined), "Synapse Chat member");
-  assert.equal(resolveRemoteNotificationSenderDisplayName("SYNAPSE_AI", undefined), "Synapse");
-  assert.equal(buildRemoteMessageNotificationData({
-    messageId: "message-1",
-    roomId: `direct_${"a".repeat(64)}`,
-    senderDisplayName: "  Trish  ",
-    senderUid: "trish",
-  }).senderDisplayName, "Trish");
+test("notification unread counts are bounded for launcher badges", () => {
+  assert.equal(nextRemoteNotificationUnreadCount(undefined), 1);
+  assert.equal(nextRemoteNotificationUnreadCount(-10), 1);
+  assert.equal(nextRemoteNotificationUnreadCount(7), 8);
+  assert.equal(nextRemoteNotificationUnreadCount(999), 999);
   assert.throws(() => buildRemoteMessageNotificationData({
     messageId: "message-1",
     roomId: `direct_${"a".repeat(64)}`,
-    senderDisplayName: "Trish\nspoofed",
     senderUid: "trish",
+    unreadCount: 0,
   }));
 });

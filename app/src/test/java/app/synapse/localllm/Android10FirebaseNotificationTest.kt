@@ -32,9 +32,9 @@ class Android10FirebaseNotificationTest {
                         mapOf(
                             "messageId" to "message-api29",
                             "roomId" to roomId,
-                            "senderDisplayName" to "Trish",
                             "senderUid" to "trish-uid",
                             "type" to "SYNAPSE_CHAT_MESSAGE",
+                            "unreadCount" to "3",
                         ),
                     )
                     .build(),
@@ -42,14 +42,22 @@ class Android10FirebaseNotificationTest {
 
             assertEquals(1, shadowNotificationManager.size())
             val postedNotification = shadowNotificationManager.allNotifications.single()
-            assertEquals("Trish", postedNotification.extras.getString(Notification.EXTRA_TITLE))
-            assertEquals("New message", postedNotification.extras.getString(Notification.EXTRA_TEXT))
+            assertEquals("Synapse Chat", postedNotification.extras.getString(Notification.EXTRA_TITLE))
+            assertEquals(
+                "You received a message from Synapse.",
+                postedNotification.extras.getString(Notification.EXTRA_TEXT),
+            )
+            assertEquals(3, postedNotification.number)
+            assertEquals(Notification.BADGE_ICON_SMALL, postedNotification.badgeIconType)
             assertEquals(0, postedNotification.flags and Notification.FLAG_ONLY_ALERT_ONCE)
             assertTrue(
                 shadowNotificationManager.notificationChannels.any { channel ->
-                    channel.name == "Synapse Chat messages"
+                    channel.name == "Synapse Chat messages" && channel.canShowBadge()
                 },
             )
+
+            dismissRemoteRoomNotification(context, app.synapse.localllm.domain.remote.RemoteRoomId(roomId))
+            assertEquals(0, shadowNotificationManager.size())
         } finally {
             serviceController.destroy()
         }
