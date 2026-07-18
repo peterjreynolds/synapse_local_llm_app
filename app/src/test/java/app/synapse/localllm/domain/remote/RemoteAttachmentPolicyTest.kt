@@ -64,5 +64,6 @@ class RemoteAttachmentPolicyTest {
         assertEquals("image/jpeg", decision.mimeType)
         assertEquals("phone screenshot.jpg", decision.displayName)
         assertEquals(15L * 1024L * 1024L, RemoteAttachmentPolicy.maximumBytesFor("image/pjpeg"))
+        assertEquals(25L * 1024L * 1024L, RemoteAttachmentPolicy.maximumSupportedBytes())
     }
 }

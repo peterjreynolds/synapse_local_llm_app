@@ -94,6 +94,54 @@ class AndroidRemoteAttachmentSelectionStagerTest {
     }
 
     @Test
+    fun `generic provider MIME is replaced with the detected PNG type`() = runTest {
+        val pngBytes = createPngBytes(width = 96, height = 180)
+        val stager = AndroidRemoteAttachmentSelectionStager(
+            context = context,
+            contentMetadataReader = {
+                RemoteAttachmentSourceMetadata("Screenshot_20260718_014802.bin", "application/octet-stream")
+            },
+            contentStreamOpener = { ByteArrayInputStream(pngBytes) },
+        )
+
+        val selection = stager.stageSelection(
+            attachmentId = attachmentId,
+            sourceUri = "content://media/picker/screenshots/84",
+            audioDurationMillis = null,
+            isVoiceNote = false,
+        )
+
+        val stagedFile = File(requireNotNull(Uri.parse(selection.sourceUri).path))
+        assertEquals("image/png", selection.mimeType)
+        assertEquals("Screenshot_20260718_014802.png", selection.displayName)
+        assertTrue(BitmapFactory.decodeFile(stagedFile.path) != null)
+    }
+
+    @Test
+    fun `reported image MIME fails closed when file signature is not an image`() = runTest {
+        val stager = AndroidRemoteAttachmentSelectionStager(
+            context = context,
+            contentMetadataReader = {
+                RemoteAttachmentSourceMetadata("broken.jpg", "image/jpeg")
+            },
+            contentStreamOpener = { ByteArrayInputStream("not-an-image".toByteArray()) },
+        )
+
+        val failure = runCatching {
+            stager.stageSelection(
+                attachmentId = attachmentId,
+                sourceUri = "content://media/picker/screenshots/broken",
+                audioDurationMillis = null,
+                isVoiceNote = false,
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(failure?.message.orEmpty().contains("recognize the selected image"))
+        assertFalse(stager.stagedFile(attachmentId).exists())
+    }
+
+    @Test
     fun `provider size claims cannot bypass bounded private staging`() = runTest {
         val stager = AndroidRemoteAttachmentSelectionStager(
             context = context,
@@ -158,6 +206,16 @@ private fun createJpegBytes(
 ): ByteArray = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).use { bitmap ->
     java.io.ByteArrayOutputStream().use { output ->
         assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output))
+        output.toByteArray()
+    }
+}
+
+private fun createPngBytes(
+    width: Int,
+    height: Int,
+): ByteArray = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).use { bitmap ->
+    java.io.ByteArrayOutputStream().use { output ->
+        assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
         output.toByteArray()
     }
 }

@@ -37,7 +37,7 @@ internal class AndroidRemoteAttachmentSelectionStager(
     private val contentMetadataReader: (Uri) -> RemoteAttachmentSourceMetadata =
         { uri -> readContentMetadata(context.applicationContext.contentResolver, uri) },
     private val contentStreamOpener: (Uri) -> InputStream? =
-        { uri -> context.applicationContext.contentResolver.openInputStream(uri) },
+        { uri -> openAttachmentInputStream(context.applicationContext.contentResolver, uri) },
 ) {
     private val applicationContext = context.applicationContext
     private val stagingDirectory = File(applicationContext.cacheDir, STAGING_DIRECTORY_NAME)
@@ -65,8 +65,9 @@ internal class AndroidRemoteAttachmentSelectionStager(
             "Choose the attachment with Android's file or photo picker."
         }
         val metadata = contentMetadataReader(uri)
-        val maximumBytes = RemoteAttachmentPolicy.maximumBytesFor(metadata.mimeType)
-            ?: throw IllegalArgumentException("Choose a supported image, document, or audio file.")
+        val reportedMimeType = RemoteAttachmentPolicy.canonicalMimeType(metadata.mimeType)
+        val copyLimit = RemoteAttachmentPolicy.maximumBytesFor(reportedMimeType)
+            ?: RemoteAttachmentPolicy.maximumSupportedBytes()
         val stagedFile = stagedFile(attachmentId)
         val incomingFile = incomingFile(attachmentId)
         stagedFile.delete()
@@ -74,17 +75,23 @@ internal class AndroidRemoteAttachmentSelectionStager(
         try {
             val copiedBytes = contentStreamOpener(uri)?.use { input ->
                 incomingFile.outputStream().buffered().use { output ->
-                    input.copyBoundedTo(output, maximumBytes)
+                    input.copyBoundedTo(output, copyLimit)
                 }
             } ?: throw RemoteChatException("Android could not read the selected attachment.")
-            val stagedMetadata = if (RemoteAttachmentPolicy.canonicalMimeType(metadata.mimeType) == JPEG_MIME_TYPE) {
+            val resolvedMimeType = resolveRemoteAttachmentMimeType(reportedMimeType, incomingFile)
+            val maximumBytes = RemoteAttachmentPolicy.maximumBytesFor(resolvedMimeType)
+                ?: throw IllegalArgumentException("Choose a supported image, document, or audio file.")
+            require(copiedBytes <= maximumBytes) {
+                "The selected attachment exceeds the ${maximumBytes / MEBIBYTE} MB limit."
+            }
+            val stagedMetadata = if (resolvedMimeType == JPEG_MIME_TYPE) {
                 val normalizedByteCount = AndroidRemoteJpegNormalizer().normalize(incomingFile, stagedFile)
                 StagedAttachmentMetadata(metadata.displayName, JPEG_MIME_TYPE, normalizedByteCount)
             } else {
                 check(incomingFile.renameTo(stagedFile)) {
                     "Android could not preserve the selected attachment."
                 }
-                StagedAttachmentMetadata(metadata.displayName, metadata.mimeType, copiedBytes)
+                StagedAttachmentMetadata(metadata.displayName, resolvedMimeType, copiedBytes)
             }
             val measuredAudioDuration = if (stagedMetadata.mimeType.startsWith("audio/")) {
                 audioDurationMillis ?: measureAudioDuration(Uri.fromFile(stagedFile))
@@ -330,20 +337,77 @@ private fun readContentMetadata(
     resolver: ContentResolver,
     uri: Uri,
 ): RemoteAttachmentSourceMetadata {
-    val mimeType = resolver.getType(uri)?.takeIf(String::isNotBlank)
-        ?: throw IllegalArgumentException("Android did not provide a safe attachment type.")
-    val cursor = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-        ?: throw RemoteChatException("Android could not inspect the selected attachment.")
-    cursor.use {
-        require(it.moveToFirst()) { "The selected attachment has no metadata." }
-        return RemoteAttachmentSourceMetadata(
-            displayName = it.readDisplayName(),
-            mimeType = mimeType,
-        )
-    }
+    val mimeType = runCatching { resolver.getType(uri) }
+        .getOrNull()
+        ?.takeIf(String::isNotBlank)
+        ?: GENERIC_BINARY_MIME_TYPE
+    val displayName = runCatching {
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            cursor.takeIf(Cursor::moveToFirst)?.readDisplayName()
+        }
+    }.getOrNull()
+        ?.takeIf(String::isNotBlank)
+        ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf(String::isNotBlank)
+        ?: "attachment"
+    return RemoteAttachmentSourceMetadata(displayName, mimeType)
 }
 
 private fun Cursor.readDisplayName(): String {
     val index = getColumnIndex(OpenableColumns.DISPLAY_NAME)
     return if (index >= 0 && !isNull(index)) getString(index) else "attachment"
 }
+
+private fun openAttachmentInputStream(
+    resolver: ContentResolver,
+    uri: Uri,
+): InputStream? = runCatching { resolver.openInputStream(uri) }
+    .getOrNull()
+    ?: runCatching { resolver.openAssetFileDescriptor(uri, "r")?.createInputStream() }.getOrNull()
+
+internal fun resolveRemoteAttachmentMimeType(
+    reportedMimeType: String,
+    sourceFile: File,
+): String {
+    val canonicalReportedMimeType = RemoteAttachmentPolicy.canonicalMimeType(reportedMimeType)
+    val detectedImageMimeType = detectRemoteImageMimeType(sourceFile)
+    if (detectedImageMimeType != null) return detectedImageMimeType
+    require(!canonicalReportedMimeType.startsWith("image/")) {
+        "Android could not recognize the selected image."
+    }
+    return canonicalReportedMimeType
+}
+
+private fun detectRemoteImageMimeType(sourceFile: File): String? {
+    val header = ByteArray(12)
+    val headerSize = sourceFile.inputStream().buffered().use { input -> input.read(header) }
+    if (headerSize >= 3 && header[0] == 0xFF.toByte() && header[1] == 0xD8.toByte() && header[2] == 0xFF.toByte()) {
+        return "image/jpeg"
+    }
+    if (headerSize >= 8 && header.copyOfRange(0, 8).contentEquals(PNG_FILE_SIGNATURE)) {
+        return "image/png"
+    }
+    if (headerSize >= 6) {
+        val gifSignature = header.copyOfRange(0, 6).toString(Charsets.US_ASCII)
+        if (gifSignature == "GIF87a" || gifSignature == "GIF89a") return "image/gif"
+    }
+    if (
+        headerSize >= 12 &&
+        header.copyOfRange(0, 4).toString(Charsets.US_ASCII) == "RIFF" &&
+        header.copyOfRange(8, 12).toString(Charsets.US_ASCII) == "WEBP"
+    ) {
+        return "image/webp"
+    }
+    return null
+}
+
+private const val GENERIC_BINARY_MIME_TYPE = "application/octet-stream"
+private val PNG_FILE_SIGNATURE = byteArrayOf(
+    0x89.toByte(),
+    0x50,
+    0x4E,
+    0x47,
+    0x0D,
+    0x0A,
+    0x1A,
+    0x0A,
+)

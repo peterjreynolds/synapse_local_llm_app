@@ -52,6 +52,8 @@ object RemoteAttachmentPolicy {
 
     fun maximumBytesFor(mimeType: String): Long? = policies[canonicalMimeType(mimeType)]?.maximumBytes
 
+    fun maximumSupportedBytes(): Long = policies.values.maxOf(Policy::maximumBytes)
+
     fun canonicalMimeType(mimeType: String): String = when (val normalized = mimeType.trim().lowercase()) {
         "image/jpg", "image/pjpeg" -> "image/jpeg"
         else -> normalized
