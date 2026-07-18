@@ -49,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
@@ -743,9 +744,10 @@ internal fun RemoteRoomMembers(
 internal fun RemoteProfileAvatar(
     profile: RemoteCachedProfile?,
     displayName: String,
+    size: Dp = 42.dp,
 ) {
-    Box(modifier = Modifier.size(42.dp), contentAlignment = Alignment.Center) {
-        RemoteInitialsAvatar(displayName)
+    Box(modifier = Modifier.size(size), contentAlignment = Alignment.Center) {
+        RemoteInitialsAvatar(displayName, size)
         profile?.avatarUrl?.takeIf(String::isNotBlank)?.let { avatarUrl ->
             AsyncImage(
                 model = avatarUrl,
@@ -760,7 +762,10 @@ internal fun RemoteProfileAvatar(
 }
 
 @Composable
-private fun RemoteInitialsAvatar(displayName: String) {
+private fun RemoteInitialsAvatar(
+    displayName: String,
+    size: Dp,
+) {
     val initials = displayName
         .trim()
         .split(Regex("\\s+"))
@@ -770,7 +775,7 @@ private fun RemoteInitialsAvatar(displayName: String) {
         .joinToString("")
         .ifBlank { "?" }
     Surface(
-        modifier = Modifier.size(42.dp),
+        modifier = Modifier.size(size),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.secondaryContainer,
     ) {

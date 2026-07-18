@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,8 +21,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -105,7 +104,6 @@ internal fun RemoteMessageThread(
 ) {
     var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
     var showAppearance by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
-    var showConversationMenu by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room?.peerUid }
     val currentProfile = state.profiles.firstOrNull { profile ->
@@ -132,55 +130,47 @@ internal fun RemoteMessageThread(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .navigationBarsPadding()
             .imePadding(),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 6.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to conversations")
             }
-            RemoteProfileAvatar(profile = peer, displayName = title)
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(title, fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = state.typingParticipantUids.takeIf { typingUids -> typingUids.isNotEmpty() }?.let { typingUids ->
-                        typingUids.mapNotNull { uid ->
-                            state.profiles.firstOrNull { profile -> profile.profileUid == uid }?.displayName
-                        }.joinToString().takeIf(String::isNotBlank)?.plus(" typing…")
-                    } ?: if (room?.kind == RemoteRoomKind.GROUP) "Group conversation" else remotePresenceLabel(peer),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            Box {
-                IconButton(onClick = { showConversationMenu = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "Conversation options")
-                }
-                DropdownMenu(
-                    expanded = showConversationMenu,
-                    onDismissRequest = { showConversationMenu = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(if (showRoomMembers) "Show messages" else "Conversation info") },
-                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
-                        onClick = {
-                            showConversationMenu = false
-                            showRoomMembers = !showRoomMembers
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { showRoomMembers = !showRoomMembers }
+                    .padding(end = 8.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RemoteProfileAvatar(profile = peer, displayName = title, size = 36.dp)
+                Spacer(Modifier.width(9.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = if (showRoomMembers) {
+                            "Tap to return to messages"
+                        } else {
+                            state.typingParticipantUids.takeIf { typingUids -> typingUids.isNotEmpty() }
+                                ?.let { typingUids ->
+                                    typingUids.mapNotNull { uid ->
+                                        state.profiles.firstOrNull { profile -> profile.profileUid == uid }?.displayName
+                                    }.joinToString().takeIf(String::isNotBlank)?.plus(" typing…")
+                                }
+                                ?: if (room?.kind == RemoteRoomKind.GROUP) {
+                                    "Group conversation"
+                                } else {
+                                    remotePresenceLabel(peer)
+                                }
                         },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Chat appearance") },
-                        leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null) },
-                        onClick = {
-                            showConversationMenu = false
-                            showAppearance = true
-                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -188,6 +178,16 @@ internal fun RemoteMessageThread(
         HorizontalDivider()
         if (showRoomMembers) {
             Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = { showAppearance = true }) {
+                        Icon(Icons.Default.Palette, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Appearance")
+                    }
+                }
                 RemoteAiParticipantControls(
                     state = state,
                     room = room,
