@@ -186,6 +186,38 @@ class FirebaseRemoteConversationGateway(
             }
         }
 
+    override fun observeOwnReactionSelections(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): Flow<Map<RemoteMessageId, String>> =
+        callbackFlow {
+            val token = sessionController.requireActiveToken(accountUid)
+            requireAuthenticatedUid(accountUid)
+            val registration = firestore.collection(ROOMS_COLLECTION)
+                .document(roomId.raw)
+                .collection(REACTION_SELECTIONS_COLLECTION)
+                .document(accountUid.raw)
+                .collection(MESSAGES_COLLECTION)
+                .addSnapshotListener { snapshot, exception ->
+                    if (exception != null) {
+                        close(exception.toRemoteChatFailure("load your message reactions"))
+                        return@addSnapshotListener
+                    }
+                    val selections = snapshot?.documents.orEmpty().mapNotNull { document ->
+                        document.toOwnReactionSelection(accountUid)
+                    }.toMap()
+                    trySend(selections)
+                }
+            val registrationJob = launch {
+                runCatching { sessionController.registerListener(token, registration) }
+                    .onFailure(::close)
+            }
+            awaitClose {
+                registrationJob.cancel()
+                registration.remove()
+            }
+        }
+
     override suspend fun openDirectRoom(
         command: OpenRemoteDirectRoomCommand,
     ): OpenRemoteDirectRoomReceipt {
@@ -673,6 +705,22 @@ class FirebaseRemoteConversationGateway(
         )
     }
 
+    private fun DocumentSnapshot.toOwnReactionSelection(
+        accountUid: RemoteAccountUid,
+    ): Pair<RemoteMessageId, String>? {
+        val actorUid = getString("actorUid") ?: return null
+        val messageId = getString("messageId") ?: return null
+        val emoji = getString("emoji") ?: return null
+        if (
+            actorUid != accountUid.raw ||
+            messageId != id ||
+            emoji.isBlank() ||
+            emoji.length > MAXIMUM_EMOJI_LENGTH ||
+            getTimestamp("updatedAt") == null
+        ) return null
+        return RemoteMessageId(messageId) to emoji
+    }
+
     private suspend fun reviseMessage(
         callableName: String,
         operation: String,
@@ -723,6 +771,7 @@ class FirebaseRemoteConversationGateway(
         const val MESSAGES_COLLECTION = "messages"
         const val MESSAGE_BODY_LIMIT = 4_000
         const val MESSAGE_PAGE_LIMIT = 100L
+        const val REACTION_SELECTIONS_COLLECTION = "reactionSelections"
         const val ROOMS_COLLECTION = "rooms"
         const val TYPING_COLLECTION = "typing"
         const val TYPING_EXPIRY_SECONDS = 10L

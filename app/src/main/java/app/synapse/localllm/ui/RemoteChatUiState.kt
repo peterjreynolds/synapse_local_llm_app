@@ -29,7 +29,7 @@ data class RemoteChatUiState(
     val attachmentDownloads: Map<String, RemoteAttachmentDownloadUi> = emptyMap(),
     val isRecordingVoiceNote: Boolean = false,
     val replyToMessageId: RemoteMessageId? = null,
-    val ownReactions: Map<RemoteMessageId, Set<String>> = emptyMap(),
+    val ownReactionSelections: Map<RemoteMessageId, String> = emptyMap(),
     val typingParticipantUids: List<RemoteProfileUid> = emptyList(),
     val hasReachedMessageStart: Boolean = false,
     val isLoadingOlderMessages: Boolean = false,

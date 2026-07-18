@@ -26,6 +26,7 @@ const MALLORY_UID = "mallory-uid";
 const PENDING_UID = "pending-uid";
 const ROOM_ID = `direct_${"a".repeat(64)}`;
 const CALL_ID = `call_${"b".repeat(32)}`;
+const REACTION_MESSAGE_ID = "message-reaction-selection";
 const firestoreRules = fs.readFileSync(new URL("../firestore.rules", import.meta.url), "utf8");
 
 let testEnvironment;
@@ -78,6 +79,15 @@ async function seedChat() {
         unreadCount: 0,
       });
     }
+    await setDoc(
+      doc(firestore, "rooms", ROOM_ID, "reactionSelections", TRISH_UID, "messages", REACTION_MESSAGE_ID),
+      {
+        actorUid: TRISH_UID,
+        emoji: "👍",
+        messageId: REACTION_MESSAGE_ID,
+        updatedAt: Timestamp.fromMillis(1),
+      },
+    );
   });
 }
 
@@ -225,6 +235,33 @@ test("denies room and message data to non-members", async () => {
   await assertSucceeds(getDocs(collection(peter, "rooms", ROOM_ID, "messages")));
 });
 
+test("lets active members read only their own server-managed reaction selections", async () => {
+  const trish = activeContext(TRISH_UID).firestore();
+  const peter = activeContext(PETER_UID).firestore();
+  const mallory = activeContext(MALLORY_UID).firestore();
+  const trishSelection = doc(
+    trish,
+    "rooms",
+    ROOM_ID,
+    "reactionSelections",
+    TRISH_UID,
+    "messages",
+    REACTION_MESSAGE_ID,
+  );
+
+  await assertSucceeds(getDoc(trishSelection));
+  await assertSucceeds(
+    getDocs(collection(trish, "rooms", ROOM_ID, "reactionSelections", TRISH_UID, "messages")),
+  );
+  await assertFails(
+    getDoc(doc(peter, "rooms", ROOM_ID, "reactionSelections", TRISH_UID, "messages", REACTION_MESSAGE_ID)),
+  );
+  await assertFails(
+    getDoc(doc(mallory, "rooms", ROOM_ID, "reactionSelections", TRISH_UID, "messages", REACTION_MESSAGE_ID)),
+  );
+  await assertFails(updateDoc(trishSelection, {emoji: "❤️"}));
+});
+
 test("denies room summaries after membership becomes inactive", async () => {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     await updateDoc(doc(context.firestore(), "rooms", ROOM_ID, "members", TRISH_UID), {
@@ -237,6 +274,9 @@ test("denies room summaries after membership becomes inactive", async () => {
   const trish = activeContext(TRISH_UID).firestore();
   await assertFails(getDoc(doc(trish, "rooms", ROOM_ID)));
   await assertFails(getDocs(collection(trish, "rooms", ROOM_ID, "messages")));
+  await assertFails(
+    getDocs(collection(trish, "rooms", ROOM_ID, "reactionSelections", TRISH_UID, "messages")),
+  );
 });
 
 test("accepts idempotent member messages and rejects forged senders", async () => {

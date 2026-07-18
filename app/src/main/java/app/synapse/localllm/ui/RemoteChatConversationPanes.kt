@@ -118,6 +118,7 @@ internal fun RemoteChatsPane(
             directCallActionEnabled = directCallState.phase == DirectCallUiPhase.IDLE &&
                 !directCallState.isActionRunning,
             onReply = viewModel::replyToMessage,
+            onToggleReaction = viewModel::toggleReaction,
             onCancelReply = viewModel::cancelReply,
             onEdit = viewModel::editMessage,
             onDeleteForMe = viewModel::deleteMessageForMe,

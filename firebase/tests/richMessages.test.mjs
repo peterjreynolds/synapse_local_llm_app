@@ -196,11 +196,29 @@ test("send, reply, edit, delete, reactions, and receipts are idempotent and auth
   };
   assert.equal((await call(trishClient, "toggleRemoteReaction")(trishReaction)).data.reactionCount, 1);
   assert.equal((await call(trishClient, "toggleRemoteReaction")(trishReaction)).data.reactionCount, 1);
-  assert.equal((await call(joshClient, "toggleRemoteReaction")(trishReaction)).data.reactionCount, 2);
-  assert.equal(
-    (await call(trishClient, "toggleRemoteReaction")({...trishReaction, reacted: false})).data.reactionCount,
-    1,
+  const trishSelectionPath = `rooms/${roomId}/reactionSelections/${trish.uid}/messages/${sendCommand.messageId}`;
+  const trishSelection = await adminFirestore.doc(trishSelectionPath).get();
+  assert.equal(trishSelection.get("actorUid"), trish.uid);
+  assert.equal(trishSelection.get("emoji"), "👍");
+  assert.equal(trishSelection.get("messageId"), sendCommand.messageId);
+  const visibleTrishSelections = await assertSucceeds(
+    getDocs(collection(trishClient.firestore, "rooms", roomId, "reactionSelections", trish.uid, "messages")),
   );
+  assert.equal(visibleTrishSelections.size, 1);
+  await assertFails(
+    getDocs(collection(peterClient.firestore, "rooms", roomId, "reactionSelections", trish.uid, "messages")),
+  );
+  assert.equal((await call(joshClient, "toggleRemoteReaction")(trishReaction)).data.reactionCount, 2);
+  const trishHeartReaction = {...trishReaction, emoji: "❤️"};
+  assert.equal((await call(trishClient, "toggleRemoteReaction")(trishHeartReaction)).data.reactionCount, 1);
+  const switchedMessage = await adminFirestore.doc(`rooms/${roomId}/messages/${sendCommand.messageId}`).get();
+  assert.deepEqual(switchedMessage.get("reactionCounts"), {"❤️": 1, "👍": 1});
+  assert.equal((await adminFirestore.doc(trishSelectionPath).get()).get("emoji"), "❤️");
+  assert.equal(
+    (await call(trishClient, "toggleRemoteReaction")({...trishHeartReaction, reacted: false})).data.reactionCount,
+    0,
+  );
+  assert.equal((await adminFirestore.doc(trishSelectionPath).get()).exists, false);
 
   const acknowledgement = {
     messageIds: [sendCommand.messageId],

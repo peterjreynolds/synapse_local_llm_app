@@ -109,6 +109,11 @@ interface RemoteConversationGateway {
         roomId: RemoteRoomId,
     ): Flow<List<RemoteCachedMessage>>
 
+    fun observeOwnReactionSelections(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): Flow<Map<RemoteMessageId, String>>
+
     suspend fun openDirectRoom(command: OpenRemoteDirectRoomCommand): OpenRemoteDirectRoomReceipt
 
     suspend fun sendMessage(command: SendRemoteMessageCommand): RemoteMessageSendReceipt

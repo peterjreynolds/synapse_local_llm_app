@@ -209,48 +209,92 @@ export const toggleRemoteReaction = onCall(
     const reactionReference = messageReference.collection("reactions").doc(
       buildReactionId(actorUid, command.emoji),
     );
+    const selectionReference = roomReference.collection("reactionSelections")
+      .doc(actorUid)
+      .collection("messages")
+      .doc(command.messageId);
     let reactionCount = 0;
     await firebaseAdminFirestore.runTransaction(async (transaction) => {
       await requireActiveRoomActor(transaction, roomReference, actorUid);
-      const [messageSnapshot, reactionSnapshot] = await Promise.all([
+      const [messageSnapshot, reactionSnapshot, selectionSnapshot] = await Promise.all([
         transaction.get(messageReference),
         transaction.get(reactionReference),
+        transaction.get(selectionReference),
       ]);
       const message = requireActiveMessage(messageSnapshot);
       if (message.deletedAt !== null) {
         throw new HttpsError("failed-precondition", "Deleted messages cannot receive reactions.");
       }
-      if (reactionSnapshot.exists && (
-        reactionSnapshot.get("actorUid") !== actorUid ||
-        reactionSnapshot.get("emoji") !== command.emoji
-      )) {
-        throw new HttpsError("data-loss", "Reaction state is inconsistent.");
+      requireMatchingReaction(reactionSnapshot, actorUid, command.emoji);
+      const selectedEmoji = readReactionSelection(
+        selectionSnapshot,
+        actorUid,
+        command.messageId,
+      );
+      const previousReactionReference = selectedEmoji !== null && selectedEmoji !== command.emoji ?
+        messageReference.collection("reactions").doc(buildReactionId(actorUid, selectedEmoji)) :
+        null;
+      const previousReactionSnapshot = previousReactionReference === null ? null :
+        await transaction.get(previousReactionReference);
+      if (previousReactionSnapshot !== null) {
+        if (selectedEmoji === null) {
+          throw new HttpsError("internal", "Reaction selection reference is unavailable.");
+        }
+        requireMatchingReaction(previousReactionSnapshot, actorUid, selectedEmoji);
+        if (!previousReactionSnapshot.exists) {
+          throw new HttpsError("data-loss", "Reaction selection state is inconsistent.");
+        }
       }
       const currentlyReacted = reactionSnapshot.exists;
-      const currentCount = message.reactionCounts[command.emoji] ?? 0;
-      if (currentlyReacted === command.reacted) {
-        reactionCount = currentCount;
-        return;
+      if (selectedEmoji === command.emoji && !currentlyReacted) {
+        throw new HttpsError("data-loss", "Reaction selection state is inconsistent.");
       }
-      const nextCount = currentCount + (command.reacted ? 1 : -1);
-      if (nextCount < 0) throw new HttpsError("data-loss", "Reaction count is inconsistent.");
       const reactionCounts = {...message.reactionCounts};
-      if (nextCount === 0) delete reactionCounts[command.emoji];
-      else reactionCounts[command.emoji] = nextCount;
+      if (currentlyReacted && (reactionCounts[command.emoji] ?? 0) < 1) {
+        throw new HttpsError("data-loss", "Reaction count is inconsistent.");
+      }
+      if (selectedEmoji !== null && selectedEmoji !== command.emoji && (reactionCounts[selectedEmoji] ?? 0) < 1) {
+        throw new HttpsError("data-loss", "Reaction count is inconsistent.");
+      }
+      let countsChanged = false;
+      const updatedAt = Timestamp.now();
+      if (command.reacted) {
+        if (selectedEmoji !== null && selectedEmoji !== command.emoji) {
+          decrementReactionCount(reactionCounts, selectedEmoji);
+          if (previousReactionReference === null) {
+            throw new HttpsError("internal", "Reaction selection reference is unavailable.");
+          }
+          transaction.delete(previousReactionReference);
+          countsChanged = true;
+        }
+        if (!currentlyReacted) {
+          reactionCounts[command.emoji] = (reactionCounts[command.emoji] ?? 0) + 1;
+          transaction.create(reactionReference, {
+            actorUid,
+            createdAt: updatedAt,
+            emoji: command.emoji,
+          });
+          countsChanged = true;
+        }
+        if (selectedEmoji !== command.emoji) {
+          transaction.set(selectionReference, {
+            actorUid,
+            emoji: command.emoji,
+            messageId: command.messageId,
+            updatedAt,
+          });
+        }
+      } else if (currentlyReacted) {
+        decrementReactionCount(reactionCounts, command.emoji);
+        transaction.delete(reactionReference);
+        countsChanged = true;
+        if (selectedEmoji === command.emoji) transaction.delete(selectionReference);
+      }
       if (Object.keys(reactionCounts).length > MAXIMUM_REACTION_TYPES) {
         throw new HttpsError("resource-exhausted", "The message reaction limit was reached.");
       }
-      if (command.reacted) {
-        transaction.create(reactionReference, {
-          actorUid,
-          createdAt: Timestamp.now(),
-          emoji: command.emoji,
-        });
-      } else {
-        transaction.delete(reactionReference);
-      }
-      transaction.update(messageReference, {reactionCounts});
-      reactionCount = nextCount;
+      if (countsChanged) transaction.update(messageReference, {reactionCounts});
+      reactionCount = reactionCounts[command.emoji] ?? 0;
     });
     return {...command, reactionCount};
   },
@@ -475,6 +519,51 @@ function readReactionCounts(value: unknown): Record<string, number> | null {
     return null;
   }
   return Object.fromEntries(entries) as Record<string, number>;
+}
+
+function readReactionSelection(
+  snapshot: DocumentSnapshot,
+  actorUid: string,
+  messageId: string,
+): string | null {
+  if (!snapshot.exists) return null;
+  const emoji = snapshot.get("emoji");
+  if (
+    snapshot.get("actorUid") !== actorUid ||
+    snapshot.get("messageId") !== messageId ||
+    typeof emoji !== "string" ||
+    emoji.length === 0 ||
+    emoji.length > 16 ||
+    !(snapshot.get("updatedAt") instanceof Timestamp)
+  ) {
+    throw new HttpsError("data-loss", "Reaction selection state is malformed.");
+  }
+  return emoji;
+}
+
+function requireMatchingReaction(
+  snapshot: DocumentSnapshot,
+  actorUid: string,
+  emoji: string,
+) {
+  if (!snapshot.exists) return;
+  if (
+    snapshot.get("actorUid") !== actorUid ||
+    snapshot.get("emoji") !== emoji ||
+    !(snapshot.get("createdAt") instanceof Timestamp)
+  ) {
+    throw new HttpsError("data-loss", "Reaction state is inconsistent.");
+  }
+}
+
+function decrementReactionCount(
+  reactionCounts: Record<string, number>,
+  emoji: string,
+) {
+  const nextCount = (reactionCounts[emoji] ?? 0) - 1;
+  if (nextCount < 0) throw new HttpsError("data-loss", "Reaction count is inconsistent.");
+  if (nextCount === 0) delete reactionCounts[emoji];
+  else reactionCounts[emoji] = nextCount;
 }
 
 function messageReferenceAt(

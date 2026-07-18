@@ -193,6 +193,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     implementation("androidx.datastore:datastore-preferences:1.2.1")
+    implementation("androidx.emoji2:emoji2-emojipicker:1.6.0")
 
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.foundation:foundation")

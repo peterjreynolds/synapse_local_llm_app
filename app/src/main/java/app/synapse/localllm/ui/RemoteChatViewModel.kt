@@ -243,6 +243,7 @@ class RemoteChatViewModel(
                 attachmentDownloads = emptyMap(),
                 isRecordingVoiceNote = false,
                 replyToMessageId = null,
+                ownReactionSelections = emptyMap(),
                 typingParticipantUids = emptyList(),
                 hasReachedMessageStart = false,
                 messageToRevealId = null,
@@ -595,8 +596,8 @@ class RemoteChatViewModel(
         message: RemoteCachedMessage,
         emoji: String,
     ) = launchAction {
-        val reacted = emoji !in mutableUiState.value.ownReactions[message.messageId].orEmpty()
-        conversationGateway.toggleReaction(
+        val reacted = mutableUiState.value.ownReactionSelections[message.messageId] != emoji
+        val receipt = conversationGateway.toggleReaction(
             ToggleRemoteReactionCommand(
                 accountUid = requireSignedInAccount().accountUid,
                 roomId = message.roomId,
@@ -605,10 +606,15 @@ class RemoteChatViewModel(
                 reacted = reacted,
             ),
         )
+        require(
+            receipt.roomId == message.roomId &&
+                receipt.messageId == message.messageId &&
+                receipt.emoji == emoji,
+        ) { "Firebase returned a reaction receipt for a different message." }
         mutableUiState.update { state ->
-            val reactions = state.ownReactions[message.messageId].orEmpty().toMutableSet()
-            if (reacted) reactions += emoji else reactions -= emoji
-            state.copy(ownReactions = state.ownReactions + (message.messageId to reactions))
+            val selections = state.ownReactionSelections.toMutableMap()
+            if (receipt.reacted) selections[message.messageId] = receipt.emoji else selections.remove(message.messageId)
+            state.copy(ownReactionSelections = selections)
         }
     }
 
@@ -747,6 +753,19 @@ class RemoteChatViewModel(
                 }
                 launch {
                     selectedRoomId.flatMapLatest { roomId ->
+                        if (roomId == null) flowOf(emptyMap()) else {
+                            conversationGateway.observeOwnReactionSelections(account.accountUid, roomId)
+                        }
+                    }.catch { failure ->
+                        if (failure is CancellationException) throw failure
+                        publishFailure(failure)
+                        emit(emptyMap())
+                    }.collect { selections ->
+                        mutableUiState.update { state -> state.copy(ownReactionSelections = selections) }
+                    }
+                }
+                launch {
+                    selectedRoomId.flatMapLatest { roomId ->
                         roomId?.let(cacheRepository::observeDraft) ?: flowOf(null)
                     }.collect { draft ->
                         mutableUiState.update { state -> state.copy(composerText = draft?.body.orEmpty()) }
@@ -831,7 +850,7 @@ class RemoteChatViewModel(
                     pendingAttachments = emptyList(),
                     attachmentDownloads = emptyMap(),
                     replyToMessageId = null,
-                    ownReactions = emptyMap(),
+                    ownReactionSelections = emptyMap(),
                     typingParticipantUids = emptyList(),
                     messageSearchQuery = "",
                     messageSearchResults = emptyList(),

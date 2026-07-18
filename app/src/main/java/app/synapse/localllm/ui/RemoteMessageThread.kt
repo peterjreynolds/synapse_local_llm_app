@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -21,14 +22,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.AddReaction
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -37,6 +45,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -61,10 +70,17 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.emoji2.emojipicker.EmojiPickerView
 import app.synapse.localllm.application.RemoteLocalAiHostStatus
 import app.synapse.localllm.domain.appearance.ChatBackground
 import app.synapse.localllm.domain.appearance.clampChatMessageScale
@@ -106,6 +122,7 @@ internal fun RemoteMessageThread(
     onCallPermissionDenied: () -> Unit,
     directCallActionEnabled: Boolean,
     onReply: (RemoteMessageId) -> Unit,
+    onToggleReaction: (RemoteCachedMessage, String) -> Unit,
     onCancelReply: () -> Unit,
     onEdit: (RemoteCachedMessage, String) -> Unit,
     onDeleteForMe: (RemoteCachedMessage) -> Unit,
@@ -362,6 +379,7 @@ internal fun RemoteMessageThread(
                                     },
                                     bubbleContentColor = bubblePalette.contentColor,
                                     canDeleteForEveryone = canDeleteForEveryone,
+                                    selectedReaction = state.ownReactionSelections[message.messageId],
                                     senderDisplayName = if (message.authorKind == "SYNAPSE_AI") {
                                         "Synapse • Phone-local AI"
                                     } else if (room?.kind == RemoteRoomKind.GROUP) {
@@ -372,6 +390,7 @@ internal fun RemoteMessageThread(
                                         null
                                     },
                                     onReply = { onReply(message.messageId) },
+                                    onToggleReaction = { emoji -> onToggleReaction(message, emoji) },
                                     onEdit = { body -> onEdit(message, body) },
                                     onDeleteForMe = { onDeleteForMe(message) },
                                     onDeleteForEveryone = { onDeleteForEveryone(message) },
@@ -520,8 +539,10 @@ private fun RemoteMessageBubble(
     bubbleColor: Color,
     bubbleContentColor: Color,
     canDeleteForEveryone: Boolean,
+    selectedReaction: String?,
     senderDisplayName: String?,
     onReply: () -> Unit,
+    onToggleReaction: (String) -> Unit,
     onEdit: (String) -> Unit,
     onDeleteForMe: () -> Unit,
     onDeleteForEveryone: () -> Unit,
@@ -532,11 +553,13 @@ private fun RemoteMessageBubble(
 ) {
     val clipboard = LocalClipboard.current
     val coroutineScope = rememberCoroutineScope()
+    val hapticFeedback = LocalHapticFeedback.current
     val availableActions = remoteMessageActions(
         messageDeleted = message.deletedAt != null,
         isCurrentAccount = isCurrentAccount,
     )
     var showMessageActions by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
+    var showEmojiPicker by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var showEditDialog by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var editText by rememberSaveable(message.messageId.raw) { mutableStateOf(message.body) }
     var showDeleteDialog by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
@@ -544,86 +567,131 @@ private fun RemoteMessageBubble(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isCurrentAccount) Arrangement.End else Arrangement.Start,
     ) {
-        Box {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = bubbleColor,
-                contentColor = bubbleContentColor,
-                modifier = Modifier
-                    .fillMaxWidth(0.82f)
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClickLabel = "Message options",
-                        onLongClick = {
-                            if (availableActions.isNotEmpty()) showMessageActions = true
-                        },
-                    ),
+        Box(modifier = Modifier.fillMaxWidth(0.82f)) {
+            Column(
+                horizontalAlignment = if (isCurrentAccount) Alignment.End else Alignment.Start,
             ) {
-                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    if (!isCurrentAccount && senderDisplayName != null) {
-                        Text(
-                            senderDisplayName,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Spacer(Modifier.height(2.dp))
-                    }
-                    message.replyToMessageId?.let { replyId ->
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth().clickable { onJumpToReply(replyId) },
-                        ) {
-                            Text(
-                                text = repliedMessage?.let { replied ->
-                                    if (replied.deletedAt != null) "Message deleted" else replied.body.take(100)
-                                } ?: "Open replied message",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.padding(8.dp),
-                            )
-                        }
-                        Spacer(Modifier.height(6.dp))
-                    }
-                    Text(if (message.deletedAt != null) "Message deleted" else message.body)
-                    if (message.deletedAt == null) {
-                        message.attachments.forEach { attachment ->
-                            RemoteMessageAttachmentCard(
-                                attachment = attachment,
-                                downloads = attachmentDownloads,
-                                onDownload = onDownloadAttachment,
-                                onCancelDownload = onCancelAttachmentDownload,
-                            )
-                        }
-                    }
-                    if (message.editedAt != null && message.deletedAt == null) {
-                        Text("Edited", style = MaterialTheme.typography.labelSmall)
-                    }
-                    Text(
-                        text = remoteMessageTimestamp(message),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = bubbleContentColor.copy(alpha = 0.72f),
-                    )
-                    if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = remoteMessageDeliveryLabel(message),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                bubbleContentColor.copy(alpha = 0.72f)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = bubbleColor,
+                    contentColor = bubbleContentColor,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClickLabel = "Message reactions and options",
+                            onLongClick = {
+                                hapticFeedback.performHapticFeedback(
+                                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                                )
+                                showMessageActions = true
                             },
+                        ),
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        if (!isCurrentAccount && senderDisplayName != null) {
+                            Text(
+                                senderDisplayName,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                        }
+                        message.replyToMessageId?.let { replyId ->
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().clickable { onJumpToReply(replyId) },
+                            ) {
+                                Text(
+                                    text = repliedMessage?.let { replied ->
+                                        if (replied.deletedAt != null) "Message deleted" else replied.body.take(100)
+                                    } ?: "Open replied message",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.padding(8.dp),
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        Text(if (message.deletedAt != null) "Message deleted" else message.body)
+                        if (message.deletedAt == null) {
+                            message.attachments.forEach { attachment ->
+                                RemoteMessageAttachmentCard(
+                                    attachment = attachment,
+                                    downloads = attachmentDownloads,
+                                    onDownload = onDownloadAttachment,
+                                    onCancelDownload = onCancelAttachmentDownload,
+                                )
+                            }
+                        }
+                        if (message.editedAt != null && message.deletedAt == null) {
+                            Text("Edited", style = MaterialTheme.typography.labelSmall)
+                        }
+                        Text(
+                            text = remoteMessageTimestamp(message),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = bubbleContentColor.copy(alpha = 0.72f),
                         )
+                        if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = remoteMessageDeliveryLabel(message),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    bubbleContentColor.copy(alpha = 0.72f)
+                                },
+                            )
+                        }
                     }
+                }
+                if (message.deletedAt == null) {
+                    RemoteMessageReactionSummary(
+                        reactionCounts = message.reactionCounts,
+                        selectedReaction = selectedReaction,
+                        onToggleReaction = onToggleReaction,
+                    )
                 }
             }
             DropdownMenu(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
             ) {
+                if (message.deletedAt == null) {
+                    RemoteQuickReactionBar(
+                        selectedReaction = selectedReaction,
+                        onReactionSelected = { emoji ->
+                            showMessageActions = false
+                            onToggleReaction(emoji)
+                        },
+                        onShowAllReactions = {
+                            showMessageActions = false
+                            showEmojiPicker = true
+                        },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                }
                 availableActions.forEach { action ->
+                    val actionIcon = when (action) {
+                        RemoteMessageAction.REPLY -> Icons.AutoMirrored.Filled.Reply
+                        RemoteMessageAction.COPY -> Icons.Default.ContentCopy
+                        RemoteMessageAction.EDIT -> Icons.Default.Edit
+                        RemoteMessageAction.DELETE -> Icons.Default.Delete
+                    }
                     DropdownMenuItem(
                         text = { Text(action.label) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = actionIcon,
+                                contentDescription = null,
+                                tint = if (action == RemoteMessageAction.DELETE) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        },
                         onClick = {
                             showMessageActions = false
                             when (action) {
@@ -644,6 +712,15 @@ private fun RemoteMessageBubble(
                 }
             }
         }
+    }
+    if (showEmojiPicker) {
+        RemoteEmojiReactionPicker(
+            onDismiss = { showEmojiPicker = false },
+            onEmojiPicked = { emoji ->
+                showEmojiPicker = false
+                onToggleReaction(emoji)
+            },
+        )
     }
     if (showEditDialog) {
         AlertDialog(
@@ -700,6 +777,187 @@ private fun RemoteMessageBubble(
     }
 }
 
+@Composable
+private fun RemoteQuickReactionBar(
+    selectedReaction: String?,
+    onReactionSelected: (String) -> Unit,
+    onShowAllReactions: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        DEFAULT_REMOTE_QUICK_REACTIONS.forEach { emoji ->
+            val isSelected = emoji == selectedReaction
+            Surface(
+                onClick = { onReactionSelected(emoji) },
+                modifier = Modifier
+                    .size(38.dp)
+                    .semantics {
+                        contentDescription = "React with ${remoteReactionAccessibilityLabel(emoji)}"
+                        selected = isSelected
+                    },
+                shape = CircleShape,
+                color = if (isSelected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    Color.Transparent
+                },
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(text = emoji, fontSize = 21.sp)
+                }
+            }
+        }
+        IconButton(
+            onClick = onShowAllReactions,
+            modifier = Modifier.size(38.dp),
+        ) {
+            Icon(Icons.Default.AddReaction, contentDescription = "Choose another reaction")
+        }
+    }
+}
+
+@Composable
+private fun RemoteMessageReactionSummary(
+    reactionCounts: Map<String, Int>,
+    selectedReaction: String?,
+    onToggleReaction: (String) -> Unit,
+) {
+    val presentation = remoteReactionSummaryPresentation(reactionCounts, selectedReaction)
+    if (presentation.reactions.isEmpty()) return
+    Row(
+        modifier = Modifier.padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        presentation.reactions.forEach { reaction ->
+            Surface(
+                onClick = { onToggleReaction(reaction.emoji) },
+                modifier = Modifier.semantics {
+                    contentDescription = buildString {
+                        append(remoteReactionAccessibilityLabel(reaction.emoji))
+                        append(" reaction, ")
+                        append(reaction.count)
+                    }
+                    selected = reaction.isSelected
+                },
+                shape = RoundedCornerShape(12.dp),
+                color = if (reaction.isSelected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                border = if (reaction.isSelected) {
+                    BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                } else {
+                    null
+                },
+            ) {
+                Text(
+                    text = "${reaction.emoji} ${reaction.count}",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+        }
+        if (presentation.hiddenReactionTypeCount > 0) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Text(
+                    text = "+${presentation.hiddenReactionTypeCount}",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun RemoteEmojiReactionPicker(
+    onDismiss: () -> Unit,
+    onEmojiPicked: (String) -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Text(
+            text = "Choose a reaction",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        )
+        AndroidView(
+            factory = { context ->
+                EmojiPickerView(context).apply {
+                    emojiGridColumns = 9
+                }
+            },
+            update = { picker ->
+                picker.setOnEmojiPickedListener { selection ->
+                    onEmojiPicked(selection.emoji)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(360.dp),
+        )
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+internal data class RemoteReactionPresentation(
+    val emoji: String,
+    val count: Int,
+    val isSelected: Boolean,
+)
+
+internal data class RemoteReactionSummaryPresentation(
+    val reactions: List<RemoteReactionPresentation>,
+    val hiddenReactionTypeCount: Int,
+)
+
+internal fun remoteReactionSummaryPresentation(
+    reactionCounts: Map<String, Int>,
+    selectedReaction: String?,
+): RemoteReactionSummaryPresentation {
+    val orderedReactions = reactionCounts.asSequence()
+        .filter { (emoji, count) -> emoji.isNotBlank() && count > 0 }
+        .map { (emoji, count) ->
+            RemoteReactionPresentation(
+                emoji = emoji,
+                count = count,
+                isSelected = emoji == selectedReaction,
+            )
+        }
+        .sortedWith(
+            compareByDescending<RemoteReactionPresentation> { reaction -> reaction.isSelected }
+                .thenByDescending { reaction -> reaction.count }
+                .thenBy { reaction -> reaction.emoji },
+        )
+        .toList()
+    return RemoteReactionSummaryPresentation(
+        reactions = orderedReactions.take(MAXIMUM_VISIBLE_REACTION_TYPES),
+        hiddenReactionTypeCount = (orderedReactions.size - MAXIMUM_VISIBLE_REACTION_TYPES).coerceAtLeast(0),
+    )
+}
+
+internal val DEFAULT_REMOTE_QUICK_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "😡")
+
+private fun remoteReactionAccessibilityLabel(emoji: String): String = when (emoji) {
+    "👍" -> "thumbs up"
+    "❤️" -> "heart"
+    "😂" -> "laughing"
+    "😮" -> "surprised"
+    "😢" -> "sad"
+    "😡" -> "angry"
+    else -> emoji
+}
+
 internal enum class RemoteMessageAction(val label: String) {
     REPLY("Reply"),
     COPY("Copy"),
@@ -740,3 +998,4 @@ internal fun remoteMessageDeliveryLabel(message: RemoteCachedMessage): String =
     }
 
 private const val MAXIMUM_MESSAGE_LENGTH = 4_000
+private const val MAXIMUM_VISIBLE_REACTION_TYPES = 4

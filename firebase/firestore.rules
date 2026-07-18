@@ -142,6 +142,15 @@ service cloud.firestore {
         }
       }
 
+      match /reactionSelections/{uid} {
+        allow read, write: if false;
+
+        match /messages/{messageId} {
+          allow read: if isActiveRoomMember(roomId) && request.auth.uid == uid;
+          allow write: if false;
+        }
+      }
+
       match /typing/{uid} {
         allow read: if isActiveRoomMember(roomId);
         allow create: if isActiveRoomMember(roomId)

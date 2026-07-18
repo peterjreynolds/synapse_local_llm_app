@@ -302,6 +302,30 @@ class RemoteChatPresentationTest {
     }
 
     @Test
+    fun quickReactionTrayUsesFamiliarMessagingChoices() {
+        assertEquals(listOf("👍", "❤️", "😂", "😮", "😢", "😡"), DEFAULT_REMOTE_QUICK_REACTIONS)
+    }
+
+    @Test
+    fun reactionSummaryKeepsOwnSelectionVisibleAndBoundsBubbleClutter() {
+        val presentation = remoteReactionSummaryPresentation(
+            reactionCounts = mapOf(
+                "👍" to 3,
+                "❤️" to 5,
+                "😂" to 7,
+                "😮" to 1,
+                "😢" to 2,
+            ),
+            selectedReaction = "😮",
+        )
+
+        assertEquals("😮", presentation.reactions.first().emoji)
+        assertTrue(presentation.reactions.first().isSelected)
+        assertEquals(listOf("😮", "😂", "❤️", "👍"), presentation.reactions.map { reaction -> reaction.emoji })
+        assertEquals(1, presentation.hiddenReactionTypeCount)
+    }
+
+    @Test
     fun everyBundledChatAppearanceHasAVisiblePresentation() {
         ChatBubblePalette.entries.forEach { palette ->
             assertTrue(palette.presentation().label.isNotBlank())

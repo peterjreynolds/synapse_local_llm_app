@@ -119,6 +119,11 @@ class RemoteChatSessionSynchronizerTest {
             roomId: RemoteRoomId,
         ): Flow<List<RemoteCachedMessage>> = emptyFlow()
 
+        override fun observeOwnReactionSelections(
+            accountUid: RemoteAccountUid,
+            roomId: RemoteRoomId,
+        ): Flow<Map<RemoteMessageId, String>> = emptyFlow()
+
         override suspend fun openDirectRoom(
             command: OpenRemoteDirectRoomCommand,
         ): OpenRemoteDirectRoomReceipt = error("Not used by this test.")
