@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -31,7 +33,6 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -96,6 +98,10 @@ internal fun RemoteMessageComposer(
         isRecordingVoiceNote = state.isRecordingVoiceNote,
         isActionRunning = state.isActionRunning,
     )
+    val primaryAction = remoteComposerPrimaryAction(
+        canSend = canSend,
+        isRecordingVoiceNote = state.isRecordingVoiceNote,
+    )
 
     fun submit() {
         if (canSend) onSend(state.composerText)
@@ -147,115 +153,160 @@ internal fun RemoteMessageComposer(
                 }
             }
         }
-        Row(
+        Surface(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            shape = RoundedCornerShape(26.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
-            Box {
-                IconButton(
-                    onClick = { showAddMenu = true },
-                    enabled = canOpenAddMenu,
-                ) {
-                    Icon(
-                        Icons.Rounded.Add,
-                        contentDescription = "Add photos, GIFs, files, or audio",
-                    )
-                }
-                DropdownMenu(
-                    expanded = showAddMenu,
-                    onDismissRequest = { showAddMenu = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Photos & GIFs") },
-                        leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },
-                        enabled = canAddAttachment,
-                        onClick = {
-                            showAddMenu = false
-                            photoAndGifPicker.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                            )
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Files & audio") },
-                        leadingIcon = { Icon(Icons.Default.AttachFile, contentDescription = null) },
-                        enabled = canAddAttachment,
-                        onClick = {
-                            showAddMenu = false
-                            fileAndAudioPicker.launch(REMOTE_FILE_AND_AUDIO_MIME_TYPES)
-                        },
-                    )
-                    if (showMentionSynapse) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 52.dp)
+                    .padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                Box {
+                    IconButton(
+                        onClick = { showAddMenu = true },
+                        enabled = canOpenAddMenu,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Add,
+                            contentDescription = "Add photos, GIFs, files, or audio",
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showAddMenu,
+                        onDismissRequest = { showAddMenu = false },
+                    ) {
                         DropdownMenuItem(
-                            text = { Text("Mention Synapse") },
-                            leadingIcon = { Icon(Icons.Default.AlternateEmail, contentDescription = null) },
-                            enabled = !state.isActionRunning,
+                            text = { Text("Photos & GIFs") },
+                            leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },
+                            enabled = canAddAttachment,
                             onClick = {
                                 showAddMenu = false
-                                onMentionSynapse()
+                                photoAndGifPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Files & audio") },
+                            leadingIcon = { Icon(Icons.Default.AttachFile, contentDescription = null) },
+                            enabled = canAddAttachment,
+                            onClick = {
+                                showAddMenu = false
+                                fileAndAudioPicker.launch(REMOTE_FILE_AND_AUDIO_MIME_TYPES)
+                            },
+                        )
+                        if (showMentionSynapse) {
+                            DropdownMenuItem(
+                                text = { Text("Mention Synapse") },
+                                leadingIcon = { Icon(Icons.Default.AlternateEmail, contentDescription = null) },
+                                enabled = !state.isActionRunning,
+                                onClick = {
+                                    showAddMenu = false
+                                    onMentionSynapse()
+                                },
+                            )
+                        }
+                    }
+                }
+                BasicTextField(
+                    value = state.composerText,
+                    onValueChange = onComposerChanged,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 14.dp),
+                    enabled = !state.isActionRunning,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    maxLines = 5,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Send,
+                    ),
+                    keyboardActions = KeyboardActions(onSend = { submit() }),
+                    decorationBox = { innerTextField ->
+                        Box {
+                            if (state.composerText.isEmpty()) {
+                                Text(
+                                    "Message",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+                when (primaryAction) {
+                    RemoteComposerPrimaryAction.SEND -> FilledIconButton(
+                        onClick = ::submit,
+                        enabled = canSend,
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
+                    }
+
+                    RemoteComposerPrimaryAction.RECORD_VOICE,
+                    RemoteComposerPrimaryAction.STOP_RECORDING,
+                    -> IconButton(
+                        onClick = {
+                            if (primaryAction == RemoteComposerPrimaryAction.STOP_RECORDING) {
+                                onFinishVoiceNote()
+                            } else if (
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                                PackageManager.PERMISSION_GRANTED
+                            ) {
+                                onStartVoiceNote()
+                            } else {
+                                microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        enabled = state.isRecordingVoiceNote || !state.isActionRunning,
+                        modifier = if (state.isRecordingVoiceNote) {
+                            Modifier
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.errorContainer)
+                        } else {
+                            Modifier
+                        },
+                    ) {
+                        Icon(
+                            imageVector = if (state.isRecordingVoiceNote) Icons.Default.Stop else Icons.Default.Mic,
+                            contentDescription = if (state.isRecordingVoiceNote) {
+                                "Stop and attach voice note"
+                            } else {
+                                "Record voice note"
+                            },
+                            tint = if (state.isRecordingVoiceNote) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
                     }
                 }
             }
-            OutlinedTextField(
-                value = state.composerText,
-                onValueChange = onComposerChanged,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Message") },
-                maxLines = 5,
-                enabled = !state.isActionRunning,
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Sentences,
-                    imeAction = ImeAction.Send,
-                ),
-                keyboardActions = KeyboardActions(onSend = { submit() }),
-            )
-            IconButton(
-                onClick = {
-                    if (state.isRecordingVoiceNote) {
-                        onFinishVoiceNote()
-                    } else if (
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
-                    ) {
-                        onStartVoiceNote()
-                    } else {
-                        microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                },
-                enabled = state.isRecordingVoiceNote || !state.isActionRunning,
-                modifier = if (state.isRecordingVoiceNote) {
-                    Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.errorContainer)
-                } else {
-                    Modifier
-                },
-            ) {
-                Icon(
-                    imageVector = if (state.isRecordingVoiceNote) Icons.Default.Stop else Icons.Default.Mic,
-                    contentDescription = if (state.isRecordingVoiceNote) {
-                        "Stop and attach voice note"
-                    } else {
-                        "Record voice note"
-                    },
-                    tint = if (state.isRecordingVoiceNote) {
-                        MaterialTheme.colorScheme.onErrorContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-            FilledIconButton(
-                onClick = ::submit,
-                enabled = canSend,
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message")
-            }
         }
     }
+}
+
+internal enum class RemoteComposerPrimaryAction {
+    RECORD_VOICE,
+    SEND,
+    STOP_RECORDING,
+}
+
+internal fun remoteComposerPrimaryAction(
+    canSend: Boolean,
+    isRecordingVoiceNote: Boolean,
+): RemoteComposerPrimaryAction = when {
+    isRecordingVoiceNote -> RemoteComposerPrimaryAction.STOP_RECORDING
+    canSend -> RemoteComposerPrimaryAction.SEND
+    else -> RemoteComposerPrimaryAction.RECORD_VOICE
 }
 
 internal fun remoteComposerCanSend(

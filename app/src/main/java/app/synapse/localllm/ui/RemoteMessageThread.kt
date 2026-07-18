@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -104,6 +105,7 @@ internal fun RemoteMessageThread(
 ) {
     var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
     var showAppearance by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
+    var showConversationMenu by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room?.peerUid }
     val currentProfile = state.profiles.firstOrNull { profile ->
@@ -156,14 +158,31 @@ internal fun RemoteMessageThread(
                 )
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { showAppearance = true }) {
-                Icon(Icons.Default.Palette, contentDescription = "Change chat appearance")
-            }
-            IconButton(onClick = { showRoomMembers = !showRoomMembers }) {
-                Icon(
-                    Icons.Default.Info,
-                    contentDescription = if (showRoomMembers) "Show messages" else "Show room members",
-                )
+            Box {
+                IconButton(onClick = { showConversationMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Conversation options")
+                }
+                DropdownMenu(
+                    expanded = showConversationMenu,
+                    onDismissRequest = { showConversationMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (showRoomMembers) "Show messages" else "Conversation info") },
+                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                        onClick = {
+                            showConversationMenu = false
+                            showRoomMembers = !showRoomMembers
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Chat appearance") },
+                        leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null) },
+                        onClick = {
+                            showConversationMenu = false
+                            showAppearance = true
+                        },
+                    )
+                }
             }
         }
         HorizontalDivider()
