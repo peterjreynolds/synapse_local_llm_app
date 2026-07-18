@@ -5,6 +5,7 @@ import app.synapse.localllm.domain.appearance.ChatAppearanceMutationReceipt
 import app.synapse.localllm.domain.appearance.ChatAppearanceRepository
 import app.synapse.localllm.domain.appearance.ChatBackground
 import app.synapse.localllm.domain.appearance.ChatBubblePalette
+import app.synapse.localllm.domain.appearance.ChatBubblePaletteMutationReceipt
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import java.time.Instant
@@ -40,9 +41,11 @@ class ChatAppearanceViewModelTest {
         runCurrent()
         viewModel.selectBackground(ChatBackground.VIOLET_NEBULA)
         runCurrent()
+        viewModel.selectMessageScale(1.2f)
+        runCurrent()
 
         assertEquals(
-            ChatAppearance(ChatBubblePalette.VIOLET, ChatBackground.VIOLET_NEBULA),
+            ChatAppearance(ChatBubblePalette.VIOLET, ChatBackground.VIOLET_NEBULA, 1.2f),
             viewModel.uiState.value.appearance,
         )
         assertEquals(PETER_ACCOUNT, viewModel.uiState.value.accountUid)
@@ -51,11 +54,24 @@ class ChatAppearanceViewModelTest {
 
     private class RecordingChatAppearanceRepository : ChatAppearanceRepository {
         private val appearances = mutableMapOf<String, MutableStateFlow<ChatAppearance>>()
+        private val accountPalettes = mutableMapOf<String, MutableStateFlow<ChatBubblePalette>>()
+
+        override fun observeAccountBubblePalette(
+            accountUid: RemoteAccountUid,
+        ): Flow<ChatBubblePalette> = accountPalettes.getOrPut(accountUid.raw) {
+            MutableStateFlow(ChatBubblePalette.SYNAPSE)
+        }
 
         override fun observeAppearance(
             accountUid: RemoteAccountUid,
             roomId: RemoteRoomId,
-        ): Flow<ChatAppearance> = appearances.getOrPut(key(accountUid, roomId)) { MutableStateFlow(ChatAppearance()) }
+        ): Flow<ChatAppearance> = appearances.getOrPut(key(accountUid, roomId)) {
+            MutableStateFlow(
+                ChatAppearance(
+                    bubblePalette = accountPalettes[accountUid.raw]?.value ?: ChatBubblePalette.SYNAPSE,
+                ),
+            )
+        }
 
         override suspend fun saveAppearance(
             accountUid: RemoteAccountUid,
@@ -64,6 +80,20 @@ class ChatAppearanceViewModelTest {
         ): ChatAppearanceMutationReceipt {
             appearances.getOrPut(key(accountUid, roomId)) { MutableStateFlow(ChatAppearance()) }.value = appearance
             return receipt(accountUid, roomId, appearance)
+        }
+
+        override suspend fun saveAccountBubblePalette(
+            accountUid: RemoteAccountUid,
+            bubblePalette: ChatBubblePalette,
+        ): ChatBubblePaletteMutationReceipt {
+            accountPalettes.getOrPut(accountUid.raw) { MutableStateFlow(ChatBubblePalette.SYNAPSE) }.value = bubblePalette
+            appearances
+                .filterKeys { key -> key.startsWith("${accountUid.raw}:") }
+                .values
+                .forEach { appearance ->
+                    appearance.value = appearance.value.copy(bubblePalette = bubblePalette)
+                }
+            return ChatBubblePaletteMutationReceipt(accountUid, bubblePalette, NOW)
         }
 
         override suspend fun resetAppearance(

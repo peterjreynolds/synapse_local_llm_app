@@ -8,6 +8,7 @@ import app.synapse.localllm.domain.appearance.ChatAppearance
 import app.synapse.localllm.domain.appearance.ChatAppearanceRepository
 import app.synapse.localllm.domain.appearance.ChatBackground
 import app.synapse.localllm.domain.appearance.ChatBubblePalette
+import app.synapse.localllm.domain.appearance.clampChatMessageScale
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import kotlinx.coroutines.CancellationException
@@ -32,17 +33,20 @@ data class ChatAppearanceUiState(
 class ChatAppearanceViewModel(
     private val repository: ChatAppearanceRepository,
 ) : ViewModel() {
-    private val selectedConversation = MutableStateFlow<SelectedAppearanceConversation?>(null)
+    private val selectedContext = MutableStateFlow<SelectedAppearanceContext?>(null)
     private val mutableUiState = MutableStateFlow(ChatAppearanceUiState())
     val uiState: StateFlow<ChatAppearanceUiState> = mutableUiState
 
     init {
         viewModelScope.launch {
-            selectedConversation.flatMapLatest { selection ->
-                selection?.let {
-                    repository.observeAppearance(it.accountUid, it.roomId)
+            selectedContext.flatMapLatest { selection ->
+                when {
+                    selection == null -> flowOf(null to ChatAppearance())
+                    selection.roomId == null -> repository.observeAccountBubblePalette(selection.accountUid)
+                        .map { bubblePalette -> selection to ChatAppearance(bubblePalette = bubblePalette) }
+                    else -> repository.observeAppearance(selection.accountUid, selection.roomId)
                         .map { appearance -> selection to appearance }
-                } ?: flowOf(null to ChatAppearance())
+                }
             }.collect { (selection, appearance) ->
                 mutableUiState.update { state ->
                     state.copy(
@@ -59,25 +63,35 @@ class ChatAppearanceViewModel(
         accountUid: RemoteAccountUid?,
         roomId: RemoteRoomId?,
     ) {
-        selectedConversation.value = if (accountUid != null && roomId != null) {
-            SelectedAppearanceConversation(accountUid, roomId)
+        selectedContext.value = if (accountUid != null && roomId != null) {
+            SelectedAppearanceContext(accountUid, roomId)
+        } else if (accountUid != null) {
+            SelectedAppearanceContext(accountUid, null)
         } else {
             null
         }
     }
 
     fun selectBubblePalette(palette: ChatBubblePalette) {
-        saveAppearance { appearance -> appearance.copy(bubblePalette = palette) }
+        val accountUid = selectedContext.value?.accountUid ?: return
+        launchSave {
+            repository.saveAccountBubblePalette(accountUid, palette)
+            "Bubble colors saved for this account."
+        }
     }
 
     fun selectBackground(background: ChatBackground) {
         saveAppearance { appearance -> appearance.copy(background = background) }
     }
 
+    fun selectMessageScale(messageScale: Float) {
+        saveAppearance { appearance -> appearance.copy(messageScale = clampChatMessageScale(messageScale)) }
+    }
+
     fun resetAppearance() {
-        val selection = selectedConversation.value ?: return
+        val selection = selectedContext.value?.takeIf { context -> context.roomId != null } ?: return
         launchSave {
-            repository.resetAppearance(selection.accountUid, selection.roomId)
+            repository.resetAppearance(selection.accountUid, requireNotNull(selection.roomId))
             "Chat appearance reset."
         }
     }
@@ -87,10 +101,10 @@ class ChatAppearanceViewModel(
     }
 
     private fun saveAppearance(transform: (ChatAppearance) -> ChatAppearance) {
-        val selection = selectedConversation.value ?: return
+        val selection = selectedContext.value?.takeIf { context -> context.roomId != null } ?: return
         val nextAppearance = transform(mutableUiState.value.appearance)
         launchSave {
-            repository.saveAppearance(selection.accountUid, selection.roomId, nextAppearance)
+            repository.saveAppearance(selection.accountUid, requireNotNull(selection.roomId), nextAppearance)
             "Chat appearance saved."
         }
     }
@@ -116,9 +130,9 @@ class ChatAppearanceViewModel(
     }
 }
 
-private data class SelectedAppearanceConversation(
+private data class SelectedAppearanceContext(
     val accountUid: RemoteAccountUid,
-    val roomId: RemoteRoomId,
+    val roomId: RemoteRoomId?,
 )
 
 class ChatAppearanceViewModelFactory(

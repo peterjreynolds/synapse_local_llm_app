@@ -169,7 +169,6 @@ internal fun ChatBackgroundLayer(background: ChatBackground) {
 @Composable
 internal fun ChatAppearanceDialog(
     state: ChatAppearanceUiState,
-    onBubblePaletteSelected: (ChatBubblePalette) -> Unit,
     onBackgroundSelected: (ChatBackground) -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
@@ -179,20 +178,6 @@ internal fun ChatAppearanceDialog(
         title = { Text("Chat appearance") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("Bubble colors", fontWeight = FontWeight.SemiBold)
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    ChatBubblePalette.entries.forEach { palette ->
-                        BubblePaletteOption(
-                            palette = palette,
-                            selected = palette == state.appearance.bubblePalette,
-                            enabled = !state.isSaving,
-                            onSelected = { onBubblePaletteSelected(palette) },
-                        )
-                    }
-                }
                 Text("Background color or image", fontWeight = FontWeight.SemiBold)
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -208,7 +193,13 @@ internal fun ChatAppearanceDialog(
                     }
                 }
                 Text(
-                    "Appearance is saved only for this conversation on this phone.",
+                    "Pinch with two fingers in the conversation to resize messages. Current size: " +
+                        "${(state.appearance.messageScale * 100).toInt()}%.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Background and message size are saved only for this conversation on this phone.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -222,6 +213,27 @@ internal fun ChatAppearanceDialog(
             TextButton(onClick = onReset, enabled = !state.isSaving) { Text("Reset") }
         },
     )
+}
+
+@Composable
+internal fun ChatBubblePaletteSelector(
+    selectedPalette: ChatBubblePalette,
+    enabled: Boolean,
+    onSelected: (ChatBubblePalette) -> Unit,
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ChatBubblePalette.entries.forEach { palette ->
+            BubblePaletteOption(
+                palette = palette,
+                selected = palette == selectedPalette,
+                enabled = enabled,
+                onSelected = { onSelected(palette) },
+            )
+        }
+    }
 }
 
 @Composable

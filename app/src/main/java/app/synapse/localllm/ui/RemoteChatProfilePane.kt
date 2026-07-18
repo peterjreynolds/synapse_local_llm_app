@@ -45,6 +45,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.POST_NOTIFICATIONS_PERMISSION
+import app.synapse.localllm.domain.appearance.ChatBubblePalette
 import app.synapse.localllm.domain.notifications.NotificationPermissionState
 import app.synapse.localllm.resolveNotificationPermissionState
 import java.time.Instant
@@ -58,6 +59,8 @@ internal fun RemoteProfilePane(
     appUpdate: AppUpdateUiState,
     appLockState: AppLockUiState,
     appLockViewModel: AppLockViewModel,
+    appearanceState: ChatAppearanceUiState,
+    onBubblePaletteSelected: (ChatBubblePalette) -> Unit,
     onCheckAppUpdate: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -179,6 +182,21 @@ internal fun RemoteProfilePane(
                 Icon(Icons.Default.PhotoCamera, contentDescription = null)
                 Text(" Photo")
             }
+        }
+
+        HorizontalDivider()
+        Text("Chat bubble colors", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            "Choose the incoming and outgoing message colors used by this account on this phone.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        ChatBubblePaletteSelector(
+            selectedPalette = appearanceState.appearance.bubblePalette,
+            enabled = !appearanceState.isSaving,
+            onSelected = onBubblePaletteSelected,
+        )
+        appearanceState.notice?.let { notice ->
+            Text(notice, style = MaterialTheme.typography.bodySmall)
         }
 
         HorizontalDivider()

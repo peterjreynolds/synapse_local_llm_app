@@ -757,6 +757,8 @@ private fun RemoteSignedInShell(
                         appUpdate = localState.appUpdate,
                         appLockState = appLockState,
                         appLockViewModel = appLockViewModel,
+                        appearanceState = chatAppearanceState,
+                        onBubblePaletteSelected = chatAppearanceViewModel::selectBubblePalette,
                         onCheckAppUpdate = { localViewModel.checkForAppUpdate(automatic = false) },
                     )
                     RemoteAppSection.LOCAL_AI -> SynapseApp(

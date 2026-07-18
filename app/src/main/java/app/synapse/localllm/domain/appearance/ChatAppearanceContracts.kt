@@ -35,7 +35,14 @@ enum class ChatBackground {
 data class ChatAppearance(
     val bubblePalette: ChatBubblePalette = ChatBubblePalette.SYNAPSE,
     val background: ChatBackground = ChatBackground.PITCH_BLACK,
-)
+    val messageScale: Float = DEFAULT_CHAT_MESSAGE_SCALE,
+) {
+    init {
+        require(messageScale.isFinite() && messageScale in MINIMUM_CHAT_MESSAGE_SCALE..MAXIMUM_CHAT_MESSAGE_SCALE) {
+            "Chat message scale is outside the supported range."
+        }
+    }
+}
 
 data class ChatAppearanceMutationReceipt(
     val accountUid: RemoteAccountUid,
@@ -44,7 +51,15 @@ data class ChatAppearanceMutationReceipt(
     val persistedAt: Instant,
 )
 
+data class ChatBubblePaletteMutationReceipt(
+    val accountUid: RemoteAccountUid,
+    val bubblePalette: ChatBubblePalette,
+    val persistedAt: Instant,
+)
+
 interface ChatAppearanceRepository {
+    fun observeAccountBubblePalette(accountUid: RemoteAccountUid): Flow<ChatBubblePalette>
+
     fun observeAppearance(
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
@@ -60,4 +75,18 @@ interface ChatAppearanceRepository {
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
     ): ChatAppearanceMutationReceipt
+
+    suspend fun saveAccountBubblePalette(
+        accountUid: RemoteAccountUid,
+        bubblePalette: ChatBubblePalette,
+    ): ChatBubblePaletteMutationReceipt
 }
+
+fun clampChatMessageScale(messageScale: Float): Float = when {
+    !messageScale.isFinite() -> DEFAULT_CHAT_MESSAGE_SCALE
+    else -> messageScale.coerceIn(MINIMUM_CHAT_MESSAGE_SCALE, MAXIMUM_CHAT_MESSAGE_SCALE)
+}
+
+const val DEFAULT_CHAT_MESSAGE_SCALE = 1f
+const val MAXIMUM_CHAT_MESSAGE_SCALE = 1.35f
+const val MINIMUM_CHAT_MESSAGE_SCALE = 0.78f

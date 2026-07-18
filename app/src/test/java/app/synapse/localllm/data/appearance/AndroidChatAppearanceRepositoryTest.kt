@@ -32,6 +32,7 @@ class AndroidChatAppearanceRepositoryTest {
         val selectedAppearance = ChatAppearance(
             bubblePalette = ChatBubblePalette.OCEAN,
             background = ChatBackground.OCEAN_CAUSTICS,
+            messageScale = 1.2f,
         )
 
         val saveReceipt = repository.saveAppearance(PETER_ACCOUNT, ROOM_ID, selectedAppearance)
@@ -42,10 +43,36 @@ class AndroidChatAppearanceRepositoryTest {
         assertEquals(ChatAppearance(), repository.observeAppearance(TRISH_ACCOUNT, ROOM_ID).first())
         assertEquals(ChatAppearance(), repository.observeAppearance(PETER_ACCOUNT, SECOND_ROOM_ID).first())
 
+        val paletteReceipt = repository.saveAccountBubblePalette(PETER_ACCOUNT, ChatBubblePalette.ROSE)
+
+        assertEquals(ChatBubblePalette.ROSE, paletteReceipt.bubblePalette)
+        assertEquals(ChatBubblePalette.ROSE, repository.observeAccountBubblePalette(PETER_ACCOUNT).first())
+        assertEquals(
+            selectedAppearance.copy(bubblePalette = ChatBubblePalette.ROSE),
+            repository.observeAppearance(PETER_ACCOUNT, ROOM_ID).first(),
+        )
+        assertEquals(
+            ChatAppearance(bubblePalette = ChatBubblePalette.ROSE),
+            repository.observeAppearance(PETER_ACCOUNT, SECOND_ROOM_ID).first(),
+        )
+        val secondRoomReceipt = repository.saveAppearance(
+            PETER_ACCOUNT,
+            SECOND_ROOM_ID,
+            ChatAppearance(
+                bubblePalette = ChatBubblePalette.AMBER,
+                background = ChatBackground.FOREST_MIST,
+                messageScale = 0.9f,
+            ),
+        )
+        assertEquals(ChatBubblePalette.ROSE, secondRoomReceipt.appearance.bubblePalette)
+
         val resetReceipt = repository.resetAppearance(PETER_ACCOUNT, ROOM_ID)
 
-        assertEquals(ChatAppearance(), resetReceipt.appearance)
-        assertEquals(ChatAppearance(), repository.observeAppearance(PETER_ACCOUNT, ROOM_ID).first())
+        assertEquals(ChatAppearance(bubblePalette = ChatBubblePalette.ROSE), resetReceipt.appearance)
+        assertEquals(
+            ChatAppearance(bubblePalette = ChatBubblePalette.ROSE),
+            repository.observeAppearance(PETER_ACCOUNT, ROOM_ID).first(),
+        )
     }
 
     private object FixedClock : SynapseClock {
