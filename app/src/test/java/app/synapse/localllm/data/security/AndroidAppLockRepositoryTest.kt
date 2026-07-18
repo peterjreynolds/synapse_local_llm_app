@@ -98,6 +98,33 @@ class AndroidAppLockRepositoryTest {
         )
     }
 
+    @Test
+    fun accountReauthenticatedReplacementClearsForgottenPinLockout() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = createRepository(
+            context = context,
+            storageFileName = "app-lock-${UUID.randomUUID()}.preferences_pb",
+        )
+        repository.enable(AppLockPin.parse("1234"))
+
+        repeat(5) { repository.verify(AppLockPin.parse("0000")) }
+        assertTrue(
+            repository.verify(AppLockPin.parse("1234")).outcome ==
+                AppLockVerificationOutcome.TEMPORARILY_BLOCKED,
+        )
+
+        repository.replaceCredentialAfterAccountReauthentication(AppLockPin.parse("5678"))
+
+        assertTrue(
+            repository.verify(AppLockPin.parse("1234")).outcome ==
+                AppLockVerificationOutcome.INVALID_PIN,
+        )
+        assertTrue(
+            repository.verify(AppLockPin.parse("5678")).outcome ==
+                AppLockVerificationOutcome.VERIFIED,
+        )
+    }
+
     private fun createRepository(
         context: Context,
         storageFileName: String,

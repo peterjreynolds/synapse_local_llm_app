@@ -65,6 +65,7 @@ class MainActivity : FragmentActivity() {
                     AppLockScreen(
                         state = appLockState,
                         onUnlock = appLockViewModel::unlock,
+                        onResetPin = appLockViewModel::resetPinWithAccountPassword,
                     )
                 } else {
                     RemoteChatApp(

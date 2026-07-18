@@ -31,12 +31,26 @@ internal fun AppLockSettings(
     var currentPin by remember(state.isEnabled) { mutableStateOf("") }
     var newPin by remember(state.isEnabled) { mutableStateOf("") }
     var confirmPin by remember(state.isEnabled) { mutableStateOf("") }
+    var showAccountReset by remember(state.isEnabled) { mutableStateOf(false) }
+    var resetAccountPassword by remember(state.isEnabled) { mutableStateOf("") }
+    var resetPin by remember(state.isEnabled) { mutableStateOf("") }
+    var resetPinConfirmation by remember(state.isEnabled) { mutableStateOf("") }
     ClearSensitiveInputsOnStop {
         currentPin = ""
         newPin = ""
         confirmPin = ""
+        resetAccountPassword = ""
+        resetPin = ""
+        resetPinConfirmation = ""
     }
-    if (currentPin.isNotEmpty() || newPin.isNotEmpty() || confirmPin.isNotEmpty()) {
+    if (
+        currentPin.isNotEmpty() ||
+        newPin.isNotEmpty() ||
+        confirmPin.isNotEmpty() ||
+        resetAccountPassword.isNotEmpty() ||
+        resetPin.isNotEmpty() ||
+        resetPinConfirmation.isNotEmpty()
+    ) {
         BlockScreenshotsWhileVisible()
     }
 
@@ -78,7 +92,7 @@ internal fun AppLockSettings(
         state.notice?.let { notice ->
             Text(
                 notice,
-                color = if (notice.contains("enabled") || notice.contains("changed") || notice.contains("disabled")) {
+                color = if (appLockNoticeIsSuccess(notice)) {
                     MaterialTheme.colorScheme.primary
                 } else {
                     MaterialTheme.colorScheme.error
@@ -111,6 +125,60 @@ internal fun AppLockSettings(
             ) {
                 Text("Turn off PIN lock")
             }
+            OutlinedButton(
+                onClick = { showAccountReset = !showAccountReset },
+                enabled = !state.isActionRunning,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (showAccountReset) "Cancel PIN reset" else "Forgot PIN? Reset it")
+            }
+            if (showAccountReset) {
+                Text(
+                    "Confirm your signed-in account password, then choose a new PIN for this phone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = resetAccountPassword,
+                    onValueChange = { resetAccountPassword = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Account password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                )
+                AppLockPinField(
+                    value = resetPin,
+                    label = "New PIN",
+                    enabled = !state.isActionRunning,
+                    onValueChanged = { resetPin = it },
+                )
+                AppLockPinField(
+                    value = resetPinConfirmation,
+                    label = "Confirm new PIN",
+                    enabled = !state.isActionRunning,
+                    onValueChanged = { resetPinConfirmation = it },
+                )
+                Button(
+                    onClick = {
+                        viewModel.resetPinWithAccountPassword(
+                            accountPassword = resetAccountPassword,
+                            newRawPin = resetPin,
+                            confirmation = resetPinConfirmation,
+                        )
+                        resetAccountPassword = ""
+                        resetPin = ""
+                        resetPinConfirmation = ""
+                    },
+                    enabled = resetAccountPassword.isNotEmpty() &&
+                        resetPin.length == AppLockPin.PIN_LENGTH &&
+                        resetPinConfirmation.length == AppLockPin.PIN_LENGTH &&
+                        !state.isActionRunning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Reset PIN")
+                }
+            }
         } else {
             Button(
                 onClick = {
@@ -131,7 +199,7 @@ internal fun AppLockSettings(
 }
 
 @Composable
-private fun AppLockPinField(
+internal fun AppLockPinField(
     value: String,
     label: String,
     enabled: Boolean,
@@ -158,3 +226,8 @@ internal fun appLockPinFieldsComplete(
     currentPin.length == AppLockPin.PIN_LENGTH &&
         newPin.length == AppLockPin.PIN_LENGTH &&
         confirmation.length == AppLockPin.PIN_LENGTH
+
+internal fun appLockNoticeIsSuccess(notice: String): Boolean =
+    listOf("enabled", "changed", "disabled", "reset").any { marker ->
+        notice.contains(marker, ignoreCase = true)
+    }

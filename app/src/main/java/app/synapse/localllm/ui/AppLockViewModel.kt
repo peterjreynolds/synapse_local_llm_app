@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.synapse.localllm.di.SynapseApplicationGraph
+import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.security.AppLockPin
 import app.synapse.localllm.domain.security.AppLockRepository
 import app.synapse.localllm.domain.security.AppLockVerificationOutcome
@@ -25,6 +26,7 @@ data class AppLockUiState(
 
 class AppLockViewModel(
     private val repository: AppLockRepository,
+    private val authenticationGateway: RemoteAuthenticationGateway,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(AppLockUiState())
     val uiState: StateFlow<AppLockUiState> = mutableUiState
@@ -82,6 +84,38 @@ class AppLockViewModel(
         )
         if (receipt.outcome == AppLockVerificationOutcome.VERIFIED) {
             mutableUiState.update { state -> state.copy(notice = "PIN changed.") }
+        } else {
+            applyVerificationReceipt(receipt, unlockOnSuccess = false)
+        }
+    }
+
+    fun resetPinWithAccountPassword(
+        accountPassword: String,
+        newRawPin: String,
+        confirmation: String,
+    ) = launchPinAction {
+        require(accountPassword.isNotEmpty()) { "Enter your account password." }
+        requireMatchingPins(newRawPin, confirmation)
+        authenticationGateway.reauthenticate(accountPassword)
+        repository.replaceCredentialAfterAccountReauthentication(AppLockPin.parse(newRawPin))
+        mutableUiState.update { state ->
+            state.copy(
+                isEnabled = true,
+                isCredentialAvailable = true,
+                isUnlocked = true,
+                notice = "PIN reset on this phone.",
+            )
+        }
+    }
+
+    fun verifySensitiveAction(
+        rawPin: String,
+        onVerified: () -> Unit,
+    ) = launchPinAction {
+        val receipt = repository.verify(AppLockPin.parse(rawPin))
+        if (receipt.outcome == AppLockVerificationOutcome.VERIFIED) {
+            mutableUiState.update { state -> state.copy(notice = null) }
+            onVerified()
         } else {
             applyVerificationReceipt(receipt, unlockOnSuccess = false)
         }
@@ -174,7 +208,7 @@ class AppLockViewModel(
 
     private companion object {
         const val CREDENTIAL_UNAVAILABLE_MESSAGE =
-            "This phone's PIN credential is unavailable. Synapse stays locked; clear the app's storage to reset it."
+            "This phone's PIN credential is unavailable. Use Forgot PIN to confirm your account and reset it."
     }
 }
 
@@ -183,7 +217,12 @@ class AppLockViewModelFactory(
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(AppLockViewModel::class.java)) {
-            return modelClass.cast(AppLockViewModel(graph.appLockRepository))
+            return modelClass.cast(
+                AppLockViewModel(
+                    repository = graph.appLockRepository,
+                    authenticationGateway = graph.remoteAuthenticationGateway,
+                ),
+            )
                 ?: throw IllegalArgumentException("Unable to create AppLockViewModel.")
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}.")

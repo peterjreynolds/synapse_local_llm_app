@@ -1,10 +1,13 @@
 package app.synapse.localllm.ui
 
+import app.synapse.localllm.domain.remote.RemoteAuthenticationGateway
 import app.synapse.localllm.domain.security.AppLockConfiguration
 import app.synapse.localllm.domain.security.AppLockPin
 import app.synapse.localllm.domain.security.AppLockRepository
 import app.synapse.localllm.domain.security.AppLockVerificationOutcome
 import app.synapse.localllm.domain.security.AppLockVerificationReceipt
+import io.mockk.coVerify
+import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -30,7 +33,7 @@ class AppLockViewModelTest {
     fun configuredLockStartsLockedAndRelocksWhenAppLeavesScreen() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val repository = RecordingAppLockRepository(enabled = true)
-        val viewModel = AppLockViewModel(repository)
+        val viewModel = AppLockViewModel(repository, mockk(relaxed = true))
         runCurrent()
 
         assertTrue(viewModel.uiState.value.isEnabled)
@@ -48,7 +51,7 @@ class AppLockViewModelTest {
     fun pinConfirmationIsRequiredBeforeEnablingOrChanging() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val repository = RecordingAppLockRepository(enabled = false)
-        val viewModel = AppLockViewModel(repository)
+        val viewModel = AppLockViewModel(repository, mockk(relaxed = true))
         runCurrent()
 
         viewModel.enable("1234", "4321")
@@ -67,6 +70,28 @@ class AppLockViewModelTest {
         assertTrue(normalizeAppLockPinInput("1a2-345") == "1234")
         assertTrue(appLockPinFieldsComplete("1234", "5678", "5678"))
         assertFalse(appLockPinFieldsComplete("123", "5678", "5678"))
+        assertTrue(appLockNoticeIsSuccess("PIN reset on this phone."))
+        assertFalse(appLockNoticeIsSuccess("Incorrect PIN."))
+    }
+
+    @Test
+    fun accountPasswordCanResetForgottenPinAndSensitiveActionsRequireTheNewPin() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val repository = RecordingAppLockRepository(enabled = true)
+        val authenticationGateway = mockk<RemoteAuthenticationGateway>(relaxed = true)
+        val viewModel = AppLockViewModel(repository, authenticationGateway)
+        runCurrent()
+
+        viewModel.resetPinWithAccountPassword("owner password", "5678", "5678")
+        runCurrent()
+
+        coVerify(exactly = 1) { authenticationGateway.reauthenticate("owner password") }
+        assertTrue(repository.verify(AppLockPin.parse("5678")).outcome == AppLockVerificationOutcome.VERIFIED)
+
+        var verified = false
+        viewModel.verifySensitiveAction("5678") { verified = true }
+        runCurrent()
+        assertTrue(verified)
     }
 
     private class RecordingAppLockRepository(enabled: Boolean) : AppLockRepository {
@@ -89,6 +114,11 @@ class AppLockViewModelTest {
             newPin: AppLockPin,
         ): AppLockVerificationReceipt = verification(currentPin).also { receipt ->
             if (receipt.outcome == AppLockVerificationOutcome.VERIFIED) pin = newPin
+        }
+
+        override suspend fun replaceCredentialAfterAccountReauthentication(newPin: AppLockPin) {
+            pin = newPin
+            configurationState.value = AppLockConfiguration(enabled = true, credentialAvailable = true)
         }
 
         override suspend fun disable(pin: AppLockPin): AppLockVerificationReceipt =

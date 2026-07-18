@@ -90,6 +90,10 @@ class AndroidAppLockRepository private constructor(
         verification
     }
 
+    override suspend fun replaceCredentialAfterAccountReauthentication(newPin: AppLockPin) {
+        mutationMutex.withLock { persistCredential(newPin) }
+    }
+
     override suspend fun disable(pin: AppLockPin): AppLockVerificationReceipt = mutationMutex.withLock {
         val verification = verifyLocked(pin)
         if (verification.outcome == AppLockVerificationOutcome.VERIFIED) {

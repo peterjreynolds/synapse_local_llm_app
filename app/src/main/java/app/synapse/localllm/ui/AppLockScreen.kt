@@ -14,6 +14,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,10 +35,20 @@ import app.synapse.localllm.domain.security.AppLockPin
 internal fun AppLockScreen(
     state: AppLockUiState,
     onUnlock: (String) -> Unit,
+    onResetPin: (accountPassword: String, newPin: String, confirmation: String) -> Unit,
 ) {
     var pin by remember { mutableStateOf("") }
+    var showReset by remember { mutableStateOf(false) }
+    var accountPassword by remember { mutableStateOf("") }
+    var newPin by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
     BlockScreenshotsWhileVisible()
-    ClearSensitiveInputsOnStop { pin = "" }
+    ClearSensitiveInputsOnStop {
+        pin = ""
+        accountPassword = ""
+        newPin = ""
+        confirmation = ""
+    }
 
     Box(
         modifier = Modifier
@@ -60,43 +71,98 @@ internal fun AppLockScreen(
                 tint = MaterialTheme.colorScheme.primary,
             )
             Text("Synapse locked", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "Enter the four-digit PIN for this phone.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = pin,
-                onValueChange = { value -> pin = normalizeAppLockPinInput(value) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("PIN") },
-                singleLine = true,
-                enabled = !state.isActionRunning && state.isCredentialAvailable,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.NumberPassword,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        if (pin.length == AppLockPin.PIN_LENGTH) onUnlock(pin)
-                    },
-                ),
-            )
+            if (showReset) {
+                Text(
+                    "Confirm your signed-in account password, then create a new PIN for this phone.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = accountPassword,
+                    onValueChange = { accountPassword = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Account password") },
+                    singleLine = true,
+                    enabled = !state.isActionRunning,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                )
+                AppLockPinField(
+                    value = newPin,
+                    label = "New PIN",
+                    enabled = !state.isActionRunning,
+                    onValueChanged = { newPin = it },
+                )
+                AppLockPinField(
+                    value = confirmation,
+                    label = "Confirm new PIN",
+                    enabled = !state.isActionRunning,
+                    onValueChanged = { confirmation = it },
+                )
+            } else {
+                Text(
+                    "Enter the four-digit PIN for this phone.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { value -> pin = normalizeAppLockPinInput(value) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("PIN") },
+                    singleLine = true,
+                    enabled = !state.isActionRunning && state.isCredentialAvailable,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            if (pin.length == AppLockPin.PIN_LENGTH) onUnlock(pin)
+                        },
+                    ),
+                )
+            }
             state.notice?.let { notice ->
                 Text(notice, color = MaterialTheme.colorScheme.error)
             }
             Button(
-                onClick = { onUnlock(pin) },
+                onClick = {
+                    if (showReset) {
+                        onResetPin(accountPassword, newPin, confirmation)
+                    } else {
+                        onUnlock(pin)
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = pin.length == AppLockPin.PIN_LENGTH &&
-                    !state.isActionRunning &&
-                    state.isCredentialAvailable,
+                enabled = if (showReset) {
+                    accountPassword.isNotEmpty() &&
+                        newPin.length == AppLockPin.PIN_LENGTH &&
+                        confirmation.length == AppLockPin.PIN_LENGTH &&
+                        !state.isActionRunning
+                } else {
+                    pin.length == AppLockPin.PIN_LENGTH &&
+                        !state.isActionRunning &&
+                        state.isCredentialAvailable
+                },
             ) {
                 if (state.isActionRunning) {
                     CircularProgressIndicator(strokeWidth = 2.dp)
                 } else {
-                    Text("Unlock")
+                    Text(if (showReset) "Reset PIN and unlock" else "Unlock")
                 }
+            }
+            OutlinedButton(
+                onClick = {
+                    showReset = !showReset
+                    pin = ""
+                    accountPassword = ""
+                    newPin = ""
+                    confirmation = ""
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isActionRunning,
+            ) {
+                Text(if (showReset) "Back to PIN" else "Forgot PIN?")
             }
         }
     }

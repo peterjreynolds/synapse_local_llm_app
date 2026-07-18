@@ -11,10 +11,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
@@ -22,6 +23,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -45,6 +47,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.synapse.localllm.domain.remote.CreateOwnerAccountCommand
 import app.synapse.localllm.domain.remote.OwnerAccountSummary
 import app.synapse.localllm.domain.remote.RemoteAccountState
+import app.synapse.localllm.domain.security.AppLockPin
 import java.security.SecureRandom
 import java.time.Instant
 import java.util.Base64
@@ -53,6 +56,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun OwnerAdminPane(
     viewModel: OwnerAdminViewModel,
+    appLockState: AppLockUiState,
+    appLockViewModel: AppLockViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -73,6 +78,7 @@ fun OwnerAdminPane(
 
     var deleteConfirmation by remember { mutableStateOf("") }
     var deleteOwnerPassword by remember { mutableStateOf("") }
+    var ownerActionPin by remember { mutableStateOf("") }
 
     BlockScreenshotsWhileVisible()
     ClearSensitiveInputsOnStop {
@@ -81,6 +87,7 @@ fun OwnerAdminPane(
         resetTemporaryPassword = ""
         resetOwnerPassword = ""
         deleteOwnerPassword = ""
+        ownerActionPin = ""
         oneTimeSecret = null
     }
     LaunchedEffect(oneTimeSecret) {
@@ -94,6 +101,7 @@ fun OwnerAdminPane(
         resetOwnerPassword = ""
         deleteConfirmation = ""
         deleteOwnerPassword = ""
+        ownerActionPin = ""
     }
 
     fun confirmDeviceCredential(action: () -> Unit) {
@@ -101,6 +109,26 @@ fun OwnerAdminPane(
         requestOwnerIdentityConfirmation { confirmed ->
             if (confirmed) action() else localNotice = "Owner confirmation was cancelled."
         }
+    }
+
+    fun confirmOwnerPin(action: () -> Unit) {
+        localNotice = null
+        if (!appLockState.isEnabled) {
+            localNotice = "Create an app PIN before using owner account actions."
+            return
+        }
+        if (ownerActionPin.length != AppLockPin.PIN_LENGTH) {
+            localNotice = "Enter your four-digit app PIN."
+            return
+        }
+        appLockViewModel.verifySensitiveAction(ownerActionPin) {
+            ownerActionPin = ""
+            confirmDeviceCredential(action)
+        }
+    }
+
+    val selectedAccount = state.accounts.firstOrNull { account ->
+        account.accountUid == state.selectedAccountUid
     }
 
     Column(
@@ -126,165 +154,216 @@ fun OwnerAdminPane(
         }
 
         OwnerSection("Accounts") {
-            OutlinedTextField(
-                value = searchPrefix,
-                onValueChange = { searchPrefix = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Search username") },
-                singleLine = true,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { viewModel.refresh(searchPrefix.ifBlank { null }) },
-                    enabled = !state.isActionRunning,
-                ) {
-                    Text("Search")
-                }
-                OutlinedButton(
-                    onClick = {
-                        searchPrefix = ""
-                        viewModel.refresh()
-                    },
-                    enabled = !state.isActionRunning,
-                ) {
-                    Text("Refresh all")
-                }
-            }
-            state.accounts.forEach { account ->
-                val selected = state.selectedAccountUid == account.accountUid
-                OwnerAccountCard(
-                    account = account,
-                    selected = selected,
-                    enabled = !state.isActionRunning,
-                    onSelect = { viewModel.selectAccount(if (selected) null else account.accountUid) },
-                    onApprove = { viewModel.reviewRegistration(account.accountUid, approve = true) },
-                    onReject = { viewModel.reviewRegistration(account.accountUid, approve = false) },
+            if (selectedAccount == null) {
+                OutlinedTextField(
+                    value = searchPrefix,
+                    onValueChange = { searchPrefix = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Search username") },
+                    singleLine = true,
                 )
-                if (selected) {
-                    OwnerAccountOperations(
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.refresh(searchPrefix.ifBlank { null }) },
+                        enabled = !state.isActionRunning,
+                    ) {
+                        Text("Search")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            searchPrefix = ""
+                            viewModel.refresh()
+                        },
+                        enabled = !state.isActionRunning,
+                    ) {
+                        Text("Refresh all")
+                    }
+                }
+                state.accounts.forEach { account ->
+                    OwnerAccountCard(
                         account = account,
-                        state = state,
-                        resetTemporaryPassword = resetTemporaryPassword,
-                        resetOwnerPassword = resetOwnerPassword,
-                        resetRequiresPasswordChange = resetRequiresPasswordChange,
-                        deleteConfirmation = deleteConfirmation,
-                        deleteOwnerPassword = deleteOwnerPassword,
-                        onResetTemporaryPasswordChanged = { resetTemporaryPassword = it },
-                        onResetOwnerPasswordChanged = { resetOwnerPassword = it },
-                        onResetRequiresPasswordChangeChanged = { resetRequiresPasswordChange = it },
-                        onDeleteConfirmationChanged = { deleteConfirmation = it },
-                        onDeleteOwnerPasswordChanged = { deleteOwnerPassword = it },
-                        onGeneratePassword = { resetTemporaryPassword = generateOwnerTemporaryPassword() },
-                        onConfirmSensitiveAction = ::confirmDeviceCredential,
-                        onTemporaryPasswordRevealed = { temporaryPassword ->
-                            oneTimeSecret = OneTimeOwnerSecret("Temporary password", temporaryPassword)
-                            resetTemporaryPassword = ""
-                            resetOwnerPassword = ""
-                        },
-                        onDeleteCompleted = {
-                            deleteConfirmation = ""
-                            deleteOwnerPassword = ""
-                        },
-                        viewModel = viewModel,
+                        enabled = !state.isActionRunning,
+                        onSelect = { viewModel.selectAccount(account.accountUid) },
+                        onApprove = { viewModel.reviewRegistration(account.accountUid, approve = true) },
+                        onReject = { viewModel.reviewRegistration(account.accountUid, approve = false) },
                     )
                 }
-            }
-            if (state.accounts.isEmpty()) Text("No matching accounts.")
-        }
-
-        OwnerDisclosureSection(
-            title = "Create a managed account",
-            supportingText = "Only use this when you are setting someone up yourself. Most people should use an invite code.",
-            expanded = showManagedAccountCreation,
-            onToggle = { showManagedAccountCreation = !showManagedAccountCreation },
-        ) {
-            OutlinedTextField(
-                value = createUsername,
-                onValueChange = { createUsername = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Username") },
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = createDisplayName,
-                onValueChange = { createDisplayName = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Display name") },
-                singleLine = true,
-            )
-            SensitivePasswordField(
-                value = createTemporaryPassword,
-                label = "Temporary password",
-                onValueChange = { createTemporaryPassword = it },
-            )
-            OutlinedButton(
-                onClick = { createTemporaryPassword = generateOwnerTemporaryPassword() },
-                enabled = !state.isActionRunning,
-            ) {
-                Text("Generate temporary password")
-            }
-            SensitivePasswordField(
-                value = createOwnerPassword,
-                label = "Your current owner password",
-                onValueChange = { createOwnerPassword = it },
-            )
-            CheckboxLine(
-                checked = createRequiresPasswordChange,
-                label = "Require password change on first sign-in",
-                onCheckedChange = { createRequiresPasswordChange = it },
-            )
-            Button(
-                onClick = {
-                    if (
-                        createUsername.isBlank() ||
-                        createDisplayName.isBlank() ||
-                        createTemporaryPassword.length !in 12..128 ||
-                        createOwnerPassword.isEmpty()
+                if (state.accounts.isEmpty()) Text("No matching accounts.")
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { viewModel.selectAccount(null) },
+                        enabled = !state.isActionRunning,
                     ) {
-                        localNotice = "Complete the account fields with a 12-128 character password."
-                    } else {
-                        val submittedPassword = createTemporaryPassword
-                        confirmDeviceCredential {
-                            viewModel.createAccount(
-                                ownerPassword = createOwnerPassword,
-                                command = CreateOwnerAccountCommand(
-                                    username = createUsername,
-                                    displayName = createDisplayName,
-                                    temporaryPassword = submittedPassword,
-                                    requirePasswordChange = createRequiresPasswordChange,
-                                ),
-                                onCreated = {
-                                    oneTimeSecret = OneTimeOwnerSecret("Temporary password", submittedPassword)
-                                    createTemporaryPassword = ""
-                                    createOwnerPassword = ""
-                                },
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to accounts")
+                    }
+                    Column {
+                        Text(selectedAccount.displayName, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "@${selectedAccount.usernameNormalized}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (appLockState.isEnabled) {
+                    Text(
+                        "Enter your app PIN before each owner action.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    AppLockPinField(
+                        value = ownerActionPin,
+                        label = "Owner action PIN",
+                        enabled = !appLockState.isActionRunning && !state.isActionRunning,
+                        onValueChanged = { ownerActionPin = it },
+                    )
+                    appLockState.notice?.let { notice ->
+                        Text(notice, color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text("Create an owner-action PIN", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "The same device-local PIN locks Synapse and protects account changes.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            AppLockSettings(appLockState, appLockViewModel)
                         }
                     }
-                },
-                enabled = !state.isActionRunning,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Create account")
+                }
+                OwnerAccountOperations(
+                    account = selectedAccount,
+                    state = state,
+                    ownerPinReady = appLockState.isEnabled &&
+                        ownerActionPin.length == AppLockPin.PIN_LENGTH,
+                    resetTemporaryPassword = resetTemporaryPassword,
+                    resetOwnerPassword = resetOwnerPassword,
+                    resetRequiresPasswordChange = resetRequiresPasswordChange,
+                    deleteConfirmation = deleteConfirmation,
+                    deleteOwnerPassword = deleteOwnerPassword,
+                    onResetTemporaryPasswordChanged = { resetTemporaryPassword = it },
+                    onResetOwnerPasswordChanged = { resetOwnerPassword = it },
+                    onResetRequiresPasswordChangeChanged = { resetRequiresPasswordChange = it },
+                    onDeleteConfirmationChanged = { deleteConfirmation = it },
+                    onDeleteOwnerPasswordChanged = { deleteOwnerPassword = it },
+                    onGeneratePassword = { resetTemporaryPassword = generateOwnerTemporaryPassword() },
+                    onConfirmSensitiveAction = ::confirmOwnerPin,
+                    onTemporaryPasswordRevealed = { temporaryPassword ->
+                        oneTimeSecret = OneTimeOwnerSecret("Temporary password", temporaryPassword)
+                        resetTemporaryPassword = ""
+                        resetOwnerPassword = ""
+                    },
+                    onDeleteCompleted = {
+                        deleteConfirmation = ""
+                        deleteOwnerPassword = ""
+                    },
+                    viewModel = viewModel,
+                )
             }
         }
 
-        OwnerAdminInvitationSection(
-            state = state,
-            viewModel = viewModel,
-            onInvitationCodeCreated = { invitationCode ->
-                oneTimeSecret = OneTimeOwnerSecret("Invitation code", invitationCode)
-            },
-            onNotice = { notice -> localNotice = notice },
-        )
+        if (selectedAccount == null) {
+            OwnerDisclosureSection(
+                title = "Create a managed account",
+                supportingText =
+                    "Only use this when you are setting someone up yourself. Most people should use an invite code.",
+                expanded = showManagedAccountCreation,
+                onToggle = { showManagedAccountCreation = !showManagedAccountCreation },
+            ) {
+                OutlinedTextField(
+                    value = createUsername,
+                    onValueChange = { createUsername = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Username") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = createDisplayName,
+                    onValueChange = { createDisplayName = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Display name") },
+                    singleLine = true,
+                )
+                SensitivePasswordField(
+                    value = createTemporaryPassword,
+                    label = "Temporary password",
+                    onValueChange = { createTemporaryPassword = it },
+                )
+                OutlinedButton(
+                    onClick = { createTemporaryPassword = generateOwnerTemporaryPassword() },
+                    enabled = !state.isActionRunning,
+                ) {
+                    Text("Generate temporary password")
+                }
+                SensitivePasswordField(
+                    value = createOwnerPassword,
+                    label = "Your current owner password",
+                    onValueChange = { createOwnerPassword = it },
+                )
+                CheckboxLine(
+                    checked = createRequiresPasswordChange,
+                    label = "Require password change on first sign-in",
+                    onCheckedChange = { createRequiresPasswordChange = it },
+                )
+                Button(
+                    onClick = {
+                        if (
+                            createUsername.isBlank() ||
+                            createDisplayName.isBlank() ||
+                            createTemporaryPassword.length !in 12..128 ||
+                            createOwnerPassword.isEmpty()
+                        ) {
+                            localNotice = "Complete the account fields with a 12-128 character password."
+                        } else {
+                            val submittedPassword = createTemporaryPassword
+                            confirmDeviceCredential {
+                                viewModel.createAccount(
+                                    ownerPassword = createOwnerPassword,
+                                    command = CreateOwnerAccountCommand(
+                                        username = createUsername,
+                                        displayName = createDisplayName,
+                                        temporaryPassword = submittedPassword,
+                                        requirePasswordChange = createRequiresPasswordChange,
+                                    ),
+                                    onCreated = {
+                                        oneTimeSecret = OneTimeOwnerSecret("Temporary password", submittedPassword)
+                                        createTemporaryPassword = ""
+                                        createOwnerPassword = ""
+                                    },
+                                )
+                            }
+                        }
+                    },
+                    enabled = !state.isActionRunning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Create account")
+                }
+            }
 
-        OwnerAdminSystemDetails(state)
+            OwnerAdminInvitationSection(
+                state = state,
+                viewModel = viewModel,
+                onInvitationCodeCreated = { invitationCode ->
+                    oneTimeSecret = OneTimeOwnerSecret("Invitation code", invitationCode)
+                },
+                onNotice = { notice -> localNotice = notice },
+            )
+
+            OwnerAdminSystemDetails(state)
+        }
     }
 }
+
 @Composable
 private fun OwnerAccountCard(
     account: OwnerAccountSummary,
-    selected: Boolean,
     enabled: Boolean,
     onSelect: () -> Unit,
     onApprove: () -> Unit,
@@ -293,7 +372,7 @@ private fun OwnerAccountCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .selectable(selected = selected, enabled = enabled, onClick = onSelect),
+            .clickable(enabled = enabled, onClick = onSelect),
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -317,8 +396,8 @@ private fun OwnerAccountCard(
                 }
             }
             Icon(
-                imageVector = if (selected) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = if (selected) "Collapse account settings" else "Expand account settings",
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Open account settings",
             )
         }
     }

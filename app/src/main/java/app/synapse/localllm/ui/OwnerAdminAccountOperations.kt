@@ -29,6 +29,7 @@ import app.synapse.localllm.domain.remote.ResetOwnerAccountPasswordCommand
 internal fun OwnerAccountOperations(
     account: OwnerAccountSummary,
     state: OwnerAdminUiState,
+    ownerPinReady: Boolean,
     resetTemporaryPassword: String,
     resetOwnerPassword: String,
     resetRequiresPasswordChange: Boolean,
@@ -65,22 +66,34 @@ internal fun OwnerAccountOperations(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (account.state == RemoteAccountState.ACTIVE) {
                     OutlinedButton(
-                        onClick = { viewModel.setAccountEnabled(account.accountUid, enabled = false) },
-                        enabled = !state.isActionRunning,
+                        onClick = {
+                            onConfirmSensitiveAction {
+                                viewModel.setAccountEnabled(account.accountUid, enabled = false)
+                            }
+                        },
+                        enabled = ownerPinReady && !state.isActionRunning,
                     ) {
-                        Text("Disable")
+                        Text("Suspend")
                     }
                 } else if (account.state == RemoteAccountState.DISABLED) {
                     OutlinedButton(
-                        onClick = { viewModel.setAccountEnabled(account.accountUid, enabled = true) },
-                        enabled = !state.isActionRunning,
+                        onClick = {
+                            onConfirmSensitiveAction {
+                                viewModel.setAccountEnabled(account.accountUid, enabled = true)
+                            }
+                        },
+                        enabled = ownerPinReady && !state.isActionRunning,
                     ) {
-                        Text("Enable")
+                        Text("Reactivate")
                     }
                 }
                 OutlinedButton(
-                    onClick = { viewModel.revokeAccountSessions(account.accountUid) },
-                    enabled = !state.isActionRunning,
+                    onClick = {
+                        onConfirmSensitiveAction {
+                            viewModel.revokeAccountSessions(account.accountUid)
+                        }
+                    },
+                    enabled = ownerPinReady && !state.isActionRunning,
                 ) {
                     Text("Sign out everywhere")
                 }
@@ -125,7 +138,8 @@ internal fun OwnerAccountOperations(
                         ) { onTemporaryPasswordRevealed(submittedPassword) }
                     }
                 },
-                enabled = !state.isActionRunning &&
+                enabled = ownerPinReady &&
+                    !state.isActionRunning &&
                     resetTemporaryPassword.length in 12..128 &&
                     resetOwnerPassword.isNotEmpty(),
             ) {
@@ -134,8 +148,8 @@ internal fun OwnerAccountOperations(
         }
 
         OwnerDisclosureSection(
-            title = "Devices and advanced actions",
-            supportingText = "Test notifications, remove a device, or permanently delete this account.",
+            title = "Registered devices",
+            supportingText = "Test notifications or remove a signed-in device.",
             expanded = showAdvancedActions,
             onToggle = { showAdvancedActions = !showAdvancedActions },
         ) {
@@ -170,43 +184,48 @@ internal fun OwnerAccountOperations(
                 }
             }
             if (state.selectedAccountDevices.isEmpty()) Text("No registered devices.")
+        }
 
-            if (account.role != RemoteAccountRole.OWNER) {
-                HorizontalDivider()
-                Text("Delete account", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
-                Text("Type @${account.usernameNormalized} and confirm owner access. This cannot be undone.")
-                OutlinedTextField(
-                    value = deleteConfirmation,
-                    onValueChange = onDeleteConfirmationChanged,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Confirm username") },
-                    singleLine = true,
-                )
-                SensitivePasswordField(
-                    value = deleteOwnerPassword,
-                    label = "Your current owner password",
-                    onValueChange = onDeleteOwnerPasswordChanged,
-                )
-                Button(
-                    onClick = {
-                        onConfirmSensitiveAction {
-                            viewModel.deleteAccount(
-                                ownerPassword = deleteOwnerPassword,
-                                targetUid = account.accountUid,
-                                confirmUsername = deleteConfirmation.trim().removePrefix("@"),
-                                onDeleted = onDeleteCompleted,
-                            )
-                        }
-                    },
-                    enabled = !state.isActionRunning &&
-                        deleteOwnerPassword.isNotEmpty() &&
-                        deleteConfirmation.trim().removePrefix("@").equals(
-                            account.usernameNormalized,
-                            ignoreCase = true,
-                        ),
-                ) {
-                    Text("Permanently delete account")
-                }
+        if (account.role != RemoteAccountRole.OWNER) {
+            HorizontalDivider()
+            Text("Danger zone", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+            Text(
+                "Delete this account and its Synapse profile permanently. This cannot be undone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = deleteConfirmation,
+                onValueChange = onDeleteConfirmationChanged,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Type @${account.usernameNormalized} to confirm") },
+                singleLine = true,
+            )
+            SensitivePasswordField(
+                value = deleteOwnerPassword,
+                label = "Your current owner password",
+                onValueChange = onDeleteOwnerPasswordChanged,
+            )
+            Button(
+                onClick = {
+                    onConfirmSensitiveAction {
+                        viewModel.deleteAccount(
+                            ownerPassword = deleteOwnerPassword,
+                            targetUid = account.accountUid,
+                            confirmUsername = deleteConfirmation.trim().removePrefix("@"),
+                            onDeleted = onDeleteCompleted,
+                        )
+                    }
+                },
+                enabled = ownerPinReady &&
+                    !state.isActionRunning &&
+                    deleteOwnerPassword.isNotEmpty() &&
+                    deleteConfirmation.trim().removePrefix("@").equals(
+                        account.usernameNormalized,
+                        ignoreCase = true,
+                    ),
+            ) {
+                Text("Permanently delete account")
             }
         }
     }

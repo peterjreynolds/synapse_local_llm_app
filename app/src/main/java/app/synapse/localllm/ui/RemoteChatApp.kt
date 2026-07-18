@@ -767,6 +767,8 @@ private fun RemoteSignedInShell(
                     )
                     RemoteAppSection.ADMIN -> OwnerAdminPane(
                         viewModel = ownerAdminViewModel,
+                        appLockState = appLockState,
+                        appLockViewModel = appLockViewModel,
                         requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
                     )
                 }

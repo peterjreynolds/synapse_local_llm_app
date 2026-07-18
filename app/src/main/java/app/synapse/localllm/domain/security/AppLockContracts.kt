@@ -46,5 +46,7 @@ interface AppLockRepository {
         newPin: AppLockPin,
     ): AppLockVerificationReceipt
 
+    suspend fun replaceCredentialAfterAccountReauthentication(newPin: AppLockPin)
+
     suspend fun disable(pin: AppLockPin): AppLockVerificationReceipt
 }
