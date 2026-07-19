@@ -154,9 +154,12 @@ still requires all of the following:
      --project "$PROJECT_ID"
    ```
 
-   Provision the same 32-512 character visible-ASCII value to the OpenClaw
-   worker through its secret provider. Do not use `functions:secrets:access`
-   as part of activation or evidence collection.
+   Inject the same 32-512 character visible-ASCII value into the OpenClaw
+   runtime environment as `CINDER_WORKER_TOKEN`, and configure the channel with
+   `workerToken: "${CINDER_WORKER_TOKEN}"` so OpenClaw resolves it to a string
+   before validating the extension configuration. Object-form SecretRefs are
+   not supported for this extension-owned field. Do not use
+   `functions:secrets:access` as part of activation or evidence collection.
 
 2. Deploy only the required Firestore policy and indexes, without `--force`:
 
@@ -193,8 +196,10 @@ still requires all of the following:
 
    Configure those discovered URIs as OpenClaw's claim, complete, fail, and skip
    URLs. Enable both the `synapse-chat` plugin entry and channel, use one stable
-   valid `workerId`, and resolve the same secret through the OpenClaw secret
-   provider. Keep this configuration and runtime in the OpenClaw-owned lane.
+   valid `workerId`, inject `CINDER_WORKER_TOKEN` into the OpenClaw runtime
+   environment, and set the channel's `workerToken` field to the literal
+   configuration substitution `"${CINDER_WORKER_TOKEN}"`. Keep this
+   configuration and runtime in the OpenClaw-owned lane.
 
 5. Start the normal Cinder/OpenClaw runtime. Its claim poll is the heartbeat;
    there is no separate heartbeat endpoint. Confirm the channel is running with
