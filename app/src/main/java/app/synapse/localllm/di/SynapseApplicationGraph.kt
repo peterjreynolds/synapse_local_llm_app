@@ -16,6 +16,7 @@ import app.synapse.localllm.data.calling.AndroidDirectCallAlertGateway
 import app.synapse.localllm.data.calling.AndroidDirectCallForegroundController
 import app.synapse.localllm.data.calling.AndroidDirectCallMediaGateway
 import app.synapse.localllm.data.calling.AndroidDirectCallRingtoneRepository
+import app.synapse.localllm.data.calling.AndroidDirectCallTerminalNotificationStore
 import app.synapse.localllm.data.diagnostics.AndroidDebugArchiveExporter
 import app.synapse.localllm.data.diagnostics.RoomGenerationDiagnosticsRepository
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_1_2
@@ -205,6 +206,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         directCallRingtoneRepository,
     )
     val directCallForegroundController = AndroidDirectCallForegroundController(applicationContext)
+    val directCallTerminalNotificationStore = AndroidDirectCallTerminalNotificationStore(applicationContext)
     val remoteAiParticipantGateway =
         FirebaseRemoteAiParticipantGateway(
             firebaseAuth = firebaseAuth,

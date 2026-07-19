@@ -75,15 +75,18 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun handleDirectCallNotification(payload: DirectCallNotificationPayload) {
-        if (payload.event == DirectCallNotificationEvent.ENDED) {
-            requireSynapseApplication().graph.directCallAlertGateway.stop()
-            NotificationManagerCompat.from(this).cancel(
-                payload.callId.raw,
-                DIRECT_CALL_NOTIFICATION_ID,
-            )
+        val graph = requireSynapseApplication().graph
+        val action = resolveDirectCallNotificationAction(
+            payload = payload,
+            nowEpochMillis = System.currentTimeMillis(),
+            terminalRecorded = graph.directCallTerminalNotificationStore.contains(payload.callId),
+        )
+        if (action == DirectCallNotificationAction.STOP_TERMINAL) {
+            graph.directCallTerminalNotificationStore.record(payload.callId)
+            graph.directCallAlertGateway.stop()
+            NotificationManagerCompat.from(this).cancel(payload.callId.raw, DIRECT_CALL_NOTIFICATION_ID)
             return
         }
-        if (payload.expiresAtMillis <= System.currentTimeMillis()) return
         if (!resolveNotificationPermissionState(this).allowsNotifications) return
         ensureDirectCallNotificationChannel()
         val notificationManager = getSystemService(NotificationManager::class.java)
@@ -92,10 +95,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
         ) {
             return
         }
-        requireSynapseApplication()
-            .graph
-            .directCallAlertGateway
-            .startIncomingRingtone(payload.expiresAtMillis)
+        graph.directCallAlertGateway.startIncomingRingtone(payload.expiresAtMillis)
         val notification = NotificationCompat.Builder(this, DIRECT_CALL_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle("Synapse Chat")
@@ -218,6 +218,11 @@ internal enum class DirectCallNotificationEvent {
     ENDED,
 }
 
+internal enum class DirectCallNotificationAction {
+    SHOW_INCOMING,
+    STOP_TERMINAL,
+}
+
 internal data class DirectCallNotificationPayload(
     val callId: RemoteDirectCallId,
     val event: DirectCallNotificationEvent,
@@ -270,6 +275,21 @@ internal fun parseDirectCallNotificationPayload(data: Map<String, String>): Dire
         mediaKind = mediaKind,
     )
 }
+
+internal fun resolveDirectCallNotificationAction(
+    payload: DirectCallNotificationPayload,
+    nowEpochMillis: Long,
+    terminalRecorded: Boolean,
+): DirectCallNotificationAction =
+    if (
+        payload.event == DirectCallNotificationEvent.ENDED ||
+        terminalRecorded ||
+        payload.expiresAtMillis <= nowEpochMillis
+    ) {
+        DirectCallNotificationAction.STOP_TERMINAL
+    } else {
+        DirectCallNotificationAction.SHOW_INCOMING
+    }
 
 const val EXTRA_REMOTE_ROOM_ID = "app.synapse.localllm.extra.REMOTE_ROOM_ID"
 const val EXTRA_DIRECT_CALL_ID = "app.synapse.localllm.extra.DIRECT_CALL_ID"

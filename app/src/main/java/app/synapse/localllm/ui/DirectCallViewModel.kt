@@ -8,6 +8,7 @@ import app.synapse.localllm.domain.calling.DirectCallAlertGateway
 import app.synapse.localllm.domain.calling.DirectCallForegroundController
 import app.synapse.localllm.domain.calling.DirectCallMediaConnectionState
 import app.synapse.localllm.domain.calling.DirectCallMediaGateway
+import app.synapse.localllm.domain.calling.DirectCallTerminalNotificationStore
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteDirectCallGateway
 import app.synapse.localllm.domain.remote.RemoteDirectCallId
@@ -56,6 +57,7 @@ class DirectCallViewModel(
     private val mediaGateway: DirectCallMediaGateway,
     private val alertGateway: DirectCallAlertGateway,
     private val foregroundController: DirectCallForegroundController,
+    private val terminalNotificationStore: DirectCallTerminalNotificationStore,
     private val nowEpochMillis: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(DirectCallUiState())
@@ -89,8 +91,7 @@ class DirectCallViewModel(
                     if (callId == null) {
                         if (mutableUiState.value.phase !in setOf(DirectCallUiPhase.STARTING, DirectCallUiPhase.ENDING)) {
                             callSessionJob?.cancel()
-                            stopMedia()
-                            mutableUiState.value = DirectCallUiState()
+                            finishCallLocally(null)
                         }
                     } else {
                         observeCall(updatedAccountUid, callId)
@@ -142,6 +143,9 @@ class DirectCallViewModel(
         val activeAccountUid = requireNotNull(accountUid) { "Sign in before ending a call." }
         val session = requireNotNull(mutableUiState.value.session) { "The call is no longer available." }
         mutableUiState.update { state -> state.copy(phase = DirectCallUiPhase.ENDING) }
+        callExpiryJob?.cancel()
+        foregroundController.dismissIncomingNotification(session.callId)
+        stopMedia()
         callGateway.endCall(activeAccountUid, session.callId)
         finishCallLocally("Call ended.")
     }
@@ -206,7 +210,7 @@ class DirectCallViewModel(
                 callGateway.observeCall(activeAccountUid, callId).collectLatest { session ->
                     if (session == null) {
                         if (pendingNotificationCallId == callId) pendingNotificationCallId = null
-                        finishCallLocally(null)
+                        finishCallLocally(null, callId)
                     } else {
                         presentSession(activeAccountUid, session)
                     }
@@ -237,7 +241,7 @@ class DirectCallViewModel(
                 }
                 mutableUiState.update { state -> state.copy(phase = phase, session = session, notice = null) }
                 if (phase == DirectCallUiPhase.OUTGOING_RINGING) {
-                    alertGateway.startOutgoingRingback()
+                    alertGateway.startOutgoingRingback(session.expiresAtMillis)
                     runCatching { ensureCallForeground(session) }
                         .onFailure { failure ->
                             failAndEndCall(failure.message ?: "Android could not keep the outgoing call active.")
@@ -259,9 +263,10 @@ class DirectCallViewModel(
                 }
                 if (mediaCallId != session.callId) startMedia(activeAccountUid, session)
             }
-            RemoteDirectCallState.DECLINED -> finishCallLocally("Call declined.")
-            RemoteDirectCallState.ENDED -> finishCallLocally("Call ended.")
-            RemoteDirectCallState.MISSED -> finishCallLocally("Missed call.")
+            RemoteDirectCallState.DECLINED -> finishCallLocally("Call declined.", session.callId)
+            RemoteDirectCallState.CANCELED -> finishCallLocally("Call canceled.", session.callId)
+            RemoteDirectCallState.ENDED -> finishCallLocally("Call ended.", session.callId)
+            RemoteDirectCallState.MISSED -> finishCallLocally("Missed call.", session.callId)
         }
     }
 
@@ -369,12 +374,24 @@ class DirectCallViewModel(
     ) {
         callExpiryJob?.cancel()
         callExpiryJob = viewModelScope.launch {
-            delay((session.expiresAtMillis - nowEpochMillis()).coerceAtLeast(0L))
-            if (mutableUiState.value.session?.callId != session.callId) return@launch
-            runCatching { callGateway.endCall(activeAccountUid, session.callId) }
-            finishCallLocally(
-                if (activeAccountUid == session.callerUid) "No answer." else "Missed call.",
-            )
+            var delayMillis = (session.expiresAtMillis - nowEpochMillis()).coerceAtLeast(0L)
+            while (mutableUiState.value.session?.callId == session.callId) {
+                delay(delayMillis)
+                val updated = try {
+                    callGateway.expireCall(activeAccountUid, session.callId)
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    failCall(exception.message ?: "Could not finalize the unanswered call.")
+                    return@launch
+                }
+                if (updated.state == RemoteDirectCallState.RINGING) {
+                    delayMillis = CALL_EXPIRY_RETRY_MILLIS
+                    continue
+                }
+                presentSession(activeAccountUid, updated)
+                return@launch
+            }
         }
     }
 
@@ -394,9 +411,15 @@ class DirectCallViewModel(
         }
     }
 
-    private fun finishCallLocally(notice: String?) {
+    private fun finishCallLocally(
+        notice: String?,
+        completedCallId: RemoteDirectCallId? = mutableUiState.value.session?.callId,
+    ) {
         callExpiryJob?.cancel()
-        mutableUiState.value.session?.callId?.let(foregroundController::dismissIncomingNotification)
+        completedCallId?.let { callId ->
+            terminalNotificationStore.record(callId)
+            foregroundController.dismissIncomingNotification(callId)
+        }
         stopMedia()
         mutableUiState.value = DirectCallUiState(notice = notice)
     }
@@ -456,6 +479,8 @@ class DirectCallViewModel(
     }
 }
 
+private const val CALL_EXPIRY_RETRY_MILLIS = 1_000L
+
 class DirectCallViewModelFactory(
     private val graph: SynapseApplicationGraph,
 ) : ViewModelProvider.Factory {
@@ -467,6 +492,7 @@ class DirectCallViewModelFactory(
                     mediaGateway = graph.directCallMediaGateway,
                     alertGateway = graph.directCallAlertGateway,
                     foregroundController = graph.directCallForegroundController,
+                    terminalNotificationStore = graph.directCallTerminalNotificationStore,
                 ),
             ) ?: throw IllegalArgumentException("Unable to create DirectCallViewModel.")
         }

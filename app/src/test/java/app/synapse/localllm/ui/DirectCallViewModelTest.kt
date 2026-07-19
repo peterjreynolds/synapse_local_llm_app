@@ -4,6 +4,7 @@ import app.synapse.localllm.domain.calling.DirectCallAlertGateway
 import app.synapse.localllm.domain.calling.DirectCallForegroundController
 import app.synapse.localllm.domain.calling.DirectCallMediaConnectionState
 import app.synapse.localllm.domain.calling.DirectCallMediaGateway
+import app.synapse.localllm.domain.calling.DirectCallTerminalNotificationStore
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteDirectCallGateway
 import app.synapse.localllm.domain.remote.RemoteDirectCallId
@@ -19,6 +20,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -43,7 +45,13 @@ class DirectCallViewModelTest {
         val mediaGateway = RecordingMediaGateway()
         val alertGateway = RecordingAlertGateway()
         val foregroundController = RecordingForegroundController()
-        val viewModel = DirectCallViewModel(gateway, mediaGateway, alertGateway, foregroundController)
+        val viewModel = DirectCallViewModel(
+            gateway,
+            mediaGateway,
+            alertGateway,
+            foregroundController,
+            RecordingTerminalNotificationStore(),
+        )
         viewModel.bindAccount(PETER_UID)
         runCurrent()
 
@@ -85,6 +93,7 @@ class DirectCallViewModelTest {
             mediaGateway,
             alertGateway,
             RecordingForegroundController(),
+            RecordingTerminalNotificationStore(),
         )
         viewModel.bindAccount(PETER_UID)
         runCurrent()
@@ -113,6 +122,7 @@ class DirectCallViewModelTest {
             mediaGateway,
             RecordingAlertGateway(),
             foregroundController,
+            RecordingTerminalNotificationStore(),
         )
         viewModel.bindAccount(PETER_UID)
         runCurrent()
@@ -165,6 +175,7 @@ class DirectCallViewModelTest {
             mediaGateway,
             RecordingAlertGateway(),
             RecordingForegroundController(),
+            RecordingTerminalNotificationStore(),
         )
 
         viewModel.bindAccount(PETER_UID)
@@ -191,6 +202,7 @@ class DirectCallViewModelTest {
             RecordingMediaGateway(),
             RecordingAlertGateway(),
             RecordingForegroundController(),
+            RecordingTerminalNotificationStore(),
         )
 
         viewModel.reportMicrophonePermissionDenied()
@@ -201,12 +213,123 @@ class DirectCallViewModelTest {
         assertEquals(DirectCallUiPhase.IDLE, viewModel.uiState.value.phase)
     }
 
+    @Test
+    fun callerHangupStopsRingbackBeforePublishingCanceledState() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway()
+        val alertGateway = RecordingAlertGateway()
+        val terminalStore = RecordingTerminalNotificationStore()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            RecordingMediaGateway(),
+            alertGateway,
+            RecordingForegroundController(),
+            terminalStore,
+        )
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+        viewModel.startCall(ROOM_ID)
+        runCurrent()
+        assertTrue(alertGateway.ringbackPlaying)
+
+        viewModel.endCall()
+        runCurrent()
+
+        assertFalse(alertGateway.ringbackPlaying)
+        assertEquals(RemoteDirectCallState.CANCELED, gateway.session.value?.state)
+        assertEquals(DirectCallUiPhase.IDLE, viewModel.uiState.value.phase)
+        assertTrue(terminalStore.contains(CALL_ID))
+    }
+
+    @Test
+    fun authoritativeDeadlineExpiresUnansweredCallAfterTwelveRingCycles() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway(
+            initialSession = directCallSession(expiresAtMillis = TWELVE_RING_CYCLES_MILLIS),
+        )
+        val alertGateway = RecordingAlertGateway()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            RecordingMediaGateway(),
+            alertGateway,
+            RecordingForegroundController(),
+            RecordingTerminalNotificationStore(),
+            nowEpochMillis = { testScheduler.currentTime },
+        )
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+
+        advanceTimeBy(TWELVE_RING_CYCLES_MILLIS)
+        runCurrent()
+
+        assertEquals(1, gateway.expirationCount)
+        assertEquals(RemoteDirectCallState.MISSED, gateway.session.value?.state)
+        assertEquals(DirectCallUiPhase.IDLE, viewModel.uiState.value.phase)
+        assertFalse(alertGateway.ringbackPlaying)
+    }
+
+    @Test
+    fun remoteCancellationStopsIncomingRingtoneAndCannotBeAnswered() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway(
+            initialSession = directCallSession(callerUid = TRISH_UID, calleeUid = PETER_UID),
+        )
+        val alertGateway = RecordingAlertGateway()
+        val terminalStore = RecordingTerminalNotificationStore()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            RecordingMediaGateway(),
+            alertGateway,
+            RecordingForegroundController(),
+            terminalStore,
+        )
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+        assertTrue(alertGateway.incomingRingtonePlaying)
+
+        gateway.session.value = gateway.session.value?.copy(state = RemoteDirectCallState.CANCELED)
+        runCurrent()
+
+        assertFalse(alertGateway.incomingRingtonePlaying)
+        assertEquals(DirectCallUiPhase.IDLE, viewModel.uiState.value.phase)
+        assertTrue(terminalStore.contains(CALL_ID))
+    }
+
+    @Test
+    fun relaunchRecoveryKeepsTerminalCallSilent() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway(
+            initialSession = directCallSession(
+                callerUid = TRISH_UID,
+                calleeUid = PETER_UID,
+                state = RemoteDirectCallState.MISSED,
+            ),
+        )
+        val alertGateway = RecordingAlertGateway()
+        val terminalStore = RecordingTerminalNotificationStore()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            RecordingMediaGateway(),
+            alertGateway,
+            RecordingForegroundController(),
+            terminalStore,
+        )
+
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+
+        assertEquals(DirectCallUiPhase.IDLE, viewModel.uiState.value.phase)
+        assertFalse(alertGateway.incomingRingtonePlaying)
+        assertTrue(terminalStore.contains(CALL_ID))
+    }
+
     private class RecordingCallGateway(
         initialSession: RemoteDirectCallSession? = null,
     ) : RemoteDirectCallGateway {
         val activeCallId = MutableStateFlow(initialSession?.callId)
         val session = MutableStateFlow<RemoteDirectCallSession?>(initialSession)
         val signals = MutableStateFlow<List<RemoteDirectCallSignal>>(emptyList())
+        var expirationCount = 0
 
         override fun observeActiveCallId(accountUid: RemoteAccountUid): Flow<RemoteDirectCallId?> = activeCallId
 
@@ -248,7 +371,26 @@ class DirectCallViewModelTest {
         override suspend fun endCall(
             accountUid: RemoteAccountUid,
             callId: RemoteDirectCallId,
-        ): RemoteDirectCallSession = requireNotNull(session.value).copy(state = RemoteDirectCallState.ENDED).also {
+        ): RemoteDirectCallSession = requireNotNull(session.value).let { current ->
+            current.copy(
+                state = if (current.state == RemoteDirectCallState.RINGING) {
+                    RemoteDirectCallState.CANCELED
+                } else {
+                    RemoteDirectCallState.ENDED
+                },
+            )
+        }.also {
+            session.value = it
+            activeCallId.value = null
+        }
+
+        override suspend fun expireCall(
+            accountUid: RemoteAccountUid,
+            callId: RemoteDirectCallId,
+        ): RemoteDirectCallSession = requireNotNull(session.value).copy(
+            state = RemoteDirectCallState.MISSED,
+        ).also {
+            expirationCount += 1
             session.value = it
             activeCallId.value = null
         }
@@ -317,7 +459,7 @@ class DirectCallViewModelTest {
         var ringbackPlaying = false
         var incomingRingtonePlaying = false
 
-        override fun startOutgoingRingback() {
+        override fun startOutgoingRingback(expiresAtMillis: Long) {
             ringbackPlaying = true
             incomingRingtonePlaying = false
         }
@@ -330,6 +472,16 @@ class DirectCallViewModelTest {
         override fun stop() {
             ringbackPlaying = false
             incomingRingtonePlaying = false
+        }
+    }
+
+    private class RecordingTerminalNotificationStore : DirectCallTerminalNotificationStore {
+        private val callIds = mutableSetOf<RemoteDirectCallId>()
+
+        override fun contains(callId: RemoteDirectCallId): Boolean = callId in callIds
+
+        override fun record(callId: RemoteDirectCallId) {
+            callIds += callId
         }
     }
 
@@ -365,14 +517,18 @@ class DirectCallViewModelTest {
             callerUid: RemoteAccountUid = PETER_UID,
             calleeUid: RemoteAccountUid = TRISH_UID,
             mediaKind: RemoteDirectCallMediaKind = RemoteDirectCallMediaKind.AUDIO,
+            state: RemoteDirectCallState = RemoteDirectCallState.RINGING,
+            expiresAtMillis: Long = Long.MAX_VALUE,
         ) = RemoteDirectCallSession(
             callId = CALL_ID,
             callerUid = callerUid,
             calleeUid = calleeUid,
             roomId = ROOM_ID,
             mediaKind = mediaKind,
-            state = RemoteDirectCallState.RINGING,
-            expiresAtMillis = Long.MAX_VALUE,
+            state = state,
+            expiresAtMillis = expiresAtMillis,
         )
+
+        const val TWELVE_RING_CYCLES_MILLIS = 72_000L
     }
 }

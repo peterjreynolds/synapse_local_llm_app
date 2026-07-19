@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildDirectCallNotificationData,
+  DIRECT_CALL_MAXIMUM_RING_CYCLES,
+  DIRECT_CALL_RING_CYCLE_MILLIS,
+  DIRECT_CALL_RINGING_TIMEOUT_MILLIS,
   isDirectCallPointerBusy,
   parseDirectCallSignalCommand,
   parseStartDirectCallCommand,
@@ -17,6 +20,12 @@ test("narrows video calls while keeping old clients audio-only", () => {
     {mediaKind: "VIDEO", roomId},
   );
   assert.throws(() => parseStartDirectCallCommand({mediaKind: "SCREEN", roomId}));
+});
+
+test("derives the authoritative ringing deadline from twelve complete cycles", () => {
+  assert.equal(DIRECT_CALL_RING_CYCLE_MILLIS, 6_000);
+  assert.equal(DIRECT_CALL_MAXIMUM_RING_CYCLES, 12);
+  assert.equal(DIRECT_CALL_RINGING_TIMEOUT_MILLIS, 72_000);
 });
 
 test("narrows offer and ICE call signals", () => {

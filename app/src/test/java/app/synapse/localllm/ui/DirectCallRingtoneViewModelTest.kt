@@ -102,7 +102,7 @@ class DirectCallRingtoneViewModelTest {
         var expiresAtMillis: Long? = null
         var incomingRingtonePlaying = false
 
-        override fun startOutgoingRingback() = Unit
+        override fun startOutgoingRingback(expiresAtMillis: Long) = Unit
 
         override fun startIncomingRingtone(expiresAtMillis: Long) {
             this.expiresAtMillis = expiresAtMillis

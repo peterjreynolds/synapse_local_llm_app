@@ -207,6 +207,83 @@ test("a direct call rings, answers, exchanges signaling, and clears both active 
   assert.equal((await call(peterClient, "endDirectCall")({callId})).data.state, "ENDED");
 });
 
+test("caller cancellation is terminal, idempotent, and prevents a later answer", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  const trishClient = await signIn("trish", trish);
+  const room = await call(peterClient, "openDirectRoom")({targetUid: trish.uid});
+  const started = await call(peterClient, "startDirectCall")({roomId: room.data.roomId});
+
+  const canceled = await call(peterClient, "endDirectCall")({callId: started.data.callId});
+
+  assert.equal(canceled.data.state, "CANCELED");
+  assert.equal((await adminFirestore.doc(`activeCallPointers/${peter.uid}`).get()).exists, false);
+  assert.equal((await adminFirestore.doc(`activeCallPointers/${trish.uid}`).get()).exists, false);
+  const callSnapshot = await adminFirestore.doc(`callSessions/${started.data.callId}`).get();
+  assert.equal(callSnapshot.get("state"), "CANCELED");
+  assert.equal(callSnapshot.get("endedByUid"), peter.uid);
+  assert.equal((await call(peterClient, "endDirectCall")({callId: started.data.callId})).data.state, "CANCELED");
+  assert.equal(
+    (await call(trishClient, "respondDirectCall")({action: "ACCEPT", callId: started.data.callId})).data.state,
+    "CANCELED",
+  );
+});
+
+test("twelve-cycle deadline transitions unanswered calls to missed exactly once", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  const trishClient = await signIn("trish", trish);
+  const room = await call(peterClient, "openDirectRoom")({targetUid: trish.uid});
+  const started = await call(peterClient, "startDirectCall")({roomId: room.data.roomId});
+  const callReference = adminFirestore.doc(`callSessions/${started.data.callId}`);
+  const ringingSnapshot = await callReference.get();
+
+  assert.equal(ringingSnapshot.get("expiresAt").toMillis() - ringingSnapshot.get("createdAt").toMillis(), 72_000);
+  await callReference.update({expiresAt: AdminTimestamp.fromMillis(Date.now() - 1)});
+
+  const missed = await call(peterClient, "expireDirectCall")({callId: started.data.callId});
+
+  assert.equal(missed.data.state, "MISSED");
+  assert.equal((await call(trishClient, "expireDirectCall")({callId: started.data.callId})).data.state, "MISSED");
+  assert.equal(
+    (await call(trishClient, "respondDirectCall")({action: "ACCEPT", callId: started.data.callId})).data.state,
+    "MISSED",
+  );
+  const missedSnapshot = await callReference.get();
+  assert.equal(missedSnapshot.get("state"), "MISSED");
+  assert.equal(missedSnapshot.get("endedByUid"), null);
+});
+
+test("answer-cancel and answer-timeout races never resurrect terminal calls", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  const trishClient = await signIn("trish", trish);
+  const room = await call(peterClient, "openDirectRoom")({targetUid: trish.uid});
+  const first = await call(peterClient, "startDirectCall")({roomId: room.data.roomId});
+
+  await Promise.all([
+    call(trishClient, "respondDirectCall")({action: "ACCEPT", callId: first.data.callId}),
+    call(peterClient, "endDirectCall")({callId: first.data.callId}),
+  ]);
+  const firstTerminalState = (await adminFirestore.doc(`callSessions/${first.data.callId}`).get()).get("state");
+  assert.equal(["CANCELED", "ENDED"].includes(firstTerminalState), true);
+  assert.equal((await adminFirestore.doc(`activeCallPointers/${peter.uid}`).get()).exists, false);
+  assert.equal((await adminFirestore.doc(`activeCallPointers/${trish.uid}`).get()).exists, false);
+
+  const second = await call(peterClient, "startDirectCall")({roomId: room.data.roomId});
+  const secondReference = adminFirestore.doc(`callSessions/${second.data.callId}`);
+  await secondReference.update({expiresAt: AdminTimestamp.fromMillis(Date.now() - 1)});
+  await Promise.all([
+    call(trishClient, "respondDirectCall")({action: "ACCEPT", callId: second.data.callId}),
+    call(peterClient, "expireDirectCall")({callId: second.data.callId}),
+  ]);
+
+  assert.equal((await secondReference.get()).get("state"), "MISSED");
+});
+
 test("blocked pairs and disabled callees cannot receive direct calls", async () => {
   const peter = await seedActiveAccount("peter", "OWNER");
   const trish = await seedActiveAccount("trish");

@@ -157,6 +157,18 @@ class FirebaseRemoteDirectCallGateway(
         return callForSession("endDirectCall", mapOf("callId" to callId.raw), "end the call")
     }
 
+    override suspend fun expireCall(
+        accountUid: RemoteAccountUid,
+        callId: RemoteDirectCallId,
+    ): RemoteDirectCallSession {
+        requireAuthenticatedUid(accountUid)
+        return callForSession(
+            "expireDirectCall",
+            mapOf("callId" to callId.raw),
+            "finalize the unanswered call",
+        )
+    }
+
     override suspend fun publishSignal(
         accountUid: RemoteAccountUid,
         callId: RemoteDirectCallId,

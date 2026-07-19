@@ -31,25 +31,29 @@ class AndroidDirectCallAlertGateway(
             mainHandler.postDelayed(this, RINGBACK_CADENCE_MILLIS)
         }
     }
-    private val incomingRingtoneTimeout = Runnable(::stop)
+    private val ringingDeadline = Runnable(::stop)
 
-    override fun startOutgoingRingback() {
+    override fun startOutgoingRingback(expiresAtMillis: Long) {
         if (ringbackGenerator != null) return
+        val remainingMillis = (expiresAtMillis - nowEpochMillis())
+            .coerceAtMost(MAXIMUM_RINGING_MILLIS)
+        if (remainingMillis <= 0L) return
         stop()
         val generator = runCatching {
             ToneGenerator(AudioManager.STREAM_MUSIC, RINGBACK_VOLUME_PERCENT)
         }.getOrNull() ?: return
         ringbackGenerator = generator
         ringbackPulse.run()
+        mainHandler.postDelayed(ringingDeadline, remainingMillis)
     }
 
     override fun startIncomingRingtone(expiresAtMillis: Long) {
         val remainingMillis = (expiresAtMillis - nowEpochMillis())
-            .coerceAtMost(MAXIMUM_INCOMING_RING_MILLIS)
+            .coerceAtMost(MAXIMUM_RINGING_MILLIS)
         if (remainingMillis <= 0L) return
-        mainHandler.removeCallbacks(incomingRingtoneTimeout)
+        mainHandler.removeCallbacks(ringingDeadline)
         if (incomingRingtone?.isPlaying == true) {
-            mainHandler.postDelayed(incomingRingtoneTimeout, remainingMillis)
+            mainHandler.postDelayed(ringingDeadline, remainingMillis)
             return
         }
         stop()
@@ -59,12 +63,12 @@ class AndroidDirectCallAlertGateway(
             defaultUri,
         ).distinct().firstNotNullOfOrNull(::loadAndStartRingtone) ?: return
         incomingRingtone = ringtone
-        mainHandler.postDelayed(incomingRingtoneTimeout, remainingMillis)
+        mainHandler.postDelayed(ringingDeadline, remainingMillis)
     }
 
     override fun stop() {
         mainHandler.removeCallbacks(ringbackPulse)
-        mainHandler.removeCallbacks(incomingRingtoneTimeout)
+        mainHandler.removeCallbacks(ringingDeadline)
         ringbackGenerator?.stopTone()
         ringbackGenerator?.release()
         ringbackGenerator = null
@@ -92,7 +96,7 @@ class AndroidDirectCallAlertGateway(
         const val RINGBACK_VOLUME_PERCENT = 100
         const val RINGBACK_BURST_MILLIS = 2_000
         const val RINGBACK_CADENCE_MILLIS = 6_000L
-        const val MAXIMUM_INCOMING_RING_MILLIS = 60_000L
+        const val MAXIMUM_RINGING_MILLIS = RINGBACK_CADENCE_MILLIS * 12
         const val MAXIMUM_RINGTONE_VOLUME = 1.0f
     }
 }

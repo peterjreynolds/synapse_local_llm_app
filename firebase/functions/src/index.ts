@@ -127,6 +127,7 @@ export {
 } from "./cinderWorker.js";
 export {
   endDirectCall,
+  expireDirectCall,
   publishDirectCallSignal,
   respondDirectCall,
   startDirectCall,

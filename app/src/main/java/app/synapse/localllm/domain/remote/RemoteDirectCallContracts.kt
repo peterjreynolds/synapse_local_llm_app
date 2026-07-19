@@ -11,6 +11,7 @@ value class RemoteDirectCallSignalId(val raw: String)
 enum class RemoteDirectCallState {
     RINGING,
     ACTIVE,
+    CANCELED,
     DECLINED,
     ENDED,
     MISSED,
@@ -92,6 +93,11 @@ interface RemoteDirectCallGateway {
     ): RemoteDirectCallSession
 
     suspend fun endCall(
+        accountUid: RemoteAccountUid,
+        callId: RemoteDirectCallId,
+    ): RemoteDirectCallSession
+
+    suspend fun expireCall(
         accountUid: RemoteAccountUid,
         callId: RemoteDirectCallId,
     ): RemoteDirectCallSession

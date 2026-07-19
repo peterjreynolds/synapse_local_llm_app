@@ -2,6 +2,7 @@ package app.synapse.localllm
 
 import app.synapse.localllm.domain.notifications.NotificationPermissionState
 import app.synapse.localllm.domain.notifications.notificationPermissionState
+import app.synapse.localllm.domain.remote.RemoteDirectCallId
 import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -160,6 +161,37 @@ class SynapseFirebaseMessagingServiceTest {
                     "mediaKind" to "SCREEN",
                     "type" to "SYNAPSE_DIRECT_CALL",
                 ),
+            ),
+        )
+    }
+
+    @Test
+    fun terminalAndExpiredCallNotificationsAlwaysStopBackgroundRinging() {
+        val incoming = DirectCallNotificationPayload(
+            callId = RemoteDirectCallId("call_${"d".repeat(32)}"),
+            event = DirectCallNotificationEvent.INCOMING,
+            expiresAtMillis = 10_000L,
+            mediaKind = RemoteDirectCallMediaKind.AUDIO,
+        )
+
+        assertEquals(
+            DirectCallNotificationAction.SHOW_INCOMING,
+            resolveDirectCallNotificationAction(incoming, nowEpochMillis = 9_999L, terminalRecorded = false),
+        )
+        assertEquals(
+            DirectCallNotificationAction.STOP_TERMINAL,
+            resolveDirectCallNotificationAction(incoming, nowEpochMillis = 10_000L, terminalRecorded = false),
+        )
+        assertEquals(
+            DirectCallNotificationAction.STOP_TERMINAL,
+            resolveDirectCallNotificationAction(incoming, nowEpochMillis = 9_999L, terminalRecorded = true),
+        )
+        assertEquals(
+            DirectCallNotificationAction.STOP_TERMINAL,
+            resolveDirectCallNotificationAction(
+                incoming.copy(event = DirectCallNotificationEvent.ENDED),
+                nowEpochMillis = 9_999L,
+                terminalRecorded = false,
             ),
         )
     }

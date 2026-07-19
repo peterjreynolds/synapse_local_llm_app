@@ -2,6 +2,11 @@ const DIRECT_CALL_ID_PATTERN = /^call_[a-f0-9]{32}$/;
 const DIRECT_CALL_SIGNAL_ID_PATTERN = /^signal_[a-f0-9]{32}$/;
 const DIRECT_ROOM_ID_PATTERN = /^direct_[a-f0-9]{64}$/;
 
+export const DIRECT_CALL_RING_CYCLE_MILLIS = 6_000;
+export const DIRECT_CALL_MAXIMUM_RING_CYCLES = 12;
+export const DIRECT_CALL_RINGING_TIMEOUT_MILLIS =
+  DIRECT_CALL_RING_CYCLE_MILLIS * DIRECT_CALL_MAXIMUM_RING_CYCLES;
+
 export type DirectCallSignalKind = "ANSWER" | "ICE" | "OFFER";
 export type DirectCallMediaKind = "AUDIO" | "VIDEO";
 

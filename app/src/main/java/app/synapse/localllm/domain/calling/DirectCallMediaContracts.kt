@@ -14,7 +14,7 @@ enum class DirectCallMediaConnectionState {
 }
 
 interface DirectCallAlertGateway {
-    fun startOutgoingRingback()
+    fun startOutgoingRingback(expiresAtMillis: Long)
 
     fun startIncomingRingtone(expiresAtMillis: Long)
 
@@ -54,4 +54,10 @@ interface DirectCallForegroundController {
     fun stop()
 
     fun dismissIncomingNotification(callId: RemoteDirectCallId)
+}
+
+interface DirectCallTerminalNotificationStore {
+    fun contains(callId: RemoteDirectCallId): Boolean
+
+    fun record(callId: RemoteDirectCallId)
 }

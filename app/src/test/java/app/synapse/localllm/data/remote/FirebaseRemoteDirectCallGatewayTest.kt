@@ -42,6 +42,20 @@ class FirebaseRemoteDirectCallGatewayTest {
     }
 
     @Test
+    fun callReceiptParserAcceptsCallerCancellationAsTerminal() {
+        val session = mapOf(
+            "callId" to "call_${"a".repeat(32)}",
+            "calleeUid" to "trish-uid",
+            "callerUid" to "peter-uid",
+            "expiresAtMillis" to 12_345L,
+            "roomId" to "direct_${"b".repeat(64)}",
+            "state" to "CANCELED",
+        ).toDirectCallSessionReceipt()
+
+        assertEquals(RemoteDirectCallState.CANCELED, session.state)
+    }
+
+    @Test
     fun callReceiptParserFailsClosedForMalformedIdentifiersAndStates() {
         val base = mapOf(
             "callId" to "call_${"a".repeat(32)}",

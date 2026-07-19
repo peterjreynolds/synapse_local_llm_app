@@ -9,6 +9,7 @@ import {
 import {enforceCallableRateLimit} from "./callableRateLimit.js";
 import {
   buildDirectCallNotificationData,
+  DIRECT_CALL_RINGING_TIMEOUT_MILLIS,
   DirectCallMediaKind,
   DirectCallSignalCommand,
   isDirectCallPointerBusy,
@@ -24,10 +25,9 @@ import {
 } from "./firebaseAdmin.js";
 import {buildReciprocalBlockReferences} from "./privacyAdmin.js";
 
-const RINGING_TIMEOUT_MILLIS = 45_000;
 const ACTIVE_CALL_TIMEOUT_MILLIS = 8 * 60 * 60_000;
 
-type DirectCallState = "ACTIVE" | "DECLINED" | "ENDED" | "MISSED" | "RINGING";
+type DirectCallState = "ACTIVE" | "CANCELED" | "DECLINED" | "ENDED" | "MISSED" | "RINGING";
 
 interface DirectCallReceipt {
   callId: string;
@@ -63,7 +63,7 @@ export const startDirectCall = onCall(
     const calleeProfile = firebaseAdminFirestore.doc(`profiles/${calleeUid}`);
     const blockReferences = buildReciprocalBlockReferences(callerUid, calleeUid);
     const now = Timestamp.now();
-    const expiresAt = Timestamp.fromMillis(now.toMillis() + RINGING_TIMEOUT_MILLIS);
+    const expiresAt = Timestamp.fromMillis(now.toMillis() + DIRECT_CALL_RINGING_TIMEOUT_MILLIS);
 
     await firebaseAdminFirestore.runTransaction(async (transaction) => {
       const [
@@ -143,7 +143,9 @@ export const respondDirectCall = onCall(
     const command = parseCommand(() => parseDirectCallResponseCommand(request.data));
     const callReference = firebaseAdminFirestore.doc(`callSessions/${command.callId}`);
     let receipt: DirectCallReceipt | null = null;
+    let notificationRecipientUids: string[] = [];
     await firebaseAdminFirestore.runTransaction(async (transaction) => {
+      notificationRecipientUids = [];
       const call = await transaction.get(callReference);
       const session = readDirectCallSession(call.data(), command.callId);
       if (session.calleeUid !== uid) {
@@ -160,6 +162,10 @@ export const respondDirectCall = onCall(
         receipt = session;
         return;
       }
+      if (isTerminalDirectCallState(session.state)) {
+        receipt = session;
+        return;
+      }
       if (session.state !== "RINGING") {
         throw new HttpsError("failed-precondition", "This call is no longer ringing.");
       }
@@ -167,6 +173,7 @@ export const respondDirectCall = onCall(
         transaction.update(callReference, {endedAt: now, endedByUid: null, state: "MISSED"});
         clearMatchingPointers(transaction, pointerSnapshots, command.callId);
         receipt = {...session, state: "MISSED"};
+        notificationRecipientUids = [session.callerUid, session.calleeUid];
         return;
       }
       if (pointerSnapshots.some((pointer) => !pointer.exists || pointer.get("callId") !== command.callId)) {
@@ -176,6 +183,7 @@ export const respondDirectCall = onCall(
         transaction.update(callReference, {endedAt: now, endedByUid: uid, state: "DECLINED"});
         clearMatchingPointers(transaction, pointerSnapshots, command.callId);
         receipt = {...session, state: "DECLINED"};
+        notificationRecipientUids = [session.callerUid, session.calleeUid];
         return;
       }
       const activeUntil = Timestamp.fromMillis(now.toMillis() + ACTIVE_CALL_TIMEOUT_MILLIS);
@@ -184,7 +192,9 @@ export const respondDirectCall = onCall(
       transaction.update(calleePointer, {expiresAt: activeUntil, updatedAt: now});
       receipt = {...session, expiresAtMillis: activeUntil.toMillis(), state: "ACTIVE"};
     });
-    return requireReceipt(receipt);
+    const completed = requireReceipt(receipt);
+    await notifyDirectCallTerminated(notificationRecipientUids, completed);
+    return completed;
   },
 );
 
@@ -196,13 +206,15 @@ export const endDirectCall = onCall(
     const callId = parseCommand(() => parseDirectCallId(request.data));
     const callReference = firebaseAdminFirestore.doc(`callSessions/${callId}`);
     let receipt: DirectCallReceipt | null = null;
+    let notificationRecipientUids: string[] = [];
     await firebaseAdminFirestore.runTransaction(async (transaction) => {
+      notificationRecipientUids = [];
       const call = await transaction.get(callReference);
       const session = readDirectCallSession(call.data(), callId);
       if (session.callerUid !== uid && session.calleeUid !== uid) {
         throw new HttpsError("permission-denied", "This call is unavailable.");
       }
-      if (session.state === "ENDED" || session.state === "DECLINED" || session.state === "MISSED") {
+      if (isTerminalDirectCallState(session.state)) {
         receipt = session;
         return;
       }
@@ -213,18 +225,62 @@ export const endDirectCall = onCall(
         transaction.get(calleePointer),
       ]);
       const now = Timestamp.now();
-      transaction.update(callReference, {endedAt: now, endedByUid: uid, state: "ENDED"});
+      const terminalState: DirectCallState = session.state === "ACTIVE" ? "ENDED" :
+        session.expiresAtMillis <= now.toMillis() ? "MISSED" :
+          uid === session.callerUid ? "CANCELED" : "DECLINED";
+      transaction.update(callReference, {
+        endedAt: now,
+        endedByUid: terminalState === "MISSED" ? null : uid,
+        state: terminalState,
+      });
       clearMatchingPointers(transaction, pointerSnapshots, callId);
-      receipt = {...session, state: "ENDED"};
+      receipt = {...session, state: terminalState};
+      notificationRecipientUids = [session.callerUid, session.calleeUid];
     });
     const completed = requireReceipt(receipt);
-    const otherUid = completed.callerUid === uid ? completed.calleeUid : completed.callerUid;
-    await sendNotificationWithoutInvalidatingMutation(otherUid, buildDirectCallNotificationData({
-      callId,
-      event: "ENDED",
-      expiresAtMillis: completed.expiresAtMillis,
-      mediaKind: completed.mediaKind,
-    }));
+    await notifyDirectCallTerminated(notificationRecipientUids, completed);
+    return completed;
+  },
+);
+
+export const expireDirectCall = onCall(
+  {region: FIREBASE_FUNCTIONS_REGION},
+  async (request): Promise<DirectCallReceipt> => {
+    const {uid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(uid, "callMutation");
+    const callId = parseCommand(() => parseDirectCallId(request.data));
+    const callReference = firebaseAdminFirestore.doc(`callSessions/${callId}`);
+    let receipt: DirectCallReceipt | null = null;
+    let notificationRecipientUids: string[] = [];
+    await firebaseAdminFirestore.runTransaction(async (transaction) => {
+      notificationRecipientUids = [];
+      const call = await transaction.get(callReference);
+      const session = readDirectCallSession(call.data(), callId);
+      if (session.callerUid !== uid && session.calleeUid !== uid) {
+        throw new HttpsError("permission-denied", "This call is unavailable.");
+      }
+      if (session.state !== "RINGING") {
+        receipt = session;
+        return;
+      }
+      const now = Timestamp.now();
+      if (session.expiresAtMillis > now.toMillis()) {
+        receipt = session;
+        return;
+      }
+      const callerPointer = firebaseAdminFirestore.doc(`activeCallPointers/${session.callerUid}`);
+      const calleePointer = firebaseAdminFirestore.doc(`activeCallPointers/${session.calleeUid}`);
+      const pointerSnapshots = await Promise.all([
+        transaction.get(callerPointer),
+        transaction.get(calleePointer),
+      ]);
+      transaction.update(callReference, {endedAt: now, endedByUid: null, state: "MISSED"});
+      clearMatchingPointers(transaction, pointerSnapshots, callId);
+      receipt = {...session, state: "MISSED"};
+      notificationRecipientUids = [session.callerUid, session.calleeUid];
+    });
+    const completed = requireReceipt(receipt);
+    await notifyDirectCallTerminated(notificationRecipientUids, completed);
     return completed;
   },
 );
@@ -318,6 +374,7 @@ function readDirectCallSession(input: unknown, callId: string): DirectCallReceip
     !/^direct_[a-f0-9]{64}$/.test(session.roomId) ||
     !(expiresAt instanceof Timestamp) ||
     (session.state !== "ACTIVE" &&
+      session.state !== "CANCELED" &&
       session.state !== "DECLINED" &&
       session.state !== "ENDED" &&
       session.state !== "MISSED" &&
@@ -409,7 +466,7 @@ async function sendDirectCallNotification(recipientUid: string, data: Record<str
     android: {
       collapseKey: `call_${data.callId ?? "synapse"}`,
       priority: "high" as const,
-      ttl: RINGING_TIMEOUT_MILLIS,
+      ttl: DIRECT_CALL_RINGING_TIMEOUT_MILLIS,
     },
     data,
     fid: device.value.installationId,
@@ -426,6 +483,27 @@ async function sendDirectCallNotification(recipientUid: string, data: Record<str
     }
   });
   await batch.commit();
+}
+
+async function notifyDirectCallTerminated(
+  recipientUids: readonly string[],
+  session: DirectCallReceipt,
+): Promise<void> {
+  const notificationData = buildDirectCallNotificationData({
+    callId: session.callId,
+    event: "ENDED",
+    expiresAtMillis: session.expiresAtMillis,
+    mediaKind: session.mediaKind,
+  });
+  await Promise.all(
+    [...new Set(recipientUids)].map((recipientUid) =>
+      sendNotificationWithoutInvalidatingMutation(recipientUid, notificationData),
+    ),
+  );
+}
+
+function isTerminalDirectCallState(state: DirectCallState): boolean {
+  return state === "CANCELED" || state === "DECLINED" || state === "ENDED" || state === "MISSED";
 }
 
 async function sendNotificationWithoutInvalidatingMutation(
