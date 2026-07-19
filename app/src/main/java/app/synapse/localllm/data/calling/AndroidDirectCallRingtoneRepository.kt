@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import android.media.RingtoneManager
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.core.net.toUri
 import app.synapse.localllm.domain.calling.DirectCallRingtoneMutationReceipt
 import app.synapse.localllm.domain.calling.DirectCallRingtoneRepository
 import app.synapse.localllm.domain.calling.DirectCallRingtoneSelection
@@ -173,7 +174,7 @@ class AndroidDirectCallRingtoneRepository private constructor(
             if (rawUri.isBlank() || rawUri.length > MAXIMUM_RINGTONE_URI_LENGTH) {
                 throw IllegalArgumentException("The selected ringtone address is invalid.")
             }
-            val parsedUri = Uri.parse(rawUri)
+            val parsedUri = rawUri.toUri()
             val validScheme = parsedUri.scheme == "content" ||
                 (allowAndroidResource && parsedUri.scheme == "android.resource")
             if (!validScheme || parsedUri.authority.isNullOrBlank()) {
