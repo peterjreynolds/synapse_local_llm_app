@@ -54,6 +54,39 @@ data class UpdateRemoteRoomAiConfigurationCommand(
     val hostedAiEnabled: Boolean = false,
 )
 
+data class RemoteCinderParticipantState(
+    val roomId: RemoteRoomId,
+    val participantId: RemoteAssistantParticipantId,
+    val displayName: String,
+    val active: Boolean,
+    val canManage: Boolean,
+    val provenance: RemoteAiProvenance,
+    val provider: String,
+    val responsePolicy: RemoteAiResponsePolicy,
+) {
+    init {
+        require(participantId == RemoteAssistantConversationCatalog.cinder.participantId) {
+            "Cinder participant state must use the registered Cinder identity."
+        }
+        require(displayName == RemoteAssistantConversationCatalog.cinder.displayName) {
+            "Cinder participant state must use the registered Cinder display name."
+        }
+        require(provenance == RemoteAiProvenance.REMOTE_HOSTED) {
+            "Cinder participant state must use remote-hosted provenance."
+        }
+        require(provider == "OPENCLAW_CINDER") { "Cinder participant provider is invalid." }
+        require(responsePolicy == RemoteAiResponsePolicy.MENTION_ONLY) {
+            "Cinder human-room responses must remain mention-only."
+        }
+    }
+}
+
+data class UpdateRemoteCinderParticipantCommand(
+    val accountUid: RemoteAccountUid,
+    val roomId: RemoteRoomId,
+    val active: Boolean,
+)
+
 data class RemoteAiContextMessage(
     val messageId: RemoteMessageId,
     val authorId: String,
@@ -78,6 +111,15 @@ data class RemoteAiMessageReceipt(
 )
 
 interface RemoteAiParticipantGateway {
+    suspend fun getCinderParticipant(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCinderParticipantState
+
+    suspend fun updateCinderParticipant(
+        command: UpdateRemoteCinderParticipantCommand,
+    ): RemoteCinderParticipantState
+
     suspend fun getRoomConfiguration(
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,

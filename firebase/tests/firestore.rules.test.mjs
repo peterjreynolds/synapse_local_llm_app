@@ -395,6 +395,13 @@ test("keeps AI participant, configuration, queue, and audit state server-owned",
   await assertFails(setDoc(doc(peterDb, "localAiHostQueues", "device", "jobs", "job"), {state: "PENDING"}));
   await assertFails(setDoc(doc(peterDb, "remoteAiAuditEvents", "event"), {eventType: "forged"}));
   await assertFails(setDoc(doc(peterDb, "remoteAiResponseAudits", "job"), {completionState: "COMPLETE"}));
+  await assertFails(getDoc(doc(peterDb, "cinderConversations", PETER_UID)));
+  await assertFails(getDoc(doc(peterDb, "cinderConversations", PETER_UID, "messages", "message")));
+  await assertFails(setDoc(doc(peterDb, "cinderConversations", PETER_UID), {lastSequence: 1}));
+  await assertFails(setDoc(doc(peterDb, "cinderWorkerStatus", "current"), {state: "AVAILABLE"}));
+  await assertFails(setDoc(doc(peterDb, "cinderResponseJobs", "job"), {state: "PENDING"}));
+  await assertFails(setDoc(doc(peterDb, "cinderResponseAudits", "job"), {completionState: "COMPLETE"}));
+  await assertFails(setDoc(doc(peterDb, "cinderAuditEvents", "event"), {eventType: "forged"}));
   await assertFails(setDoc(
     doc(peterDb, "rooms", ROOM_ID, "participants", "participant-synapse-local-ai"),
     {active: true},

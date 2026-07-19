@@ -78,6 +78,7 @@ data class RemoteRoomCacheEntity(
         Index(value = ["accountUid", "remoteRoomId"]),
         Index(value = ["accountUid", "remoteRoomId", "idempotencyKey"], unique = true),
         Index(value = ["accountUid", "remoteRoomId", "serverCreatedAtEpochMillis"]),
+        Index(value = ["accountUid", "remoteRoomId", "serverSequence"]),
     ],
 )
 data class RemoteMessageCacheEntity(
@@ -103,6 +104,7 @@ data class RemoteMessageCacheEntity(
     val cachedAtEpochMillis: Long,
     val aiParticipantId: String? = null,
     val aiProvenance: String? = null,
+    val serverSequence: Long? = null,
 )
 
 @Fts4(tokenizer = FtsOptions.TOKENIZER_UNICODE61)

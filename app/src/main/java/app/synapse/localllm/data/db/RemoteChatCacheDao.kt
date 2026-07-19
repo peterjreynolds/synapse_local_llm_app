@@ -41,6 +41,28 @@ interface RemoteChatCacheDao {
     @Upsert
     suspend fun upsertRooms(rooms: List<RemoteRoomCacheEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertRoomIfAbsent(room: RemoteRoomCacheEntity): Long
+
+    @Query(
+        """
+        UPDATE remote_room_cache
+        SET latestMessagePreview = :latestMessagePreview,
+            latestMessageSenderUid = :latestMessageSenderUid,
+            remoteUpdatedAtEpochMillis = :remoteUpdatedAtEpochMillis,
+            cachedAtEpochMillis = :cachedAtEpochMillis
+        WHERE accountUid = :accountUid AND remoteRoomId = :remoteRoomId
+        """,
+    )
+    suspend fun updateAssistantConversationSummary(
+        accountUid: String,
+        remoteRoomId: String,
+        latestMessagePreview: String,
+        latestMessageSenderUid: String,
+        remoteUpdatedAtEpochMillis: Long,
+        cachedAtEpochMillis: Long,
+    ): Int
+
     @Query("DELETE FROM remote_room_cache WHERE accountUid = :accountUid")
     suspend fun deleteAllRooms(accountUid: String): Int
 
@@ -74,7 +96,11 @@ interface RemoteChatCacheDao {
               OR COALESCE(message.serverCreatedAtEpochMillis, message.clientCreatedAtEpochMillis) >
                   roomLocalState.messagesHiddenThroughEpochMillis
           )
-        ORDER BY COALESCE(message.serverCreatedAtEpochMillis, message.clientCreatedAtEpochMillis) ASC,
+        ORDER BY CASE
+                     WHEN message.remoteRoomId = 'assistant_cinder' THEN message.serverSequence
+                     ELSE NULL
+                 END ASC,
+                 COALESCE(message.serverCreatedAtEpochMillis, message.clientCreatedAtEpochMillis) ASC,
                  message.remoteMessageId ASC
         """,
     )

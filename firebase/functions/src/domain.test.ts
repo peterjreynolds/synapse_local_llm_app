@@ -58,6 +58,9 @@ test("accepts only explicitly attributed AI notification messages", () => {
       senderUid: "participant-synapse-local-ai",
     }),
     {
+      aiParticipantId: "participant-synapse-local-ai",
+      aiProvider: null,
+      assistantId: null,
       authorKind: "SYNAPSE_AI",
       body: "Local answer",
       provenance: "PHONE_LOCAL",
@@ -68,6 +71,44 @@ test("accepts only explicitly attributed AI notification messages", () => {
     authorKind: "SYNAPSE_AI",
     body: "Forged answer",
     senderUid: "peter-uid",
+  }));
+  assert.throws(() => parseRemoteNotificationMessagePayload({
+    aiParticipantId: "participant-synapse-local-ai",
+    aiProvenance: "PHONE_LOCAL",
+    aiProvider: "OPENCLAW_CINDER",
+    authorKind: "SYNAPSE_AI",
+    body: "Cross-provider answer",
+    senderUid: "participant-synapse-local-ai",
+  }));
+  assert.deepEqual(
+    parseRemoteNotificationMessagePayload({
+      aiParticipantId: "participant-cinder-remote-ai",
+      aiProvenance: "REMOTE_HOSTED",
+      aiProvider: "OPENCLAW_CINDER",
+      assistantId: "cinder",
+      attachmentIds: [],
+      authorKind: "REMOTE_AI",
+      body: "Remote answer",
+      senderUid: "participant-cinder-remote-ai",
+    }),
+    {
+      aiParticipantId: "participant-cinder-remote-ai",
+      aiProvider: "OPENCLAW_CINDER",
+      assistantId: "cinder",
+      authorKind: "REMOTE_AI",
+      body: "Remote answer",
+      provenance: "REMOTE_HOSTED",
+      senderUid: "participant-cinder-remote-ai",
+    },
+  );
+  assert.throws(() => parseRemoteNotificationMessagePayload({
+    aiParticipantId: "participant-cinder-remote-ai",
+    aiProvenance: "REMOTE_HOSTED",
+    aiProvider: "FORGED_PROVIDER",
+    assistantId: "cinder",
+    authorKind: "REMOTE_AI",
+    body: "Forged remote answer",
+    senderUid: "participant-cinder-remote-ai",
   }));
 });
 

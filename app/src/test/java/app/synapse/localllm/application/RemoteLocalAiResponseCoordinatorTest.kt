@@ -178,6 +178,15 @@ class RemoteLocalAiResponseCoordinatorTest {
         val completedBodies = mutableListOf<String>()
         val failedClaims = mutableListOf<RemoteLocalAiFailureCode>()
 
+        override suspend fun getCinderParticipant(
+            accountUid: RemoteAccountUid,
+            roomId: RemoteRoomId,
+        ) = error("Not used by coordinator claim processing.")
+
+        override suspend fun updateCinderParticipant(
+            command: app.synapse.localllm.domain.remote.UpdateRemoteCinderParticipantCommand,
+        ) = error("Not used by coordinator claim processing.")
+
         override suspend fun getRoomConfiguration(
             accountUid: RemoteAccountUid,
             roomId: RemoteRoomId,

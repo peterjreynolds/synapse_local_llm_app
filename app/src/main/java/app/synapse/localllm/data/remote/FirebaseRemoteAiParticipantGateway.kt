@@ -5,8 +5,11 @@ import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAiContextMessage
 import app.synapse.localllm.domain.remote.RemoteAiMessageReceipt
 import app.synapse.localllm.domain.remote.RemoteAiParticipantGateway
+import app.synapse.localllm.domain.remote.RemoteAiProvenance
 import app.synapse.localllm.domain.remote.RemoteAiResponsePolicy
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteChatException
+import app.synapse.localllm.domain.remote.RemoteCinderParticipantState
 import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteHostedAiExecutionPolicy
 import app.synapse.localllm.domain.remote.RemoteHostedAiStatus
@@ -17,6 +20,7 @@ import app.synapse.localllm.domain.remote.RemoteRoomAiConfiguration
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.UpdateRemoteRoomAiConfigurationCommand
+import app.synapse.localllm.domain.remote.UpdateRemoteCinderParticipantCommand
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.functions.FirebaseFunctions
 import java.time.Instant
@@ -27,6 +31,28 @@ class FirebaseRemoteAiParticipantGateway(
     private val firebaseFunctions: FirebaseFunctions,
     private val sessionController: RemoteAccountSessionController,
 ) : RemoteAiParticipantGateway {
+    override suspend fun getCinderParticipant(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCinderParticipantState {
+        requireAuthenticatedUid(accountUid)
+        return call("getCinderParticipant", mapOf("roomId" to roomId.raw))
+            .toCinderParticipantState(roomId)
+    }
+
+    override suspend fun updateCinderParticipant(
+        command: UpdateRemoteCinderParticipantCommand,
+    ): RemoteCinderParticipantState {
+        requireAuthenticatedUid(command.accountUid)
+        return call(
+            "setCinderParticipant",
+            mapOf(
+                "active" to command.active,
+                "roomId" to command.roomId.raw,
+            ),
+        ).toCinderParticipantState(command.roomId)
+    }
+
     override suspend fun getRoomConfiguration(
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
@@ -147,6 +173,36 @@ class FirebaseRemoteAiParticipantGateway(
     }
 }
 
+internal fun Map<*, *>.toCinderParticipantState(expectedRoomId: RemoteRoomId): RemoteCinderParticipantState {
+    val endpoint = RemoteAssistantConversationCatalog.cinder
+    val roomId = RemoteRoomId(requireAiString("roomId"))
+    val participantId = requireAiString("participantId")
+    val displayName = requireAiString("displayName")
+    val provenance = requireAiString("provenance")
+    val provider = requireAiString("provider")
+    val responsePolicy = requireAiString("responsePolicy")
+    if (
+        participantId != endpoint.participantId.raw ||
+        displayName != endpoint.displayName ||
+        roomId != expectedRoomId ||
+        provenance != RemoteAiProvenance.REMOTE_HOSTED.name ||
+        provider != CINDER_PROVIDER ||
+        responsePolicy != RemoteAiResponsePolicy.MENTION_ONLY.name
+    ) {
+        malformedAiResponse()
+    }
+    return RemoteCinderParticipantState(
+        roomId = roomId,
+        participantId = endpoint.participantId,
+        displayName = displayName,
+        active = requireAiBoolean("active"),
+        canManage = requireAiBoolean("canManage"),
+        provenance = RemoteAiProvenance.REMOTE_HOSTED,
+        provider = provider,
+        responsePolicy = RemoteAiResponsePolicy.MENTION_ONLY,
+    )
+}
+
 private fun Map<*, *>.toRoomAiConfiguration(): RemoteRoomAiConfiguration {
     val hostedPolicy = this["hostedExecutionPolicy"].requireAiMap("hosted AI execution policy")
     return RemoteRoomAiConfiguration(
@@ -224,3 +280,5 @@ private fun Map<*, *>.optionalAiLong(fieldName: String): Long? =
 
 private fun malformedAiResponse(): Nothing =
     throw RemoteChatException("Synapse returned malformed remote AI participant state.")
+
+private const val CINDER_PROVIDER = "OPENCLAW_CINDER"

@@ -195,6 +195,27 @@ class RoomRemoteChatCacheRepository(
                 remoteChatCacheDao.upsertMessageSearchEntries(
                     command.messages.mapNotNull(RemoteCachedMessage::toSearchEntity),
                 )
+                command.messages
+                    .filter { message ->
+                        RemoteAssistantConversationCatalog.findByRoomId(message.roomId) != null &&
+                            message.serverSequence != null &&
+                            message.serverCreatedAt != null
+                    }
+                    .groupBy(RemoteCachedMessage::roomId)
+                    .forEach { (roomId, messages) ->
+                        val latestMessage = messages.maxWith(
+                            compareBy<RemoteCachedMessage> { message -> requireNotNull(message.serverSequence) }
+                                .thenBy { message -> message.messageId.raw },
+                        )
+                        remoteChatCacheDao.updateAssistantConversationSummary(
+                            accountUid = command.accountUid.raw,
+                            remoteRoomId = roomId.raw,
+                            latestMessagePreview = latestMessage.body,
+                            latestMessageSenderUid = latestMessage.senderUid.raw,
+                            remoteUpdatedAtEpochMillis = requireNotNull(latestMessage.serverCreatedAt).toEpochMilli(),
+                            cachedAtEpochMillis = cachedAt.toEpochMilli(),
+                        )
+                    }
                 remoteChatCacheDao.deleteHiddenMessageSearchEntries(command.accountUid.raw)
             }
         }
@@ -205,6 +226,9 @@ class RoomRemoteChatCacheRepository(
         val message = command.message
         val operation = command.outboxOperation
         requireActiveAccount(message.accountUid)
+        require(RemoteAssistantConversationCatalog.findByRoomId(message.roomId) == null) {
+            "Assistant messages must be accepted remotely before entering the local cache."
+        }
         require(message.accountUid == operation.accountUid) { "Message and outbox account scopes must match." }
         require(message.roomId == operation.roomId) { "Message and outbox rooms must match." }
         require(message.messageId == operation.messageId) { "Message and outbox message IDs must match." }
@@ -296,8 +320,8 @@ class RoomRemoteChatCacheRepository(
         }
         val cachedAt = clock.now()
         val affectedRows = database.withTransaction {
-            remoteChatCacheDao.upsertRooms(
-                listOf(command.endpoint.toCachedRoom(command.accountUid).toEntity(cachedAt)),
+            remoteChatCacheDao.insertRoomIfAbsent(
+                command.endpoint.toCachedRoom(command.accountUid).toEntity(cachedAt),
             )
             remoteChatCacheDao.showRoomLocally(
                 accountUid = command.accountUid.raw,
@@ -533,6 +557,7 @@ private fun RemoteCachedMessage.toEntity(cachedAt: Instant): RemoteMessageCacheE
         cachedAtEpochMillis = cachedAt.toEpochMilli(),
         aiParticipantId = aiParticipantId,
         aiProvenance = aiProvenance?.name,
+        serverSequence = serverSequence,
     )
 
 private fun RemoteCachedMessage.toSearchEntity(): RemoteMessageSearchEntity? {
@@ -569,6 +594,7 @@ private fun RemoteMessageCacheEntity.toDomain(): RemoteCachedMessage =
         failureReason = failureReason,
         aiParticipantId = aiParticipantId,
         aiProvenance = aiProvenance?.let(app.synapse.localllm.domain.remote.RemoteAiProvenance::valueOf),
+        serverSequence = serverSequence,
     )
 
 private fun RemoteMessageOutboxOperation.toEntity(): RemoteMessageOutboxEntity =

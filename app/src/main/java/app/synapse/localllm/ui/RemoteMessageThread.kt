@@ -86,6 +86,7 @@ import app.synapse.localllm.application.RemoteLocalAiHostStatus
 import app.synapse.localllm.domain.appearance.ChatBackground
 import app.synapse.localllm.domain.appearance.clampChatMessageScale
 import app.synapse.localllm.domain.remote.RemoteAssistantAvailability
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
@@ -134,7 +135,9 @@ internal fun RemoteMessageThread(
     onJumpToMessage: (RemoteMessageId) -> Unit,
     onMessageRevealed: () -> Unit,
     onLocalAiConfigurationChanged: (Boolean, Boolean) -> Unit,
+    onCinderParticipationChanged: (Boolean) -> Unit,
     onMentionSynapse: () -> Unit,
+    onMentionCinder: () -> Unit,
     appearanceState: ChatAppearanceUiState,
     onBackgroundSelected: (ChatBackground) -> Unit,
     onMessageScaleSelected: (Float) -> Unit,
@@ -312,6 +315,7 @@ internal fun RemoteMessageThread(
                     state = state,
                     room = room,
                     onConfigurationChanged = onLocalAiConfigurationChanged,
+                    onCinderParticipationChanged = onCinderParticipationChanged,
                 )
                 HorizontalDivider()
                 if (room?.kind == RemoteRoomKind.GROUP) {
@@ -412,7 +416,9 @@ internal fun RemoteMessageThread(
                                 val bubblePalette = appearanceState.appearance.bubblePalette.presentation()
                                 val isLocallyHostedAiMessage = message.authorKind == "SYNAPSE_AI" &&
                                     state.roomAiConfiguration?.localAiHostUid == state.account?.accountUid
-                                val canDeleteForEveryone = isCurrentAccount || isLocallyHostedAiMessage
+                                val supportsRemoteInteractions = room?.kind != RemoteRoomKind.ASSISTANT
+                                val canDeleteForEveryone = supportsRemoteInteractions &&
+                                    (isCurrentAccount || isLocallyHostedAiMessage)
                                 RemoteMessageBubble(
                                     message = message,
                                     repliedMessage = message.replyToMessageId?.let { replyId ->
@@ -426,11 +432,11 @@ internal fun RemoteMessageThread(
                                     },
                                     bubbleContentColor = bubblePalette.contentColor,
                                     canDeleteForEveryone = canDeleteForEveryone,
+                                    supportsRemoteInteractions = supportsRemoteInteractions,
                                     selectedReaction = state.ownReactionSelections[message.messageId],
                                     senderDisplayName = when {
                                         message.authorKind == "SYNAPSE_AI" -> "Synapse • Phone-local AI"
-                                        message.authorKind == "REMOTE_AI" ->
-                                            state.selectedAssistantEndpoint?.displayName ?: "Remote assistant"
+                                        message.authorKind == "REMOTE_AI" -> remoteAiSenderDisplayName(message)
                                         room?.kind == RemoteRoomKind.GROUP ->
                                             state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
                                                 ?.displayName
@@ -470,6 +476,7 @@ internal fun RemoteMessageThread(
                 onVoicePermissionDenied = onVoicePermissionDenied,
                 onCancelReply = onCancelReply,
                 onMentionSynapse = onMentionSynapse,
+                onMentionCinder = onMentionCinder,
             )
         }
     }
@@ -488,6 +495,7 @@ private fun RemoteAiParticipantControls(
     state: RemoteChatUiState,
     room: RemoteCachedRoom?,
     onConfigurationChanged: (Boolean, Boolean) -> Unit,
+    onCinderParticipationChanged: (Boolean) -> Unit,
 ) {
     val configuration = state.roomAiConfiguration
     val canRetainOrDesignateHost = state.currentDeviceId != null ||
@@ -502,8 +510,45 @@ private fun RemoteAiParticipantControls(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("AI participants", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        val cinderParticipant = state.cinderParticipant
+        when {
+            cinderParticipant == null -> {
+                Text("Loading Cinder participant status…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            cinderParticipant.active -> {
+                Text("Cinder • OpenClaw remote AI", fontWeight = FontWeight.SemiBold)
+                Text("Response policy: explicit @Cinder mentions only")
+                Text(
+                    "Removing Cinder stops future response jobs and keeps existing room history.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (cinderParticipant.canManage) {
+                    OutlinedButton(
+                        onClick = { onCinderParticipationChanged(false) },
+                        enabled = !state.isActionRunning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Remove Cinder from conversation")
+                    }
+                }
+            }
+            else -> {
+                Text("Cinder is not in this conversation.")
+                if (cinderParticipant.canManage) {
+                    OutlinedButton(
+                        onClick = { onCinderParticipationChanged(true) },
+                        enabled = !state.isActionRunning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Add Cinder")
+                    }
+                }
+            }
+        }
+        HorizontalDivider()
         if (configuration == null) {
-            Text("Loading AI participant settings…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Loading phone-local AI settings…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             return@Column
         }
         if (configuration.localAiEnabled) {
@@ -570,12 +615,6 @@ private fun RemoteAiParticipantControls(
                 }
             }
         }
-        Text(
-            "Hosted AI is disabled: no provider or paid budget has been approved. Activation requires an approved " +
-                "server provider and a Secret Manager credential; no API key belongs in this app.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -587,6 +626,7 @@ private fun RemoteMessageBubble(
     bubbleColor: Color,
     bubbleContentColor: Color,
     canDeleteForEveryone: Boolean,
+    supportsRemoteInteractions: Boolean,
     selectedReaction: String?,
     senderDisplayName: String?,
     onReply: () -> Unit,
@@ -605,6 +645,7 @@ private fun RemoteMessageBubble(
     val availableActions = remoteMessageActions(
         messageDeleted = message.deletedAt != null,
         isCurrentAccount = isCurrentAccount,
+        supportsRemoteInteractions = supportsRemoteInteractions,
     )
     var showMessageActions by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var showEmojiPicker by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
@@ -694,7 +735,7 @@ private fun RemoteMessageBubble(
                         }
                     }
                 }
-                if (message.deletedAt == null) {
+                if (message.deletedAt == null && supportsRemoteInteractions) {
                     RemoteMessageReactionSummary(
                         reactionCounts = message.reactionCounts,
                         selectedReaction = selectedReaction,
@@ -706,7 +747,7 @@ private fun RemoteMessageBubble(
                 expanded = showMessageActions,
                 onDismissRequest = { showMessageActions = false },
             ) {
-                if (message.deletedAt == null) {
+                if (message.deletedAt == null && supportsRemoteInteractions) {
                     RemoteQuickReactionBar(
                         selectedReaction = selectedReaction,
                         onReactionSelected = { emoji ->
@@ -1016,17 +1057,24 @@ internal enum class RemoteMessageAction(val label: String) {
 internal fun remoteMessageActions(
     messageDeleted: Boolean,
     isCurrentAccount: Boolean,
+    supportsRemoteInteractions: Boolean = true,
 ): List<RemoteMessageAction> {
     if (messageDeleted) return listOf(RemoteMessageAction.DELETE)
     return buildList {
-        add(RemoteMessageAction.REPLY)
+        if (supportsRemoteInteractions) add(RemoteMessageAction.REPLY)
         add(RemoteMessageAction.COPY)
-        if (isCurrentAccount) add(RemoteMessageAction.EDIT)
+        if (isCurrentAccount && supportsRemoteInteractions) add(RemoteMessageAction.EDIT)
         add(RemoteMessageAction.DELETE)
     }
 }
 
 internal fun RemoteCachedMessage.displayInstant() = serverCreatedAt ?: clientCreatedAt
+
+internal fun remoteAiSenderDisplayName(message: RemoteCachedMessage): String =
+    message.aiParticipantId
+        ?.let(RemoteAssistantConversationCatalog::findByParticipantId)
+        ?.displayName
+        ?: "Remote assistant"
 
 internal fun remoteMessageDateLabel(date: LocalDate): String =
     date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))

@@ -235,6 +235,30 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /cinderConversations/{accountUid} {
+      allow read, write: if false;
+
+      match /messages/{messageId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /cinderWorkerStatus/{statusId} {
+      allow read, write: if false;
+    }
+
+    match /cinderResponseJobs/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /cinderResponseAudits/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /cinderAuditEvents/{eventId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

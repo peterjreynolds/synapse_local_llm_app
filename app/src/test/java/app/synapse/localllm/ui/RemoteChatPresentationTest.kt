@@ -3,6 +3,7 @@ package app.synapse.localllm.ui
 import app.synapse.localllm.domain.appearance.ChatBackground
 import app.synapse.localllm.domain.appearance.ChatBubblePalette
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAiProvenance
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
@@ -299,6 +300,43 @@ class RemoteChatPresentationTest {
             listOf(RemoteMessageAction.DELETE),
             remoteMessageActions(messageDeleted = true, isCurrentAccount = true),
         )
+        assertEquals(
+            listOf(RemoteMessageAction.COPY, RemoteMessageAction.DELETE),
+            remoteMessageActions(
+                messageDeleted = false,
+                isCurrentAccount = true,
+                supportsRemoteInteractions = false,
+            ),
+        )
+    }
+
+    @Test
+    fun humanRoomRemoteAiMessageUsesRegisteredCinderDisplayIdentity() {
+        val message = RemoteCachedMessage(
+            accountUid = RemoteAccountUid("peter-uid"),
+            roomId = RemoteRoomId("group_${"a".repeat(32)}"),
+            messageId = RemoteMessageId("cinder-message"),
+            idempotencyKey = RemoteIdempotencyKey("cinder-message"),
+            senderUid = RemoteProfileUid("participant-cinder-remote-ai"),
+            authorKind = "REMOTE_AI",
+            body = "Cinder response",
+            replyToMessageId = RemoteMessageId("human-message"),
+            editedAt = null,
+            deletedAt = null,
+            revision = 1,
+            reactionCounts = emptyMap(),
+            deliveredToCount = 0,
+            readByCount = 0,
+            deliveryState = RemoteMessageDeliveryState.SENT,
+            clientCreatedAt = NOW,
+            serverCreatedAt = NOW,
+            failureReason = null,
+            aiParticipantId = "participant-cinder-remote-ai",
+            aiProvenance = RemoteAiProvenance.REMOTE_HOSTED,
+            serverSequence = 1L,
+        )
+
+        assertEquals("Cinder", remoteAiSenderDisplayName(message))
     }
 
     @Test

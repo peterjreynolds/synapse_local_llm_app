@@ -1,4 +1,11 @@
 import {createHash} from "node:crypto";
+import {
+  CINDER_AI_PROVENANCE,
+  CINDER_AI_PROVIDER,
+  CINDER_ASSISTANT_ID,
+  CINDER_PARTICIPANT_ID,
+  isTrustedCinderRemoteAiMessage,
+} from "./cinderDomain.js";
 
 export const MESSAGE_BODY_LIMIT = 4_000;
 export const PROFILE_DISPLAY_NAME_LIMIT = 64;
@@ -16,7 +23,10 @@ export interface HumanMessagePayload {
 }
 
 export interface RemoteNotificationMessagePayload extends HumanMessagePayload {
-  authorKind: "HUMAN" | "SYNAPSE_AI";
+  aiParticipantId: string | null;
+  aiProvider: string | null;
+  assistantId: string | null;
+  authorKind: "HUMAN" | "REMOTE_AI" | "SYNAPSE_AI";
   provenance: "PHONE_LOCAL" | "REMOTE_HOSTED" | null;
 }
 
@@ -60,27 +70,55 @@ export function parseRemoteNotificationMessagePayload(input: unknown): RemoteNot
   const candidate = input as {
     aiParticipantId?: unknown;
     aiProvenance?: unknown;
+    aiProvider?: unknown;
+    assistantId?: unknown;
     attachmentIds?: unknown;
     authorKind?: unknown;
     body?: unknown;
     senderUid?: unknown;
   };
-  if (candidate.authorKind !== "HUMAN" && candidate.authorKind !== "SYNAPSE_AI") {
+  if (
+    candidate.authorKind !== "HUMAN" &&
+    candidate.authorKind !== "REMOTE_AI" &&
+    candidate.authorKind !== "SYNAPSE_AI"
+  ) {
     throw new Error("Message author kind is invalid.");
   }
   if (typeof candidate.senderUid !== "string" || candidate.senderUid.length === 0) {
     throw new Error("Message sender is invalid.");
   }
+  let aiParticipantId: string | null = null;
+  let aiProvider: string | null = null;
+  let assistantId: string | null = null;
   let provenance: "PHONE_LOCAL" | "REMOTE_HOSTED" | null = null;
-  if (candidate.authorKind === "SYNAPSE_AI") {
+  if (candidate.authorKind === "HUMAN") {
+    if (
+      candidate.aiParticipantId != null ||
+      candidate.aiProvenance != null ||
+      candidate.aiProvider != null ||
+      candidate.assistantId != null
+    ) {
+      throw new Error("Human message AI attribution is invalid.");
+    }
+  } else if (candidate.authorKind === "SYNAPSE_AI") {
     if (
       candidate.senderUid !== "participant-synapse-local-ai" ||
       candidate.aiParticipantId !== "participant-synapse-local-ai" ||
-      (candidate.aiProvenance !== "PHONE_LOCAL" && candidate.aiProvenance !== "REMOTE_HOSTED")
+      (candidate.aiProvenance !== "PHONE_LOCAL" && candidate.aiProvenance !== "REMOTE_HOSTED") ||
+      candidate.aiProvider != null ||
+      candidate.assistantId != null
     ) {
       throw new Error("AI message provenance is invalid.");
     }
+    aiParticipantId = candidate.aiParticipantId;
     provenance = candidate.aiProvenance;
+  } else if (isTrustedCinderRemoteAiMessage(candidate)) {
+    aiParticipantId = CINDER_PARTICIPANT_ID;
+    aiProvider = CINDER_AI_PROVIDER;
+    assistantId = CINDER_ASSISTANT_ID;
+    provenance = CINDER_AI_PROVENANCE;
+  } else {
+    throw new Error("Remote AI message provenance is invalid.");
   }
   const attachmentIds = candidate.attachmentIds ?? [];
   if (!Array.isArray(attachmentIds) || attachmentIds.length > 8 || attachmentIds.some((attachmentId) =>
@@ -94,6 +132,9 @@ export function parseRemoteNotificationMessagePayload(input: unknown): RemoteNot
   const body = candidate.body.trim();
   if (body.length === 0 && attachmentIds.length === 0) throw new Error("Message body is invalid.");
   return {
+    aiParticipantId,
+    aiProvider,
+    assistantId,
     authorKind: candidate.authorKind,
     body: body || (attachmentIds.length === 1 ? "Attachment" : `${attachmentIds.length} attachments`),
     provenance,

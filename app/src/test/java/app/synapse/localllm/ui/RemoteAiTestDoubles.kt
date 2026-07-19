@@ -5,6 +5,10 @@ import app.synapse.localllm.application.RemoteLocalAiResponseHost
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAiMessageReceipt
 import app.synapse.localllm.domain.remote.RemoteAiParticipantGateway
+import app.synapse.localllm.domain.remote.RemoteAiProvenance
+import app.synapse.localllm.domain.remote.RemoteAiResponsePolicy
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
+import app.synapse.localllm.domain.remote.RemoteCinderParticipantState
 import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteHostedAiExecutionPolicy
 import app.synapse.localllm.domain.remote.RemoteHostedAiStatus
@@ -13,9 +17,19 @@ import app.synapse.localllm.domain.remote.RemoteLocalAiResponseClaim
 import app.synapse.localllm.domain.remote.RemoteRoomAiConfiguration
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import app.synapse.localllm.domain.remote.UpdateRemoteRoomAiConfigurationCommand
+import app.synapse.localllm.domain.remote.UpdateRemoteCinderParticipantCommand
 import kotlinx.coroutines.awaitCancellation
 
 internal object NoOpRemoteAiParticipantGateway : RemoteAiParticipantGateway {
+    override suspend fun getCinderParticipant(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): RemoteCinderParticipantState = inactiveCinderParticipant(roomId)
+
+    override suspend fun updateCinderParticipant(
+        command: UpdateRemoteCinderParticipantCommand,
+    ): RemoteCinderParticipantState = inactiveCinderParticipant(command.roomId).copy(active = command.active)
+
     override suspend fun getRoomConfiguration(
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
@@ -53,6 +67,18 @@ internal object NoOpRemoteAiParticipantGateway : RemoteAiParticipantGateway {
         claim: RemoteLocalAiResponseClaim,
     ) = Unit
 }
+
+private fun inactiveCinderParticipant(roomId: RemoteRoomId): RemoteCinderParticipantState =
+    RemoteCinderParticipantState(
+        roomId = roomId,
+        participantId = RemoteAssistantConversationCatalog.cinder.participantId,
+        displayName = "Cinder",
+        active = false,
+        canManage = true,
+        provenance = RemoteAiProvenance.REMOTE_HOSTED,
+        provider = "OPENCLAW_CINDER",
+        responsePolicy = RemoteAiResponsePolicy.MENTION_ONLY,
+    )
 
 internal object IdleRemoteLocalAiResponseHost : RemoteLocalAiResponseHost {
     override suspend fun synchronize(

@@ -1,5 +1,5 @@
 import {randomUUID} from "node:crypto";
-import {DocumentReference, DocumentSnapshot, Timestamp, Transaction} from "firebase-admin/firestore";
+import {DocumentReference, DocumentSnapshot, FieldValue, Timestamp, Transaction} from "firebase-admin/firestore";
 import {HttpsError, onCall} from "firebase-functions/v2/https";
 import {requireActiveAccount} from "./accountAuthorization.js";
 import {enforceCallableRateLimit} from "./callableRateLimit.js";
@@ -89,7 +89,9 @@ export const updateRoomAiConfiguration = onCall(
         updatedAt: changedAt,
       }, {merge: true});
       transaction.update(roomReference, {
-        aiParticipantIds: command.localAiEnabled ? [LOCAL_AI_PARTICIPANT_ID] : [],
+        aiParticipantIds: command.localAiEnabled ?
+          FieldValue.arrayUnion(LOCAL_AI_PARTICIPANT_ID) :
+          FieldValue.arrayRemove(LOCAL_AI_PARTICIPANT_ID),
         updatedAt: changedAt,
       });
       transaction.create(firebaseAdminFirestore.doc(`remoteAiAuditEvents/${randomUUID()}`), {

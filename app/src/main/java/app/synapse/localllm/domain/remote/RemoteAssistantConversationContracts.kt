@@ -58,6 +58,11 @@ data class EnsureRemoteAssistantConversationCommand(
 interface RemoteAssistantConversationGateway {
     fun availability(endpoint: RemoteAssistantConversationEndpoint): RemoteAssistantAvailability
 
+    fun observeAvailability(
+        accountUid: RemoteAccountUid,
+        endpoint: RemoteAssistantConversationEndpoint,
+    ): Flow<RemoteAssistantAvailability>
+
     fun observeMessages(
         accountUid: RemoteAccountUid,
         endpoint: RemoteAssistantConversationEndpoint,

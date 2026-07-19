@@ -164,6 +164,7 @@ data class RemoteCachedMessage(
     val failureReason: String?,
     val aiParticipantId: String? = null,
     val aiProvenance: RemoteAiProvenance? = null,
+    val serverSequence: Long? = null,
 ) {
     init {
         require(revision >= 1L) { "Remote message revision must be positive." }
@@ -177,6 +178,9 @@ data class RemoteCachedMessage(
         }
         require(attachments.size <= 8 && attachments.distinctBy(RemoteCachedAttachment::attachmentId).size == attachments.size) {
             "Remote message attachments must be unique and bounded."
+        }
+        require(serverSequence == null || serverSequence >= 1L) {
+            "Remote message server sequence must be positive when present."
         }
         when (authorKind) {
             "HUMAN" -> require(aiParticipantId == null && aiProvenance == null) {

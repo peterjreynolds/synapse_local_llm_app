@@ -25,6 +25,7 @@ import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteRoomPreferencesCommand
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 
 class RemoteConversationGatewayRouter(
     private val synchronizedConversationGateway: RemoteConversationGateway,
@@ -32,6 +33,14 @@ class RemoteConversationGatewayRouter(
 ) : RemoteConversationGateway by synchronizedConversationGateway {
     override fun assistantAvailability(roomId: RemoteRoomId): RemoteAssistantAvailability? =
         assistantEndpoint(roomId)?.let(assistantConversationGateway::availability)
+
+    override fun observeAssistantAvailability(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): Flow<RemoteAssistantAvailability> =
+        assistantEndpoint(roomId)?.let { endpoint ->
+            assistantConversationGateway.observeAvailability(accountUid, endpoint)
+        } ?: emptyFlow()
 
     override fun observeMessages(
         accountUid: RemoteAccountUid,
@@ -160,6 +169,11 @@ class UnavailableRemoteAssistantConversationGateway : RemoteAssistantConversatio
             "${endpoint.displayName} is not connected yet. " +
                 "An authenticated ${endpoint.displayName} chat backend must be configured.",
         )
+
+    override fun observeAvailability(
+        accountUid: RemoteAccountUid,
+        endpoint: RemoteAssistantConversationEndpoint,
+    ): Flow<RemoteAssistantAvailability> = flowOf(availability(endpoint))
 
     override fun observeMessages(
         accountUid: RemoteAccountUid,

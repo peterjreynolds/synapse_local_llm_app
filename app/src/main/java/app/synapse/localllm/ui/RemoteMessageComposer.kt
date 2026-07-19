@@ -67,6 +67,7 @@ internal fun RemoteMessageComposer(
     onVoicePermissionDenied: () -> Unit,
     onCancelReply: () -> Unit,
     onMentionSynapse: () -> Unit,
+    onMentionCinder: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -89,15 +90,19 @@ internal fun RemoteMessageComposer(
     val assistantUnavailableReason =
         (state.selectedAssistantAvailability as? RemoteAssistantAvailability.Unavailable)?.userMessage
     val submissionEnabled = remoteComposerSubmissionEnabled(state.selectedAssistantAvailability)
+    val isAssistantConversation = state.selectedAssistantEndpoint != null
+    val voiceNotesEnabled = !isAssistantConversation
     val canAddAttachment = submissionEnabled &&
+        !isAssistantConversation &&
         !state.isRecordingVoiceNote &&
         !state.isActionRunning &&
         state.pendingAttachments.size < MAXIMUM_PENDING_ATTACHMENTS
     val showMentionSynapse = state.roomAiConfiguration?.localAiEnabled == true
+    val showMentionCinder = state.cinderParticipant?.active == true
     val canOpenAddMenu = submissionEnabled &&
         !state.isRecordingVoiceNote &&
         !state.isActionRunning &&
-        (canAddAttachment || showMentionSynapse)
+        (canAddAttachment || showMentionSynapse || showMentionCinder)
     val canSend = remoteComposerCanSend(
         composerText = state.composerText,
         attachmentStates = state.pendingAttachments.map(RemotePendingAttachmentUi::state),
@@ -145,6 +150,14 @@ internal fun RemoteMessageComposer(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (isAssistantConversation) {
+            Text(
+                text = "Cinder currently accepts text messages only.",
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (state.isRecordingVoiceNote) {
@@ -225,6 +238,17 @@ internal fun RemoteMessageComposer(
                                 },
                             )
                         }
+                        if (showMentionCinder) {
+                            DropdownMenuItem(
+                                text = { Text("Mention Cinder") },
+                                leadingIcon = { Icon(Icons.Default.AlternateEmail, contentDescription = null) },
+                                enabled = !state.isActionRunning,
+                                onClick = {
+                                    showAddMenu = false
+                                    onMentionCinder()
+                                },
+                            )
+                        }
                     }
                 }
                 BasicTextField(
@@ -280,7 +304,8 @@ internal fun RemoteMessageComposer(
                                 microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             }
                         },
-                        enabled = state.isRecordingVoiceNote || (!state.isActionRunning && submissionEnabled),
+                        enabled = state.isRecordingVoiceNote ||
+                            (!state.isActionRunning && submissionEnabled && voiceNotesEnabled),
                         modifier = if (state.isRecordingVoiceNote) {
                             Modifier
                                 .clip(CircleShape)

@@ -16,6 +16,7 @@ import app.synapse.localllm.domain.remote.RemoteConversationGateway
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageAcknowledgementReceipt
 import app.synapse.localllm.domain.remote.RemoteAiProvenance
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessagePage
@@ -645,6 +646,8 @@ class FirebaseRemoteConversationGateway(
         val senderUid = getString("senderUid") ?: return null
         val authorKind = getString("authorKind") ?: return null
         val aiParticipantId = getString("aiParticipantId")
+        val aiProvider = getString("aiProvider")
+        val assistantId = getString("assistantId")
         val aiProvenance = getString("aiProvenance")?.let { provenance ->
             runCatching { RemoteAiProvenance.valueOf(provenance) }.getOrNull() ?: return null
         }
@@ -661,15 +664,35 @@ class FirebaseRemoteConversationGateway(
         }
         val reactionCounts = readReactionCounts(get("reactionCounts")) ?: return null
         val attachments = readAttachments(get("attachments"), roomId, RemoteMessageId(id)) ?: return null
+        val serverSequence = getLong("serverSequence")
         if (
             (deletedAt == null && body.isBlank() && attachments.isEmpty()) ||
             body.length > MESSAGE_BODY_LIMIT ||
             clientMessageId != id ||
             authorKind !in allowedAuthorKinds ||
-            (authorKind == HUMAN_AUTHOR_KIND && (aiParticipantId != null || aiProvenance != null)) ||
+            (
+                authorKind == HUMAN_AUTHOR_KIND &&
+                    (aiParticipantId != null || aiProvenance != null || aiProvider != null || assistantId != null)
+                ) ||
             (
                 authorKind == "SYNAPSE_AI" &&
-                    (aiParticipantId != "participant-synapse-local-ai" || aiProvenance == null)
+                    (
+                        aiParticipantId != "participant-synapse-local-ai" ||
+                            aiProvenance == null ||
+                            aiProvider != null ||
+                            assistantId != null
+                        )
+                ) ||
+            (
+                authorKind == "REMOTE_AI" &&
+                    !hasTrustedCinderRoomMessageAttribution(
+                        senderUid = senderUid,
+                        aiParticipantId = aiParticipantId,
+                        aiProvenance = aiProvenance,
+                        aiProvider = aiProvider,
+                        assistantId = assistantId,
+                        serverSequence = serverSequence,
+                    )
                 ) ||
             revision < 1L
         ) return null
@@ -703,6 +726,7 @@ class FirebaseRemoteConversationGateway(
             failureReason = null,
             aiParticipantId = aiParticipantId,
             aiProvenance = aiProvenance,
+            serverSequence = serverSequence,
         )
     }
 
@@ -777,8 +801,26 @@ class FirebaseRemoteConversationGateway(
         const val TYPING_COLLECTION = "typing"
         const val TYPING_EXPIRY_SECONDS = 10L
         const val TYPING_REFRESH_MILLIS = 1_000L
-        val allowedAuthorKinds = setOf(HUMAN_AUTHOR_KIND, "SYNAPSE_AI")
+        val allowedAuthorKinds = setOf(HUMAN_AUTHOR_KIND, "REMOTE_AI", "SYNAPSE_AI")
     }
+}
+
+internal fun hasTrustedCinderRoomMessageAttribution(
+    senderUid: String?,
+    aiParticipantId: String?,
+    aiProvenance: RemoteAiProvenance?,
+    aiProvider: String?,
+    assistantId: String?,
+    serverSequence: Long?,
+): Boolean {
+    val endpoint = RemoteAssistantConversationCatalog.cinder
+    return senderUid == endpoint.participantId.raw &&
+        aiParticipantId == endpoint.participantId.raw &&
+        aiProvenance == RemoteAiProvenance.REMOTE_HOSTED &&
+        aiProvider == "OPENCLAW_CINDER" &&
+        assistantId == endpoint.assistantId.raw &&
+        serverSequence != null &&
+        serverSequence >= 1L
 }
 
 private fun Any?.requireCallableMap(receiptName: String): Map<*, *> =

@@ -50,8 +50,10 @@ import app.synapse.localllm.domain.remote.RemoteSignInCommand
 import app.synapse.localllm.domain.remote.RemoteVoiceNoteRecorder
 import app.synapse.localllm.domain.remote.ReviseRemoteMessageCommand
 import app.synapse.localllm.domain.remote.SearchRemoteMessagesCommand
+import app.synapse.localllm.domain.remote.SendRemoteMessageCommand
 import app.synapse.localllm.domain.remote.ToggleRemoteReactionCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteProfileCommand
+import app.synapse.localllm.domain.remote.UpdateRemoteCinderParticipantCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteRoomAiConfigurationCommand
 import app.synapse.localllm.domain.remote.UpdateRemoteRoomPreferencesCommand
 import app.synapse.localllm.domain.remote.UploadRemoteAvatarCommand
@@ -102,6 +104,7 @@ class RemoteChatViewModel(
     private var readAcknowledgementJob: Job? = null
     private var messageSearchJob: Job? = null
     private var roomAiConfigurationJob: Job? = null
+    private var cinderParticipantJob: Job? = null
     private var typingHeartbeatJob: Job? = null
     private var typingRoomId: RemoteRoomId? = null
     private val attachmentTransferController = RemoteAttachmentTransferController(
@@ -239,6 +242,7 @@ class RemoteChatViewModel(
             invalidatePendingDraftSave()
             readAcknowledgementJob?.cancel()
             roomAiConfigurationJob?.cancel()
+            cinderParticipantJob?.cancel()
         }
         selectedRoomId.value = roomId
         roomVisibilityTracker.setSelectedRoom(roomId)
@@ -258,11 +262,15 @@ class RemoteChatViewModel(
                 hasReachedMessageStart = false,
                 messageToRevealId = null,
                 roomAiConfiguration = null,
+                cinderParticipant = null,
                 notice = null,
             )
         }
         roomId?.let(::markSelectedRoomRead)
-        roomId?.takeIf { assistantEndpoint == null }?.let(::loadRoomAiConfiguration)
+        roomId?.takeIf { assistantEndpoint == null }?.let { humanRoomId ->
+            loadRoomAiConfiguration(humanRoomId)
+            loadCinderParticipant(humanRoomId)
+        }
     }
 
     fun openNotificationRoom(roomId: RemoteRoomId?) {
@@ -381,9 +389,43 @@ class RemoteChatViewModel(
         )
     }
 
+    fun updateCinderParticipation(active: Boolean) = launchAction(
+        successNotice = if (active) "Cinder added to this conversation." else "Cinder removed from this conversation.",
+    ) {
+        val accountUid = requireSignedInAccount().accountUid
+        val roomId = selectedRoomId.value ?: throw RemoteChatException("Select a conversation first.")
+        if (RemoteAssistantConversationCatalog.findByRoomId(roomId) != null) {
+            throw RemoteChatException("The dedicated Cinder conversation does not use room participant controls.")
+        }
+        val participant = remoteAiParticipantGateway.updateCinderParticipant(
+            UpdateRemoteCinderParticipantCommand(accountUid, roomId, active),
+        )
+        if (selectedRoomId.value == roomId) {
+            mutableUiState.update { state -> state.copy(cinderParticipant = participant) }
+        }
+    }
+
+    fun insertCinderMention() {
+        if (mutableUiState.value.cinderParticipant?.active != true) {
+            publishFailureMessage("Add Cinder to this conversation before mentioning it.")
+            return
+        }
+        updateComposerText(
+            mutableUiState.value.composerText
+                .takeIf { text -> text.trimStart().startsWith("@Cinder", ignoreCase = true) }
+                ?: "@Cinder ${mutableUiState.value.composerText.trimStart()}",
+        )
+    }
+
     fun sendMessage(body: String) = launchAction {
         val normalizedBody = body.trim()
         val pendingAttachments = attachmentTransferController.state.value.pendingAttachments
+        val account = requireSignedInAccount()
+        val roomId = selectedRoomId.value ?: throw IllegalArgumentException("Open a conversation first.")
+        val assistantEndpoint = RemoteAssistantConversationCatalog.findByRoomId(roomId)
+        if (assistantEndpoint != null && pendingAttachments.isNotEmpty()) {
+            throw RemoteChatException("Cinder currently accepts text messages only. Remove the attachment to continue.")
+        }
         require(
             normalizedBody.length <= MESSAGE_BODY_LIMIT &&
                 (normalizedBody.isNotEmpty() || pendingAttachments.isNotEmpty()),
@@ -393,8 +435,6 @@ class RemoteChatViewModel(
         require(pendingAttachments.all { attachment -> attachment.state == RemoteAttachmentTransferState.READY }) {
             "Wait for every attachment upload to finish or remove failed uploads."
         }
-        val account = requireSignedInAccount()
-        val roomId = selectedRoomId.value ?: throw IllegalArgumentException("Open a conversation first.")
         val assistantAvailability = conversationGateway.assistantAvailability(roomId)
         if (assistantAvailability is RemoteAssistantAvailability.Unavailable) {
             throw RemoteChatException(assistantAvailability.userMessage)
@@ -407,49 +447,57 @@ class RemoteChatViewModel(
         val idempotencyKey = RemoteIdempotencyKey(messageId.raw)
         val createdAt = clock.now()
         val replyToMessageId = mutableUiState.value.replyToMessageId
+        if (assistantEndpoint != null && replyToMessageId != null) {
+            throw RemoteChatException("Cinder message replies are not supported yet. Send it as a new text message.")
+        }
+        val message = RemoteCachedMessage(
+            accountUid = account.accountUid,
+            roomId = roomId,
+            messageId = messageId,
+            idempotencyKey = idempotencyKey,
+            senderUid = RemoteProfileUid(account.accountUid.raw),
+            authorKind = HUMAN_AUTHOR_KIND,
+            body = normalizedBody,
+            attachments = attachments,
+            replyToMessageId = replyToMessageId,
+            editedAt = null,
+            deletedAt = null,
+            revision = 1,
+            reactionCounts = emptyMap(),
+            deliveredToCount = 0,
+            readByCount = 0,
+            deliveryState = RemoteMessageDeliveryState.PENDING,
+            clientCreatedAt = createdAt,
+            serverCreatedAt = null,
+            failureReason = null,
+        )
         val sendDraftGeneration = cancelAndAwaitPendingDraftSave()
         try {
-            cacheRepository.enqueueMessage(
-                EnqueueRemoteMessageCommand(
-                    message = RemoteCachedMessage(
-                        accountUid = account.accountUid,
-                        roomId = roomId,
-                        messageId = messageId,
-                        idempotencyKey = idempotencyKey,
-                        senderUid = RemoteProfileUid(account.accountUid.raw),
-                        authorKind = HUMAN_AUTHOR_KIND,
-                        body = normalizedBody,
-                        attachments = attachments,
-                        replyToMessageId = replyToMessageId,
-                        editedAt = null,
-                        deletedAt = null,
-                        revision = 1,
-                        reactionCounts = emptyMap(),
-                        deliveredToCount = 0,
-                        readByCount = 0,
-                        deliveryState = RemoteMessageDeliveryState.PENDING,
-                        clientCreatedAt = createdAt,
-                        serverCreatedAt = null,
-                        failureReason = null,
+            if (assistantEndpoint != null) {
+                conversationGateway.sendMessage(SendRemoteMessageCommand(message))
+            } else {
+                cacheRepository.enqueueMessage(
+                    EnqueueRemoteMessageCommand(
+                        message = message,
+                        outboxOperation = RemoteMessageOutboxOperation(
+                            accountUid = account.accountUid,
+                            operationId = "send-${messageId.raw}",
+                            roomId = roomId,
+                            messageId = messageId,
+                            idempotencyKey = idempotencyKey,
+                            senderUid = RemoteProfileUid(account.accountUid.raw),
+                            body = normalizedBody,
+                            attachments = attachments,
+                            replyToMessageId = replyToMessageId,
+                            state = RemoteOutboxState.PENDING,
+                            attemptCount = 0,
+                            createdAt = createdAt,
+                            lastAttemptAt = null,
+                            failureReason = null,
+                        ),
                     ),
-                    outboxOperation = RemoteMessageOutboxOperation(
-                        accountUid = account.accountUid,
-                        operationId = "send-${messageId.raw}",
-                        roomId = roomId,
-                        messageId = messageId,
-                        idempotencyKey = idempotencyKey,
-                        senderUid = RemoteProfileUid(account.accountUid.raw),
-                        body = normalizedBody,
-                        attachments = attachments,
-                        replyToMessageId = replyToMessageId,
-                        state = RemoteOutboxState.PENDING,
-                        attemptCount = 0,
-                        createdAt = createdAt,
-                        lastAttemptAt = null,
-                        failureReason = null,
-                    ),
-                ),
-            )
+                )
+            }
         } catch (exception: CancellationException) {
             throw exception
         } catch (exception: Exception) {
@@ -474,6 +522,10 @@ class RemoteChatViewModel(
         audioDurationMillis: Long? = null,
         isVoiceNote: Boolean = false,
     ) {
+        if (selectedRoomId.value?.let(RemoteAssistantConversationCatalog::findByRoomId) != null) {
+            publishFailureMessage("Cinder currently accepts text messages only.")
+            return
+        }
         attachmentTransferController.addAttachment(
             accountUid = mutableUiState.value.account?.accountUid,
             roomId = selectedRoomId.value,
@@ -484,6 +536,10 @@ class RemoteChatViewModel(
     }
 
     fun startVoiceNoteRecording() {
+        if (selectedRoomId.value?.let(RemoteAssistantConversationCatalog::findByRoomId) != null) {
+            publishFailureMessage("Cinder voice messages are not supported yet. Send text instead.")
+            return
+        }
         attachmentTransferController.startVoiceNoteRecording(selectedRoomId.value)
     }
 
@@ -564,6 +620,10 @@ class RemoteChatViewModel(
     }
 
     fun replyToMessage(messageId: RemoteMessageId) {
+        if (selectedRoomId.value?.let(RemoteAssistantConversationCatalog::findByRoomId) != null) {
+            publishFailureMessage("Cinder message replies are not supported yet. Send a new text message instead.")
+            return
+        }
         mutableUiState.update { state -> state.copy(replyToMessageId = messageId) }
     }
 
@@ -770,6 +830,32 @@ class RemoteChatViewModel(
                         ),
                     )
                 }
+                RemoteAssistantConversationCatalog.endpoints.forEach { endpoint ->
+                    launch {
+                        conversationGateway.observeAssistantAvailability(account.accountUid, endpoint.roomId)
+                            .catch { failure ->
+                                if (failure is CancellationException) throw failure
+                                emit(
+                                    RemoteAssistantAvailability.Unavailable(
+                                        "Cinder status could not be checked. Check your connection and try again.",
+                                    ),
+                                )
+                            }
+                            .collect { availability ->
+                                mutableUiState.update { state ->
+                                    state.copy(
+                                        assistantAvailabilities = state.assistantAvailabilities +
+                                            (endpoint.roomId to availability),
+                                        selectedAssistantAvailability = if (state.selectedRoomId == endpoint.roomId) {
+                                            availability
+                                        } else {
+                                            state.selectedAssistantAvailability
+                                        },
+                                    )
+                                }
+                            }
+                    }
+                }
                 launch { cacheRepository.observeRooms().collect { rooms ->
                     val currentSelectedRoomId = selectedRoomId.value
                     val selectedRoomWasRemoved = currentSelectedRoomId != null &&
@@ -876,6 +962,7 @@ class RemoteChatViewModel(
             invalidatePendingDraftSave()
             messageSearchJob?.cancel()
             roomAiConfigurationJob?.cancel()
+            cinderParticipantJob?.cancel()
             readAcknowledgementJob?.cancel()
             cacheRepository.clearActiveAccount()
             selectedRoomId.value = null
@@ -902,6 +989,7 @@ class RemoteChatViewModel(
                     notificationPreferences = RemoteNotificationPreferences(),
                     currentDeviceId = null,
                     roomAiConfiguration = null,
+                    cinderParticipant = null,
                     localAiHostStatus = RemoteLocalAiHostStatus.Idle,
                     isActionRunning = false,
                 )
@@ -969,6 +1057,35 @@ class RemoteChatViewModel(
                         publishFailureMessage(
                             (exception as? RemoteChatException)?.userMessage
                                 ?: "Could not refresh this conversation's AI participant status.",
+                        )
+                        reportedUnavailable = true
+                    }
+                }
+                delay(ROOM_AI_CONFIGURATION_REFRESH_MILLIS)
+            }
+        }
+    }
+
+    private fun loadCinderParticipant(roomId: RemoteRoomId) {
+        val accountUid = mutableUiState.value.account?.accountUid ?: return
+        cinderParticipantJob?.cancel()
+        cinderParticipantJob = viewModelScope.launch {
+            var reportedUnavailable = false
+            while (selectedRoomId.value == roomId) {
+                try {
+                    val participant = remoteAiParticipantGateway.getCinderParticipant(accountUid, roomId)
+                    if (selectedRoomId.value == roomId) {
+                        mutableUiState.update { state -> state.copy(cinderParticipant = participant) }
+                    }
+                    reportedUnavailable = false
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    val shouldPublishFailure = mutableUiState.value.cinderParticipant?.active == true
+                    if (shouldPublishFailure && !reportedUnavailable) {
+                        publishFailureMessage(
+                            (exception as? RemoteChatException)?.userMessage
+                                ?: "Could not refresh this conversation's Cinder participant status.",
                         )
                         reportedUnavailable = true
                     }

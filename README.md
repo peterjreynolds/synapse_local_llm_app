@@ -65,11 +65,14 @@ provider-managed storage encryption are used. Push payloads carry routing
 identifiers rather than plaintext message bodies. The phone-local AI rooms and
 memory system remain app-local and are a separate boundary from remote chat.
 
-Cinder now appears as an app-owned assistant conversation in the normal remote
-chat list and uses the normal thread, composer, Room cache, and outbox. No
-authenticated Cinder backend is configured yet, so sends fail with an explicit
-not-connected state instead of fabricating replies. The required server
-contract is recorded in
+Cinder appears as an app-owned assistant conversation in the normal remote chat
+list and can be summoned into human rooms with an explicit `@Cinder` response
+policy. The Android and Firebase source now includes authenticated submission,
+durable jobs and leases, server-ordered reply synchronization, exact remote-AI
+attribution, and an OpenClaw worker boundary. Live Firebase deployment, secret
+configuration, and an end-to-end OpenClaw round trip remain unproven; until a
+worker heartbeat is available, sends fail before creating a local ghost. The
+contract and exact activation steps are recorded in
 [`docs/cinder-conversation-integration.md`](docs/cinder-conversation-integration.md).
 
 ## Embedded Runtime

@@ -104,6 +104,11 @@ data class RemoteTypingParticipant(
 interface RemoteConversationGateway {
     fun assistantAvailability(roomId: RemoteRoomId): RemoteAssistantAvailability? = null
 
+    fun observeAssistantAvailability(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+    ): Flow<RemoteAssistantAvailability> = kotlinx.coroutines.flow.emptyFlow()
+
     fun observeRooms(accountUid: RemoteAccountUid): Flow<List<RemoteCachedRoom>>
 
     fun observeMessages(

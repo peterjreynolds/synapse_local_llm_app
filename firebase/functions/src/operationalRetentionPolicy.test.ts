@@ -16,6 +16,8 @@ test("keeps every operational collection on an explicit bounded retention window
     ),
     {
       callableRateLimits: {days: 2, timestampField: "windowStartedAt"},
+      cinderAuditEvents: {days: 90, timestampField: "createdAt"},
+      cinderResponseAudits: {days: 90, timestampField: "completedAt"},
       inviteRedemptions: {days: 180, timestampField: "redeemedAt"},
       invitations: {days: 30, timestampField: "expiresAt"},
       notificationDeliveries: {days: 30, timestampField: "startedAt"},

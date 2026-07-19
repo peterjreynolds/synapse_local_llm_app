@@ -150,6 +150,33 @@ class RoomRemoteChatCacheRepositoryTest {
         assertEquals(RemoteAssistantConversationCatalog.cinder.roomId, initialDoor.roomId)
         assertEquals(RemoteRoomKind.ASSISTANT, initialDoor.kind)
 
+        val cinderReply = remoteMessage(
+            accountUid = PETER_ACCOUNT,
+            messageId = "cinder-reply-1",
+            idempotencyKey = "cinder-reply-1",
+            serverCreatedAt = FixedClock.now(),
+            roomId = RemoteAssistantConversationCatalog.cinder.roomId,
+        ).copy(
+            senderUid = RemoteProfileUid("participant-cinder-remote-ai"),
+            authorKind = "REMOTE_AI",
+            body = "Live Cinder reply",
+            replyToMessageId = RemoteMessageId("cinder-source-1"),
+            aiParticipantId = "participant-cinder-remote-ai",
+            aiProvenance = RemoteAiProvenance.REMOTE_HOSTED,
+            serverSequence = 2L,
+        )
+        repository.cacheMessages(CacheRemoteMessagesCommand(PETER_ACCOUNT, listOf(cinderReply)))
+        repository.ensureAssistantConversation(
+            EnsureRemoteAssistantConversationCommand(
+                accountUid = PETER_ACCOUNT,
+                endpoint = RemoteAssistantConversationCatalog.cinder,
+            ),
+        )
+
+        val synchronizedDoor = repository.observeRooms().first().single()
+        assertEquals("Live Cinder reply", synchronizedDoor.latestMessagePreview)
+        assertEquals(cinderReply.senderUid, synchronizedDoor.latestMessageSenderUid)
+
         cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
         assertEquals(
             setOf(ROOM_ID, RemoteAssistantConversationCatalog.cinder.roomId),
@@ -164,7 +191,7 @@ class RoomRemoteChatCacheRepositoryTest {
     }
 
     @Test
-    fun cinderOutboxUsesTheSameIdempotentMessageAndOperationRows() = runTest {
+    fun cinderDoorRejectsOptimisticMessageAndOutboxRows() = runTest {
         repository.activateAccount(PETER_ACCOUNT)
         repository.ensureAssistantConversation(
             EnsureRemoteAssistantConversationCommand(
@@ -179,13 +206,11 @@ class RoomRemoteChatCacheRepositoryTest {
             roomId = RemoteAssistantConversationCatalog.cinder.roomId,
         )
 
-        val firstReceipt = repository.enqueueMessage(command)
-        val duplicateReceipt = repository.enqueueMessage(command)
+        val failure = runCatching { repository.enqueueMessage(command) }.exceptionOrNull()
 
-        assertEquals(RemoteCacheMutation.MESSAGE_ENQUEUED, firstReceipt.mutation)
-        assertEquals(RemoteCacheMutation.MESSAGE_ALREADY_ENQUEUED, duplicateReceipt.mutation)
-        assertEquals(1, repository.observeMessages(RemoteAssistantConversationCatalog.cinder.roomId).first().size)
-        assertEquals(1, repository.observePendingOutbox().first().size)
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(repository.observeMessages(RemoteAssistantConversationCatalog.cinder.roomId).first().isEmpty())
+        assertTrue(repository.observePendingOutbox().first().isEmpty())
     }
 
     @Test

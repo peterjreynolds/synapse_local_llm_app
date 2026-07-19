@@ -110,6 +110,22 @@ export {
 } from "./remoteAiLease.js";
 export {queueRemoteLocalAiResponse} from "./remoteAiQueue.js";
 export {
+  getCinderAvailability,
+  submitCinderMessage,
+  syncCinderMessages,
+} from "./cinderConversation.js";
+export {
+  getCinderParticipant,
+  setCinderParticipant,
+} from "./cinderParticipant.js";
+export {queueCinderHumanRoomResponse} from "./cinderQueue.js";
+export {
+  claimCinderResponse,
+  completeCinderResponseJob,
+  failCinderResponseJob,
+  skipCinderResponseJob,
+} from "./cinderWorker.js";
+export {
   endDirectCall,
   publishDirectCallSignal,
   respondDirectCall,
@@ -299,9 +315,10 @@ export const notifyRemoteMessage = onDocumentCreated(
     const roomId = event.params.roomId;
     const messageId = event.params.messageId;
     const roomReference = firestore.doc(`rooms/${roomId}`);
-    const [roomSnapshot, aiParticipantSnapshot] = await Promise.all([
+    const [roomSnapshot, localAiParticipantSnapshot, cinderParticipantSnapshot] = await Promise.all([
       roomReference.get(),
       roomReference.collection("participants").doc("participant-synapse-local-ai").get(),
+      roomReference.collection("participants").doc("participant-cinder-remote-ai").get(),
     ]);
     if (!roomSnapshot.exists) {
       return;
@@ -315,17 +332,23 @@ export const notifyRemoteMessage = onDocumentCreated(
       return;
     }
     const humanAuthorIsActiveMember = message.authorKind === "HUMAN" && memberIds.includes(message.senderUid);
-    const aiAuthorIsActiveParticipant = message.authorKind === "SYNAPSE_AI" &&
-      aiParticipantSnapshot.get("active") === true &&
-      aiParticipantSnapshot.get("participantId") === message.senderUid &&
-      aiParticipantSnapshot.get("provenance") === message.provenance;
-    if (!humanAuthorIsActiveMember && !aiAuthorIsActiveParticipant) return;
+    const localAiAuthorIsActiveParticipant = message.authorKind === "SYNAPSE_AI" &&
+      localAiParticipantSnapshot.get("active") === true &&
+      localAiParticipantSnapshot.get("participantId") === message.aiParticipantId &&
+      localAiParticipantSnapshot.get("provenance") === message.provenance;
+    const cinderAuthorIsActiveParticipant = message.authorKind === "REMOTE_AI" &&
+      cinderParticipantSnapshot.get("active") === true &&
+      cinderParticipantSnapshot.get("participantId") === message.aiParticipantId &&
+      cinderParticipantSnapshot.get("provenance") === message.provenance &&
+      cinderParticipantSnapshot.get("provider") === message.aiProvider &&
+      cinderParticipantSnapshot.get("assistantId") === message.assistantId;
+    if (!humanAuthorIsActiveMember && !localAiAuthorIsActiveParticipant && !cinderAuthorIsActiveParticipant) return;
     const candidateRecipientUids = [
       ...new Set(
         memberIds.filter(
           (memberUid): memberUid is string =>
             typeof memberUid === "string" &&
-            (message.authorKind === "SYNAPSE_AI" || memberUid !== message.senderUid),
+            (message.authorKind !== "HUMAN" || memberUid !== message.senderUid),
         ),
       ),
     ];

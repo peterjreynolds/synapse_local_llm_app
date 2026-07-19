@@ -25,6 +25,8 @@ export const CALLABLE_RATE_LIMIT_POLICIES = {
   attachmentMutation: {maximumRequests: 60, windowMillis: 15 * 60_000},
   callMutation: {maximumRequests: 30, windowMillis: 60_000},
   callSignaling: {maximumRequests: 240, windowMillis: 60_000},
+  cinderAvailabilityPolling: {maximumRequests: 6, windowMillis: 60_000},
+  cinderSyncPolling: {maximumRequests: 120, windowMillis: 60_000},
   conversationMutation: {maximumRequests: 120, windowMillis: 60_000},
   groupMutation: {maximumRequests: 60, windowMillis: 15 * 60_000},
   invitationMutation: {maximumRequests: 10, windowMillis: 24 * 60 * 60_000},

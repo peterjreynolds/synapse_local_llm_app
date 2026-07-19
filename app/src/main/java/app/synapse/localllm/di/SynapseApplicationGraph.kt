@@ -24,6 +24,7 @@ import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_12_13
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_13_14
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_14_15
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_15_16
+import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_16_17
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_2_3
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_3_4
 import app.synapse.localllm.data.db.SYNAPSE_DATABASE_MIGRATION_4_5
@@ -46,6 +47,7 @@ import app.synapse.localllm.data.memory.VerifiedPromptContextAssembler
 import app.synapse.localllm.data.remote.FirebaseOwnerAdminGateway
 import app.synapse.localllm.data.remote.AndroidRemoteVoiceNoteRecorder
 import app.synapse.localllm.data.remote.FirebaseRemoteAuthenticationGateway
+import app.synapse.localllm.data.remote.FirebaseCinderConversationGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteAiParticipantGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteAttachmentGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteConversationGateway
@@ -58,7 +60,6 @@ import app.synapse.localllm.data.remote.FirebaseRemotePrivacyGateway
 import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
 import app.synapse.localllm.data.remote.RemoteConversationGatewayRouter
 import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
-import app.synapse.localllm.data.remote.UnavailableRemoteAssistantConversationGateway
 import app.synapse.localllm.data.runtime.AndroidDeviceRuntimeCapabilitiesReader
 import app.synapse.localllm.data.runtime.AndroidEmbeddedModelStore
 import app.synapse.localllm.data.runtime.AndroidForegroundModelDownloadController
@@ -143,6 +144,7 @@ class SynapseApplicationGraph private constructor(context: Context) {
         SYNAPSE_DATABASE_MIGRATION_13_14,
         SYNAPSE_DATABASE_MIGRATION_14_15,
         SYNAPSE_DATABASE_MIGRATION_15_16,
+        SYNAPSE_DATABASE_MIGRATION_16_17,
     ).build()
 
     val remoteAccountSessionController = RemoteAccountSessionCoordinator()
@@ -179,7 +181,11 @@ class SynapseApplicationGraph private constructor(context: Context) {
             functions = firebaseFunctions,
             sessionController = remoteAccountSessionController,
         )
-    val remoteAssistantConversationGateway = UnavailableRemoteAssistantConversationGateway()
+    val remoteAssistantConversationGateway = FirebaseCinderConversationGateway(
+        firebaseAuth = firebaseAuth,
+        firebaseFunctions = firebaseFunctions,
+        sessionController = remoteAccountSessionController,
+    )
     val remoteConversationGateway = RemoteConversationGatewayRouter(
         synchronizedConversationGateway = firebaseRemoteConversationGateway,
         assistantConversationGateway = remoteAssistantConversationGateway,

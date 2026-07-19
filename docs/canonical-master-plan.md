@@ -73,11 +73,12 @@ governance runtime, or an external sidecar.
   relationships while backfilling participants, memberships, and authorship.
 - Provider-neutral local sync metadata fields exist as contracts only; no fake
   remote synchronization or cloud-provider behavior is claimed.
-- App-owned Cinder remote-assistant conversation door with stable identity,
-  normal remote room/thread/composer presentation, account-scoped Room cache,
-  idempotent outbox delivery, a provider-neutral gateway router, deterministic
-  not-configured delivery state, and an explicit guard against phone-local
-  Synapse inference. An authenticated Cinder backend is not yet configured; see
+- App-owned Cinder remote-assistant conversation with stable identity, normal
+  remote room/thread/composer presentation, account-scoped Room cache,
+  authenticated Firebase submission and cursor sync, durable jobs/leases,
+  human-room summon/remove and mention-only routing, exact OpenClaw remote-AI
+  attribution, and an explicit guard against phone-local Synapse inference.
+  Live deployment and an end-to-end OpenClaw round trip remain unproven; see
   [`cinder-conversation-integration.md`](cinder-conversation-integration.md).
 
 ## Synapse Chat Phase 1 — Complete
@@ -323,12 +324,15 @@ Goal: make embedded local inference feel reliable on Samsung S25 Ultra.
 Goal: make Cinder feel like another normal conversation without coupling the
 Android app to an assistant runtime implementation.
 
-- Keep the implemented `assistant_cinder` door on the existing remote Room
-  cache, thread, composer, and outbox.
-- Implement the authenticated server adapter, durable idempotent acceptance
-  receipt, per-conversation ordering, reply store, metadata-only push, and
+- Keep `assistant_cinder` on the existing remote Room cache, thread, and
+  composer; unavailable direct submissions must never create optimistic cache
+  or outbox rows.
+- Preserve the implemented authenticated Firebase adapter, durable idempotent
+  acceptance, server-owned ordering, reply store, metadata-only push, and
   authenticated reply synchronization defined in
   [`cinder-conversation-integration.md`](cinder-conversation-integration.md).
+- Activate the companion OpenClaw worker and prove the documented live direct
+  and human-room round trips before calling Cinder operational.
 - Keep credentials and provider-specific runtime types outside the APK.
 - Do not route Cinder turns into the phone-local Synapse inference coordinator.
 - Do not claim working replies until a real backend round trip and durable sync

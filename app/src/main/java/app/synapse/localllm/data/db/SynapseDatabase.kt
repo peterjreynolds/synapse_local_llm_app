@@ -36,7 +36,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RemoteMessageLocalStateEntity::class,
         RemoteSyncCursorEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = false,
 )
 abstract class SynapseDatabase : RoomDatabase() {
@@ -940,6 +940,18 @@ val SYNAPSE_DATABASE_MIGRATION_15_16 =
             db.execSQL(
                 "CREATE INDEX IF NOT EXISTS index_remote_message_local_state_accountUid_remoteRoomId " +
                     "ON remote_message_local_state(accountUid, remoteRoomId)",
+            )
+        }
+    }
+
+val SYNAPSE_DATABASE_MIGRATION_16_17 =
+    object : Migration(16, 17) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE remote_message_cache ADD COLUMN serverSequence INTEGER")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS " +
+                    "index_remote_message_cache_accountUid_remoteRoomId_serverSequence " +
+                    "ON remote_message_cache(accountUid, remoteRoomId, serverSequence)",
             )
         }
     }

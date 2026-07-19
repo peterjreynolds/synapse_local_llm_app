@@ -11,6 +11,7 @@ import app.synapse.localllm.domain.remote.RemoteCachedAttachment
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
+import app.synapse.localllm.domain.remote.RemoteCinderParticipantState
 import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
@@ -45,6 +46,7 @@ data class RemoteChatUiState(
     val notificationPreferences: RemoteNotificationPreferences = RemoteNotificationPreferences(),
     val currentDeviceId: RemoteDeviceId? = null,
     val roomAiConfiguration: RemoteRoomAiConfiguration? = null,
+    val cinderParticipant: RemoteCinderParticipantState? = null,
     val localAiHostStatus: RemoteLocalAiHostStatus = RemoteLocalAiHostStatus.Idle,
     val isActionRunning: Boolean = false,
     val notice: String? = null,
