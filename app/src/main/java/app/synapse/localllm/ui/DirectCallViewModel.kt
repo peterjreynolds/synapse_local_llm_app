@@ -239,6 +239,8 @@ class DirectCallViewModel(
                             failAndEndCall(failure.message ?: "Android could not keep the outgoing call active.")
                             return
                         }
+                } else {
+                    alertGateway.startIncomingRingtone(session.expiresAtMillis)
                 }
                 scheduleCallExpiry(activeAccountUid, session)
             }

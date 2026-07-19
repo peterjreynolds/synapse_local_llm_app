@@ -5,8 +5,6 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
-import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import app.synapse.localllm.domain.remote.RemoteMessageId
@@ -78,6 +76,7 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun handleDirectCallNotification(payload: DirectCallNotificationPayload) {
         if (payload.event == DirectCallNotificationEvent.ENDED) {
+            requireSynapseApplication().graph.directCallAlertGateway.stop()
             NotificationManagerCompat.from(this).cancel(
                 payload.callId.raw,
                 DIRECT_CALL_NOTIFICATION_ID,
@@ -87,6 +86,16 @@ class SynapseFirebaseMessagingService : FirebaseMessagingService() {
         if (payload.expiresAtMillis <= System.currentTimeMillis()) return
         if (!resolveNotificationPermissionState(this).allowsNotifications) return
         ensureDirectCallNotificationChannel()
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        if (notificationManager.getNotificationChannel(DIRECT_CALL_NOTIFICATION_CHANNEL_ID)?.importance ==
+            NotificationManager.IMPORTANCE_NONE
+        ) {
+            return
+        }
+        requireSynapseApplication()
+            .graph
+            .directCallAlertGateway
+            .startIncomingRingtone(payload.expiresAtMillis)
         val notification = NotificationCompat.Builder(this, DIRECT_CALL_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle("Synapse Chat")
@@ -171,13 +180,9 @@ internal fun createDirectCallNotificationChannel(): NotificationChannel =
         description = "Private ringing alerts for incoming Synapse calls."
         enableVibration(true)
         setShowBadge(false)
-        setSound(
-            Settings.System.DEFAULT_RINGTONE_URI,
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build(),
-        )
+        // The call alert gateway owns the bounded looping ringtone. This channel owns only
+        // notification visibility and vibration so Android does not play a second overlapping tone.
+        setSound(null, null)
     }
 
 internal fun dismissRemoteRoomNotification(
@@ -270,7 +275,7 @@ const val EXTRA_REMOTE_ROOM_ID = "app.synapse.localllm.extra.REMOTE_ROOM_ID"
 const val EXTRA_DIRECT_CALL_ID = "app.synapse.localllm.extra.DIRECT_CALL_ID"
 private const val REMOTE_CHAT_MESSAGE_TYPE = "SYNAPSE_CHAT_MESSAGE"
 private const val DIRECT_CALL_NOTIFICATION_TYPE = "SYNAPSE_DIRECT_CALL"
-private const val DIRECT_CALL_NOTIFICATION_CHANNEL_ID = "synapse_direct_calls_ringing_v2"
+private const val DIRECT_CALL_NOTIFICATION_CHANNEL_ID = "synapse_direct_calls_ringing_v3"
 internal const val REMOTE_CHAT_NOTIFICATION_ID = 4_301
 internal const val DIRECT_CALL_NOTIFICATION_ID = 4_302
 private const val MAXIMUM_REMOTE_NOTIFICATION_IDENTIFIER_LENGTH = 512

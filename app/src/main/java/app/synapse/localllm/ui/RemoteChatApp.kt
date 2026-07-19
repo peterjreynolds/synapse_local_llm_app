@@ -86,11 +86,13 @@ fun RemoteChatApp(
     appLockViewModel: AppLockViewModel,
     chatAppearanceViewModel: ChatAppearanceViewModel,
     directCallViewModel: DirectCallViewModel,
+    directCallRingtoneViewModel: DirectCallRingtoneViewModel,
     directCallVideoRendererController: DirectCallVideoRendererController,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val state by remoteViewModel.uiState.collectAsStateWithLifecycle()
     val directCallState by directCallViewModel.uiState.collectAsStateWithLifecycle()
+    val directCallRingtoneState by directCallRingtoneViewModel.uiState.collectAsStateWithLifecycle()
     var showLocalWhileSignedOut by rememberSaveable { mutableStateOf(false) }
     val authenticationState = state.authenticationState
     val account = state.account
@@ -141,6 +143,8 @@ fun RemoteChatApp(
                 chatAppearanceViewModel = chatAppearanceViewModel,
                 directCallState = directCallState,
                 directCallViewModel = directCallViewModel,
+                directCallRingtoneState = directCallRingtoneState,
+                directCallRingtoneViewModel = directCallRingtoneViewModel,
                 requestOwnerIdentityConfirmation = requestOwnerIdentityConfirmation,
             )
         }
@@ -648,6 +652,8 @@ private fun RemoteSignedInShell(
     chatAppearanceViewModel: ChatAppearanceViewModel,
     directCallState: DirectCallUiState,
     directCallViewModel: DirectCallViewModel,
+    directCallRingtoneState: DirectCallRingtoneUiState,
+    directCallRingtoneViewModel: DirectCallRingtoneViewModel,
     requestOwnerIdentityConfirmation: ((Boolean) -> Unit) -> Unit,
 ) {
     val localState by localViewModel.uiState.collectAsStateWithLifecycle()
@@ -794,6 +800,8 @@ private fun RemoteSignedInShell(
                         appLockState = appLockState,
                         appLockViewModel = appLockViewModel,
                         appearanceState = chatAppearanceState,
+                        directCallRingtoneState = directCallRingtoneState,
+                        directCallRingtoneViewModel = directCallRingtoneViewModel,
                         onBubblePaletteSelected = chatAppearanceViewModel::selectBubblePalette,
                         onCheckAppUpdate = { localViewModel.checkForAppUpdate(automatic = false) },
                     )

@@ -20,6 +20,8 @@ import app.synapse.localllm.ui.ChatAppearanceViewModel
 import app.synapse.localllm.ui.ChatAppearanceViewModelFactory
 import app.synapse.localllm.ui.DirectCallViewModel
 import app.synapse.localllm.ui.DirectCallViewModelFactory
+import app.synapse.localllm.ui.DirectCallRingtoneViewModel
+import app.synapse.localllm.ui.DirectCallRingtoneViewModelFactory
 import app.synapse.localllm.ui.OwnerAdminViewModel
 import app.synapse.localllm.ui.OwnerAdminViewModelFactory
 import app.synapse.localllm.ui.RemoteAccountViewModel
@@ -42,6 +44,9 @@ class MainActivity : FragmentActivity() {
     }
     private val directCallViewModel: DirectCallViewModel by viewModels {
         DirectCallViewModelFactory(requireSynapseApplication().graph)
+    }
+    private val directCallRingtoneViewModel: DirectCallRingtoneViewModel by viewModels {
+        DirectCallRingtoneViewModelFactory(requireSynapseApplication().graph)
     }
     private val localViewModel: SynapseViewModel by viewModels {
         SynapseViewModelFactory(requireSynapseApplication().graph)
@@ -83,6 +88,7 @@ class MainActivity : FragmentActivity() {
                         appLockViewModel = appLockViewModel,
                         chatAppearanceViewModel = chatAppearanceViewModel,
                         directCallViewModel = directCallViewModel,
+                        directCallRingtoneViewModel = directCallRingtoneViewModel,
                         directCallVideoRendererController = requireSynapseApplication().graph.directCallMediaGateway,
                         requestOwnerIdentityConfirmation = ::requestOwnerIdentityConfirmation,
                     )

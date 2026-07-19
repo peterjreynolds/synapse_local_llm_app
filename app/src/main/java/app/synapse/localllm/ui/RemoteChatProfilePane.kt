@@ -1,5 +1,10 @@
 package app.synapse.localllm.ui
 
+import android.app.Activity
+import android.content.Intent
+import android.media.RingtoneManager
+import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Button
@@ -46,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.POST_NOTIFICATIONS_PERMISSION
 import app.synapse.localllm.domain.appearance.ChatBubblePalette
+import app.synapse.localllm.domain.calling.DirectCallRingtoneSource
 import app.synapse.localllm.domain.notifications.NotificationPermissionState
 import app.synapse.localllm.resolveNotificationPermissionState
 import java.time.Instant
@@ -60,6 +67,8 @@ internal fun RemoteProfilePane(
     appLockState: AppLockUiState,
     appLockViewModel: AppLockViewModel,
     appearanceState: ChatAppearanceUiState,
+    directCallRingtoneState: DirectCallRingtoneUiState,
+    directCallRingtoneViewModel: DirectCallRingtoneViewModel,
     onBubblePaletteSelected: (ChatBubblePalette) -> Unit,
     onCheckAppUpdate: () -> Unit,
 ) {
@@ -93,6 +102,19 @@ internal fun RemoteProfilePane(
             val mimeType = context.contentResolver.getType(uri).orEmpty()
             viewModel.uploadAvatar(uri.toString(), mimeType)
         }
+    }
+    val phoneRingtoneLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        result.data?.selectedDirectCallRingtoneUri()?.let { uri ->
+            directCallRingtoneViewModel.selectPhoneRingtone(uri.toString())
+        }
+    }
+    val ringtoneAudioFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        uri?.let { selectedUri -> directCallRingtoneViewModel.selectAudioFile(selectedUri.toString()) }
     }
 
     ClearSensitiveInputsOnStop {
@@ -222,6 +244,72 @@ internal fun RemoteProfilePane(
                 Icon(Icons.Default.Notifications, contentDescription = null)
                 Text(" Enable notifications")
             }
+        }
+        Text(
+            "Incoming call ringtone",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            directCallRingtoneState.selection.displayName,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "Synapse loops the selected sound at full app playback volume while a call is ringing. " +
+                "Your phone's ring volume, silent mode, and Do Not Disturb still apply. Custom audio stays on this phone.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = {
+                    phoneRingtoneLauncher.launch(
+                        Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE)
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                            putExtra(
+                                RingtoneManager.EXTRA_RINGTONE_EXISTING_URI,
+                                directCallRingtoneState.selection.uri?.let(Uri::parse)
+                                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                            )
+                        },
+                    )
+                },
+                enabled = !directCallRingtoneState.isSaving,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Default.MusicNote, contentDescription = null)
+                Text(" Phone tones")
+            }
+            OutlinedButton(
+                onClick = { ringtoneAudioFileLauncher.launch(arrayOf("audio/*")) },
+                enabled = !directCallRingtoneState.isSaving,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Audio file")
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = directCallRingtoneViewModel::togglePreview,
+                enabled = !directCallRingtoneState.isSaving,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (directCallRingtoneState.isPreviewing) "Stop preview" else "Preview ringtone")
+            }
+            if (directCallRingtoneState.selection.source != DirectCallRingtoneSource.PHONE_DEFAULT) {
+                OutlinedButton(
+                    onClick = directCallRingtoneViewModel::usePhoneDefaultRingtone,
+                    enabled = !directCallRingtoneState.isSaving,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Use phone default")
+                }
+            }
+        }
+        directCallRingtoneState.notice?.let { notice ->
+            Text(notice, style = MaterialTheme.typography.bodySmall)
         }
         NotificationPreferenceRow(
             label = "Direct messages",
@@ -479,6 +567,14 @@ internal fun RemoteProfilePane(
         }
     }
 }
+
+private fun Intent.selectedDirectCallRingtoneUri(): Uri? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
+    } else {
+        @Suppress("DEPRECATION")
+        getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+    }
 
 @Composable
 private fun NotificationPreferenceRow(

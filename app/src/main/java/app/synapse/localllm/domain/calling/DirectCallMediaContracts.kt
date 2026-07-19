@@ -16,6 +16,8 @@ enum class DirectCallMediaConnectionState {
 interface DirectCallAlertGateway {
     fun startOutgoingRingback()
 
+    fun startIncomingRingtone(expiresAtMillis: Long)
+
     fun stop()
 }
 

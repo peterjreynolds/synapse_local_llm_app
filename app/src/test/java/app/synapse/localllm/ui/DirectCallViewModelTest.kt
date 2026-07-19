@@ -79,10 +79,11 @@ class DirectCallViewModelTest {
             initialSession = directCallSession(callerUid = TRISH_UID, calleeUid = PETER_UID),
         )
         val mediaGateway = RecordingMediaGateway()
+        val alertGateway = RecordingAlertGateway()
         val viewModel = DirectCallViewModel(
             gateway,
             mediaGateway,
-            RecordingAlertGateway(),
+            alertGateway,
             RecordingForegroundController(),
         )
         viewModel.bindAccount(PETER_UID)
@@ -90,6 +91,7 @@ class DirectCallViewModelTest {
 
         assertEquals(DirectCallUiPhase.INCOMING_RINGING, viewModel.uiState.value.phase)
         assertFalse(mediaGateway.started)
+        assertTrue(alertGateway.incomingRingtonePlaying)
 
         viewModel.acceptCall()
         runCurrent()
@@ -97,6 +99,7 @@ class DirectCallViewModelTest {
         assertEquals(DirectCallUiPhase.ACTIVE, viewModel.uiState.value.phase)
         assertTrue(mediaGateway.started)
         assertEquals(RemoteDirectCallRole.CALLEE, mediaGateway.role)
+        assertFalse(alertGateway.incomingRingtonePlaying)
     }
 
     @Test
@@ -256,13 +259,21 @@ class DirectCallViewModelTest {
 
     private class RecordingAlertGateway : DirectCallAlertGateway {
         var ringbackPlaying = false
+        var incomingRingtonePlaying = false
 
         override fun startOutgoingRingback() {
             ringbackPlaying = true
+            incomingRingtonePlaying = false
+        }
+
+        override fun startIncomingRingtone(expiresAtMillis: Long) {
+            ringbackPlaying = false
+            incomingRingtonePlaying = true
         }
 
         override fun stop() {
             ringbackPlaying = false
+            incomingRingtonePlaying = false
         }
     }
 
