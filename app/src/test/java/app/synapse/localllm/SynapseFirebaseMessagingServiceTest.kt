@@ -58,6 +58,22 @@ class SynapseFirebaseMessagingServiceTest {
     }
 
     @Test
+    fun notificationPayloadAcceptsDedicatedCinderAssistantRoom() {
+        val payload = parseRemoteNotificationPayload(
+            mapOf(
+                "messageId" to "cinder-${"a".repeat(64)}",
+                "roomId" to "assistant_cinder",
+                "senderUid" to "participant-cinder-remote-ai",
+                "type" to "SYNAPSE_CHAT_MESSAGE",
+                "unreadCount" to "1",
+            ),
+        )
+
+        assertEquals("assistant_cinder", payload?.roomId?.raw)
+        assertEquals("participant-cinder-remote-ai", payload?.senderUid?.raw)
+    }
+
+    @Test
     fun notificationPayloadRejectsMissingOrInvalidUnreadCount() {
         val basePayload = mapOf(
             "messageId" to "message-3",

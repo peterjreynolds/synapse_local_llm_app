@@ -10,11 +10,10 @@ import {
 import {
   FIREBASE_FUNCTIONS_REGION,
   firebaseAdminFirestore,
-  firebaseAdminMessaging,
 } from "./firebaseAdmin.js";
+import {sendMetadataOnlyMessageNotification} from "./messageNotificationDelivery.js";
 import {selectAuthorizedMessageRecipientUids} from "./recipientAuthorization.js";
 import {
-  buildRemoteMessageNotificationData,
   nextRemoteNotificationUnreadCount,
   readNotificationPreferences,
   shouldNotifyForRemoteMessage,
@@ -118,6 +117,7 @@ export {
   getCinderParticipant,
   setCinderParticipant,
 } from "./cinderParticipant.js";
+export {notifyCinderMessage} from "./cinderNotification.js";
 export {queueCinderHumanRoomResponse} from "./cinderQueue.js";
 export {
   claimCinderResponse,
@@ -133,7 +133,6 @@ export {
 } from "./directCallMutation.js";
 
 const firestore = firebaseAdminFirestore;
-const messaging = firebaseAdminMessaging;
 const REGION = FIREBASE_FUNCTIONS_REGION;
 
 interface ProfileDocument {
@@ -143,12 +142,6 @@ interface ProfileDocument {
   mustChangePassword?: unknown;
   role?: unknown;
   username?: unknown;
-}
-
-interface DeviceDocument {
-  active?: unknown;
-  installationId?: unknown;
-  ownerUid?: unknown;
 }
 
 function requireActiveProfile(
@@ -414,65 +407,17 @@ export const notifyRemoteMessage = onDocumentCreated(
     }
 
     try {
-      const deviceSnapshots = notificationRecipientUids.length === 0 ? null : await firestore
-        .collection("devices")
-        .where("ownerUid", "in", notificationRecipientUids)
-        .where("active", "==", true)
-        .get();
-      const deviceRecords = deviceSnapshots?.docs
-        .map((snapshot) => ({
-          reference: snapshot.ref,
-          value: snapshot.data() as DeviceDocument,
-        }))
-        .filter(
-          (device): device is typeof device & {value: DeviceDocument & {installationId: string}} =>
-            typeof device.value.installationId === "string" &&
-            notificationRecipientUids.includes(String(device.value.ownerUid)),
-        ) ?? [];
-
-      let successCount = 0;
-      let failureCount = 0;
-      if (deviceRecords.length > 0) {
-        const unreadCountsByRecipientUid = new Map(
-          authorizationStates.map((authorization) => [authorization.uid, authorization.nextUnreadCount]),
-        );
-        const sendResult = await messaging.sendEach(
-          deviceRecords.map((device) => ({
-            android: {
-              collapseKey: `room_${roomId}`,
-              priority: "high" as const,
-              ttl: 24 * 60 * 60 * 1000,
-            },
-            data: buildRemoteMessageNotificationData({
-              messageId,
-              roomId,
-              senderUid: message.senderUid,
-              unreadCount: unreadCountsByRecipientUid.get(String(device.value.ownerUid)) ?? 1,
-            }),
-            fid: device.value.installationId,
+      const deliveryResult = await sendMetadataOnlyMessageNotification({
+        messageId,
+        recipients: authorizationStates
+          .filter((authorization) => notificationRecipientUids.includes(authorization.uid))
+          .map((authorization) => ({
+            uid: authorization.uid,
+            unreadCount: authorization.nextUnreadCount,
           })),
-        );
-        successCount = sendResult.successCount;
-        failureCount = sendResult.failureCount;
-
-        const invalidInstallationWrites = firestore.batch();
-        sendResult.responses.forEach((response, index) => {
-          const errorCode = response.error?.code;
-          if (
-            errorCode === "messaging/invalid-registration-token" ||
-            errorCode === "messaging/registration-token-not-registered"
-          ) {
-            const deviceRecord = deviceRecords[index];
-            if (deviceRecord) {
-              invalidInstallationWrites.update(deviceRecord.reference, {
-                active: false,
-                disabledAt: FieldValue.serverTimestamp(),
-              });
-            }
-          }
-        });
-        await invalidInstallationWrites.commit();
-      }
+        roomId,
+        senderUid: message.senderUid,
+      });
 
       const updatedAt = Timestamp.now();
       await firestore.runTransaction(async (transaction) => {
@@ -521,9 +466,9 @@ export const notifyRemoteMessage = onDocumentCreated(
       }
       summaryWrites.update(receiptReference, {
         completedAt: updatedAt,
-        failureCount,
+        failureCount: deliveryResult.failureCount,
         state: "COMPLETE",
-        successCount,
+        successCount: deliveryResult.successCount,
       });
       await summaryWrites.commit();
     } catch (error) {

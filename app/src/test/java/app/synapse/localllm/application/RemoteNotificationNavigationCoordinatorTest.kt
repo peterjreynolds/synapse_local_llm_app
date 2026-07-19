@@ -28,6 +28,15 @@ class RemoteNotificationNavigationCoordinatorTest {
     }
 
     @Test
+    fun dedicatedCinderRoomIsQueuedAsOneShotTrustedCommand() {
+        val coordinator = RemoteNotificationNavigationCoordinator()
+
+        assertTrue(coordinator.queueRoom("assistant_cinder"))
+        assertEquals("assistant_cinder", coordinator.consumeRoom()?.raw)
+        assertNull(coordinator.consumeRoom())
+    }
+
+    @Test
     fun malformedRoomNeverBecomesNavigationCommand() {
         val coordinator = RemoteNotificationNavigationCoordinator()
 

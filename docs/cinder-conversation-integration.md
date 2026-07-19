@@ -140,25 +140,97 @@ removal or unavailable source state records a skip instead.
 Source implementation does not prove a live backend. An end-to-end round trip
 still requires all of the following:
 
-1. Create a strong Firebase Functions secret named `CINDER_WORKER_TOKEN`; do
-   not place its value in git, Android resources, logs, or Firestore.
-2. Deploy the changed Firestore rules and indexes, then deploy the Cinder user
-   callables, queue trigger, notification trigger, worker endpoints, and
-   operational cleanup Function to the intended Firebase project.
-3. Configure the companion OpenClaw outbound Synapse worker with the four
-   deployed HTTPS endpoint URLs, the same secret, a stable `workerId`, and
-   protocol version 1. Keep the worker in the OpenClaw-owned repository/lane.
-4. Start the worker and verify repeated claim polls refresh
-   `cinderWorkerStatus/current` without exposing the secret.
-5. Sign in with an active allowed Synapse account, verify availability changes
-   to available, send one dedicated Cinder text, and prove the persisted human
-   turn, claimed job, OpenClaw response, terminal audit, synchronized reply, and
+1. Freeze a clean candidate SHA and retain it in every deployment and test
+   receipt. Create the Functions secret interactively; never pass or print the
+   value in a shell argument:
+
+   ```bash
+   PROJECT_ID="synapse-chat-pjr-2026"
+   REGION="northamerica-northeast1"
+   CANDIDATE_SHA="$(git rev-parse HEAD)"
+   test -z "$(git status --short)"
+   npm --prefix firebase exec -- firebase functions:secrets:set \
+     CINDER_WORKER_TOKEN \
+     --project "$PROJECT_ID"
+   ```
+
+   Provision the same 32-512 character visible-ASCII value to the OpenClaw
+   worker through its secret provider. Do not use `functions:secrets:access`
+   as part of activation or evidence collection.
+
+2. Deploy only the required Firestore policy and indexes, without `--force`:
+
+   ```bash
+   npm --prefix firebase exec -- firebase deploy \
+     --project "$PROJECT_ID" \
+     --only "firestore:rules,firestore:indexes"
+   ```
+
+   Wait until both `cinderResponseJobs` composite indexes are ready before
+   starting the worker.
+
+3. Deploy the exact Functions surface that owns the Cinder transport and its
+   existing notification, participant-preservation, and retention dependencies:
+
+   ```bash
+   npm --prefix firebase exec -- firebase deploy \
+     --project "$PROJECT_ID" \
+     --only "functions:synapse-chat:getCinderAvailability,functions:synapse-chat:submitCinderMessage,functions:synapse-chat:syncCinderMessages,functions:synapse-chat:getCinderParticipant,functions:synapse-chat:setCinderParticipant,functions:synapse-chat:queueCinderHumanRoomResponse,functions:synapse-chat:claimCinderResponse,functions:synapse-chat:completeCinderResponseJob,functions:synapse-chat:failCinderResponseJob,functions:synapse-chat:skipCinderResponseJob,functions:synapse-chat:notifyRemoteMessage,functions:synapse-chat:notifyCinderMessage,functions:synapse-chat:updateRoomAiConfiguration,functions:synapse-chat:cleanupExpiredOperationalData"
+   ```
+
+4. Discover the four worker URLs from deployed metadata instead of constructing
+   hostnames. The result must contain exactly four `ACTIVE` rows in
+   `northamerica-northeast1`, each with a non-empty HTTPS URI:
+
+   ```bash
+   npm --prefix firebase exec -- firebase functions:list \
+     --project "$PROJECT_ID" \
+     --json |
+     jq -r '.result[] |
+       select(.id | test("^(claimCinderResponse|completeCinderResponseJob|failCinderResponseJob|skipCinderResponseJob)$")) |
+       [.id, .region, .state, .uri] | @tsv'
+   ```
+
+   Configure those discovered URIs as OpenClaw's claim, complete, fail, and skip
+   URLs. Enable both the `synapse-chat` plugin entry and channel, use one stable
+   valid `workerId`, and resolve the same secret through the OpenClaw secret
+   provider. Keep this configuration and runtime in the OpenClaw-owned lane.
+
+5. Start the normal Cinder/OpenClaw runtime. Its claim poll is the heartbeat;
+   there is no separate heartbeat endpoint. Confirm the channel is running with
+   no current error, then use an authenticated active Synapse account to obtain
+   two `getCinderAvailability` receipts after separate claim polls. Both must be
+   protocol version 1 and available, and the second `availableUntilMillis` must
+   advance. A channel-status command alone does not prove Firebase heartbeat.
+
+6. For the dedicated `assistant_cinder` round trip, background the receiving
+   app, send a unique harmless text, and prove exactly one accepted human turn,
+   one claimed `ASSISTANT` job, one normal OpenClaw Cinder dispatch, one terminal
+   `COMPLETE` audit, one synchronized trusted Cinder reply, and one private
+   metadata-only notification that opens `assistant_cinder`. Reopen and relaunch
+   the app to prove cache and synchronization stability. Store only redacted
+   identifiers, digests, counts, and timestamps in the receipt.
+
+7. In an authorized direct or group test room, add Cinder and send a unique
+   ordinary message without `@Cinder`; prove no Cinder job, audit, or reply is
+   created. Send one unique normalized `@Cinder` message and prove exactly one
+   claim, terminal audit, trusted remote-AI reply, synchronization event, and
    metadata-only notification.
-6. Add Cinder to an authorized test direct/group room, prove an ordinary message
-   queues nothing, prove `@Cinder` produces one response, remove Cinder, and
-   prove later mentions queue nothing while prior history remains.
-7. Record the live Firebase and physical-device receipts in the release ledger
-   before making any release-readiness claim.
+
+8. Remove Cinder and prove the participant becomes inactive while prior history
+   remains. A later unique `@Cinder` message must create no job or reply. Also
+   exercise the removal race by removing Cinder after a claim but before
+   completion; completion must return `SKIPPED` with `PARTICIPANT_REMOVED` and
+   persist no room reply.
+
+9. Execute the release ledger's complete physical-device checklist on both the
+   Galaxy S9/API 29 class and a physical API 33+ device. In addition to the
+   existing install, session, messaging, attachment, updater, notification, and
+   App Check evidence, record Cinder offline draft preservation, advancing
+   heartbeat availability, dedicated and mention-only round trips, removal,
+   background notification routing, and persistence after relaunch. Do not make
+   a release-readiness claim until every required gate passes for the same
+   candidate SHA.
 
 No deployment, secret mutation, OpenClaw runtime change, release dispatch, or
 APK publication is performed by the source implementation milestone.
