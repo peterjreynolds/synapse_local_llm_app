@@ -21,7 +21,9 @@ import app.synapse.localllm.domain.remote.RemoteDirectCallState
 import app.synapse.localllm.domain.remote.RemoteRoomId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -64,6 +66,8 @@ class DirectCallViewModel(
     private var callSessionJob: Job? = null
     private var callSignalJob: Job? = null
     private var callExpiryJob: Job? = null
+    private var localVideoPreviewJob: Job? = null
+    private var localVideoPreviewCallId: RemoteDirectCallId? = null
     private var mediaCallId: RemoteDirectCallId? = null
     private var foregroundCallId: RemoteDirectCallId? = null
     private var pendingNotificationCallId: RemoteDirectCallId? = null
@@ -239,6 +243,9 @@ class DirectCallViewModel(
                             failAndEndCall(failure.message ?: "Android could not keep the outgoing call active.")
                             return
                         }
+                    if (session.mediaKind == RemoteDirectCallMediaKind.VIDEO) {
+                        beginOutgoingVideoPreview(session)
+                    }
                 } else {
                     alertGateway.startIncomingRingtone(session.expiresAtMillis)
                 }
@@ -262,6 +269,7 @@ class DirectCallViewModel(
         activeAccountUid: RemoteAccountUid,
         session: RemoteDirectCallSession,
     ) {
+        cancelLocalVideoPreviewJob()
         mediaCallId = session.callId
         processedSignalIds.clear()
         viewModelScope.launch {
@@ -299,6 +307,29 @@ class DirectCallViewModel(
                 throw exception
             } catch (exception: Exception) {
                 failAndEndCall(exception.message ?: "Could not connect the call.")
+            }
+        }
+    }
+
+    private fun beginOutgoingVideoPreview(session: RemoteDirectCallSession) {
+        if (localVideoPreviewCallId == session.callId) return
+        localVideoPreviewJob?.cancel()
+        localVideoPreviewCallId = session.callId
+        localVideoPreviewJob = viewModelScope.launch {
+            try {
+                mediaGateway.startLocalVideoPreview()
+                currentCoroutineContext().ensureActive()
+                if (
+                    mutableUiState.value.phase == DirectCallUiPhase.OUTGOING_RINGING &&
+                    mutableUiState.value.session?.callId == session.callId
+                ) {
+                    mutableUiState.update { state -> state.copy(isCameraEnabled = true) }
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                localVideoPreviewCallId = null
+                failAndEndCall(exception.message ?: "Could not start your camera preview.")
             }
         }
     }
@@ -371,6 +402,7 @@ class DirectCallViewModel(
     }
 
     private fun stopMedia() {
+        cancelLocalVideoPreviewJob()
         callSignalJob?.cancel()
         callSignalJob = null
         mediaGateway.stop()
@@ -379,6 +411,12 @@ class DirectCallViewModel(
         foregroundCallId = null
         mediaCallId = null
         processedSignalIds.clear()
+    }
+
+    private fun cancelLocalVideoPreviewJob() {
+        localVideoPreviewJob?.cancel()
+        localVideoPreviewJob = null
+        localVideoPreviewCallId = null
     }
 
     private fun ensureCallForeground(session: RemoteDirectCallSession) {

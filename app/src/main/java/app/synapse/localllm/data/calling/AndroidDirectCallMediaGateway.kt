@@ -74,6 +74,17 @@ class AndroidDirectCallMediaGateway(context: Context) :
     private val pendingRemoteCandidates = mutableListOf<IceCandidate>()
     private val appliedSignalIds = mutableSetOf<RemoteDirectCallSignalId>()
 
+    override suspend fun startLocalVideoPreview() {
+        if (localVideoTrack != null && peerConnection == null) return
+        stop()
+        initializeWebRtc(applicationContext)
+        peerConnectionFactory = PeerConnectionFactory.builder()
+            .setVideoEncoderFactory(DefaultVideoEncoderFactory(videoEglBase.eglBaseContext, true, true))
+            .setVideoDecoderFactory(DefaultVideoDecoderFactory(videoEglBase.eglBaseContext))
+            .createPeerConnectionFactory()
+        initializeCameraVideo(checkNotNull(peerConnectionFactory))
+    }
+
     override suspend fun start(
         accountUid: RemoteAccountUid,
         mediaKind: RemoteDirectCallMediaKind,

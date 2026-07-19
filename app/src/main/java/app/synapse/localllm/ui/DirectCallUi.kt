@@ -52,6 +52,12 @@ import app.synapse.localllm.data.calling.DirectCallVideoRendererTarget
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
 
+internal enum class DirectCallVideoStageMode {
+    HIDDEN,
+    OUTGOING_LOCAL_PREVIEW,
+    ACCEPTED_CALL_MEDIA,
+}
+
 @Composable
 internal fun DirectCallOverlay(
     state: DirectCallUiState,
@@ -83,8 +89,7 @@ internal fun DirectCallOverlay(
             onPermissionDenied(mediaKind)
         }
     }
-    val isActiveVideo = mediaKind == RemoteDirectCallMediaKind.VIDEO &&
-        state.phase in setOf(DirectCallUiPhase.CONNECTING, DirectCallUiPhase.ACTIVE)
+    val videoStageMode = directCallVideoStageMode(state)
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -96,10 +101,11 @@ internal fun DirectCallOverlay(
                 .statusBarsPadding()
                 .navigationBarsPadding(),
         ) {
-            if (isActiveVideo) {
+            if (videoStageMode != DirectCallVideoStageMode.HIDDEN) {
                 DirectCallVideoStage(
                     videoRendererController = videoRendererController,
-                    showLocalPreview = state.isCameraEnabled,
+                    mode = videoStageMode,
+                    showConnectedLocalPreview = state.isCameraEnabled,
                 )
             } else {
                 DirectCallIdentity(
@@ -109,7 +115,7 @@ internal fun DirectCallOverlay(
                 )
             }
 
-            if (isActiveVideo) {
+            if (videoStageMode != DirectCallVideoStageMode.HIDDEN) {
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -199,20 +205,36 @@ private fun DirectCallIdentity(
 @Composable
 private fun DirectCallVideoStage(
     videoRendererController: DirectCallVideoRendererController,
-    showLocalPreview: Boolean,
+    mode: DirectCallVideoStageMode,
+    showConnectedLocalPreview: Boolean,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { context ->
-                videoRendererController.createRendererView(
-                    context,
-                    DirectCallVideoRendererTarget.REMOTE_PARTICIPANT,
-                )
-            },
-            modifier = Modifier.fillMaxSize(),
-            onRelease = videoRendererController::releaseRendererView,
-        )
+        if (mode == DirectCallVideoStageMode.ACCEPTED_CALL_MEDIA) {
+            AndroidView(
+                factory = { context ->
+                    videoRendererController.createRendererView(
+                        context,
+                        DirectCallVideoRendererTarget.REMOTE_PARTICIPANT,
+                    )
+                },
+                modifier = Modifier.fillMaxSize(),
+                onRelease = videoRendererController::releaseRendererView,
+            )
+        }
+        val showLocalPreview = mode == DirectCallVideoStageMode.OUTGOING_LOCAL_PREVIEW ||
+            showConnectedLocalPreview
         if (showLocalPreview) {
+            val localPreviewModifier = if (mode == DirectCallVideoStageMode.OUTGOING_LOCAL_PREVIEW) {
+                Modifier.fillMaxSize()
+            } else {
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 60.dp, end = 14.dp)
+                    .width(108.dp)
+                    .aspectRatio(3f / 4f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.42f), RoundedCornerShape(14.dp))
+            }
             AndroidView(
                 factory = { context ->
                     videoRendererController.createRendererView(
@@ -220,13 +242,7 @@ private fun DirectCallVideoStage(
                         DirectCallVideoRendererTarget.LOCAL_PREVIEW,
                     )
                 },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 60.dp, end = 14.dp)
-                    .width(108.dp)
-                    .aspectRatio(3f / 4f)
-                    .clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.42f), RoundedCornerShape(14.dp)),
+                modifier = localPreviewModifier,
                 onRelease = videoRendererController::releaseRendererView,
             )
         }
@@ -329,4 +345,20 @@ internal fun directCallStatusLabel(
     DirectCallUiPhase.ACTIVE -> if (mediaKind == RemoteDirectCallMediaKind.VIDEO) "Video call" else "Voice call"
     DirectCallUiPhase.ENDING -> "Ending call…"
     DirectCallUiPhase.FAILED -> "Call unavailable"
+}
+
+internal fun directCallVideoStageMode(state: DirectCallUiState): DirectCallVideoStageMode {
+    if (state.session?.mediaKind != RemoteDirectCallMediaKind.VIDEO) return DirectCallVideoStageMode.HIDDEN
+    return when (state.phase) {
+        DirectCallUiPhase.OUTGOING_RINGING -> DirectCallVideoStageMode.OUTGOING_LOCAL_PREVIEW
+        DirectCallUiPhase.CONNECTING,
+        DirectCallUiPhase.ACTIVE,
+        -> DirectCallVideoStageMode.ACCEPTED_CALL_MEDIA
+        DirectCallUiPhase.IDLE,
+        DirectCallUiPhase.STARTING,
+        DirectCallUiPhase.INCOMING_RINGING,
+        DirectCallUiPhase.ENDING,
+        DirectCallUiPhase.FAILED,
+        -> DirectCallVideoStageMode.HIDDEN
+    }
 }

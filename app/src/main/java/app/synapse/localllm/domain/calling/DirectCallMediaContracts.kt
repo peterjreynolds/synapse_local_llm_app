@@ -22,6 +22,8 @@ interface DirectCallAlertGateway {
 }
 
 interface DirectCallMediaGateway {
+    suspend fun startLocalVideoPreview()
+
     suspend fun start(
         accountUid: RemoteAccountUid,
         mediaKind: RemoteDirectCallMediaKind,

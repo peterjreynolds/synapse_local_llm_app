@@ -119,9 +119,22 @@ class DirectCallViewModelTest {
 
         viewModel.startCall(ROOM_ID, RemoteDirectCallMediaKind.VIDEO)
         runCurrent()
+
+        assertEquals(DirectCallUiPhase.OUTGOING_RINGING, viewModel.uiState.value.phase)
+        assertEquals(
+            DirectCallVideoStageMode.OUTGOING_LOCAL_PREVIEW,
+            directCallVideoStageMode(viewModel.uiState.value),
+        )
+        assertTrue(mediaGateway.localVideoPreviewStarted)
+        assertEquals(1, mediaGateway.localVideoPreviewStartCount)
+        assertFalse(mediaGateway.started)
+        assertTrue(viewModel.uiState.value.isCameraEnabled)
+
         gateway.session.value = gateway.session.value?.copy(state = RemoteDirectCallState.ACTIVE)
         runCurrent()
 
+        assertEquals(DirectCallVideoStageMode.ACCEPTED_CALL_MEDIA, directCallVideoStageMode(viewModel.uiState.value))
+        assertFalse(mediaGateway.localVideoPreviewStarted)
         assertEquals(RemoteDirectCallMediaKind.VIDEO, mediaGateway.mediaKind)
         assertEquals(RemoteDirectCallMediaKind.VIDEO, foregroundController.mediaKind)
         assertTrue(viewModel.uiState.value.isCameraEnabled)
@@ -134,6 +147,40 @@ class DirectCallViewModelTest {
         assertFalse(viewModel.uiState.value.isCameraEnabled)
         assertFalse(mediaGateway.cameraEnabledValue)
         assertEquals(1, mediaGateway.cameraSwitchCount)
+    }
+
+    @Test
+    fun incomingVideoCallDoesNotOpenTheCameraBeforeAccept() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway(
+            initialSession = directCallSession(
+                callerUid = TRISH_UID,
+                calleeUid = PETER_UID,
+                mediaKind = RemoteDirectCallMediaKind.VIDEO,
+            ),
+        )
+        val mediaGateway = RecordingMediaGateway()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            mediaGateway,
+            RecordingAlertGateway(),
+            RecordingForegroundController(),
+        )
+
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+
+        assertEquals(DirectCallUiPhase.INCOMING_RINGING, viewModel.uiState.value.phase)
+        assertEquals(DirectCallVideoStageMode.HIDDEN, directCallVideoStageMode(viewModel.uiState.value))
+        assertEquals(0, mediaGateway.localVideoPreviewStartCount)
+        assertFalse(mediaGateway.started)
+
+        viewModel.acceptCall()
+        runCurrent()
+
+        assertTrue(mediaGateway.started)
+        assertEquals(RemoteDirectCallRole.CALLEE, mediaGateway.role)
+        assertEquals(0, mediaGateway.localVideoPreviewStartCount)
     }
 
     @Test
@@ -215,11 +262,18 @@ class DirectCallViewModelTest {
 
     private class RecordingMediaGateway : DirectCallMediaGateway {
         var started = false
+        var localVideoPreviewStarted = false
+        var localVideoPreviewStartCount = 0
         var cameraEnabledValue = true
         var cameraSwitchCount = 0
         var mediaKind: RemoteDirectCallMediaKind? = null
         var role: RemoteDirectCallRole? = null
         var speakerEnabledValue = false
+
+        override suspend fun startLocalVideoPreview() {
+            localVideoPreviewStarted = true
+            localVideoPreviewStartCount += 1
+        }
 
         override suspend fun start(
             accountUid: RemoteAccountUid,
@@ -228,6 +282,7 @@ class DirectCallViewModelTest {
             onLocalSignal: (RemoteDirectCallSignal) -> Unit,
             onConnectionStateChanged: (DirectCallMediaConnectionState) -> Unit,
         ) {
+            localVideoPreviewStarted = false
             started = true
             this.mediaKind = mediaKind
             this.role = role
@@ -252,6 +307,7 @@ class DirectCallViewModelTest {
 
         override fun stop() {
             started = false
+            localVideoPreviewStarted = false
             mediaKind = null
             role = null
         }
