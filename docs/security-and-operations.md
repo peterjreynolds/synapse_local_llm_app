@@ -123,7 +123,12 @@ the user to review it before sharing.
 
 ## Release Boundary
 
-This branch must stay draft. App Check activation, live Firebase acceptance,
-signer comparison, and the two physical-device matrices remain release gates.
-No merge, `apk-latest` replacement, or GitHub release publication is authorized
-until those receipts exist.
+The canonical machine-readable release state is `release-gates.json`, with
+human guidance in `docs/release-gate-receipts.md`. App Check activation, live
+Firebase acceptance, signer comparison, and both physical-device matrices must
+all be `PASS` for the exact candidate commit. The repository guard
+`node scripts/ci/verify-release-gates.mjs` must also pass from a clean tree.
+Receipt-only commits may follow the candidate, but any intervening product,
+Firebase, build, or workflow change invalidates its evidence. No merge,
+`apk-latest` replacement, or GitHub release publication is authorized while any
+required gate is `FAIL`, `BLOCKED`, missing, or stale.

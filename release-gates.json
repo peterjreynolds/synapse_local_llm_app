@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-19T05:00:00Z",
+  "sourceCommit": "c23d0e6f66607643a853ce170830aea096f4ecea",
+  "releaseReady": false,
+  "requiredGates": [
+    {
+      "id": "app-check-activation",
+      "status": "BLOCKED",
+      "summary": "The Android App Check SDK is not installed and enforcement is not enabled on this branch.",
+      "evidence": [
+        "docs/security-and-operations.md documents the provider as absent and enforcement as disabled."
+      ],
+      "nextActions": [
+        "Register app.synapse.localllm.debug and the approved release signing-certificate SHA-256 in Firebase App Check.",
+        "Add the Android App Check provider with enforcement disabled.",
+        "Validate outside-Play policy and observe metrics before enabling enforcement service by service.",
+        "Record a new PASS receipt only after valid tokens are proven on both required physical-device classes and the updater path."
+      ]
+    },
+    {
+      "id": "live-firebase-acceptance",
+      "status": "BLOCKED",
+      "summary": "No live Firebase acceptance receipt exists for the candidate commit.",
+      "evidence": [
+        "Local Firebase Functions and emulator/rules tests passed during the implementation run, but emulator evidence is not live acceptance."
+      ],
+      "nextActions": [
+        "Run the repository's approved non-destructive live acceptance matrix against the production Firebase project.",
+        "Record backend revision, authenticated sign-in, room/message synchronization, push delivery, attachment flow, account-state enforcement, and cleanup-job health.",
+        "Store only redacted identifiers and aggregate results in the replacement receipt."
+      ]
+    },
+    {
+      "id": "release-signer-comparison",
+      "status": "BLOCKED",
+      "summary": "The candidate APK assembled successfully, but a fresh certificate comparison against the canonical rolling release has not been recorded.",
+      "evidence": [
+        "The APK workflow requires package app.synapse.localllm.debug and certificate SHA-256 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b."
+      ],
+      "nextActions": [
+        "Build the candidate with the approved stable signing lineage.",
+        "Record candidate APK SHA-256, package ID, monotonic version code, and signer certificate SHA-256.",
+        "Compare those values with the current synapse-ai release and apk-latest metadata.",
+        "Mark PASS only when package, version policy, and certificate lineage all match."
+      ]
+    },
+    {
+      "id": "physical-device-galaxy-s9-api29",
+      "status": "BLOCKED",
+      "summary": "No Galaxy S9 / Android API 29 sideload and in-place update receipt is attached to this candidate.",
+      "evidence": [],
+      "nextActions": [
+        "Install the candidate over the existing app without clearing data.",
+        "Verify launch, retained account/session data, direct and group messaging, attachments, notifications, updater flow, and Cinder's unavailable-state behavior.",
+        "When App Check is present, verify a valid outside-Play token and no legitimate sideload denial.",
+        "Record OS/API, redacted device fingerprint, installed version, test results, and timestamp."
+      ]
+    },
+    {
+      "id": "physical-device-modern-api33-plus",
+      "status": "BLOCKED",
+      "summary": "No modern Android API 33+ sideload and in-place update receipt is attached to this candidate.",
+      "evidence": [],
+      "nextActions": [
+        "Install the candidate over the existing app without clearing data.",
+        "Verify launch, retained account/session data, direct and group messaging, attachments, notifications, updater flow, and Cinder's unavailable-state behavior.",
+        "When App Check is present, verify a valid outside-Play token and no legitimate sideload denial.",
+        "Record OS/API, redacted device fingerprint, installed version, test results, and timestamp."
+      ]
+    }
+  ],
+  "supportingChecks": [
+    {
+      "id": "local-android-candidate",
+      "status": "PASS",
+      "sourceCommit": "c23d0e6f66607643a853ce170830aea096f4ecea",
+      "checks": [
+        "testDebugUnitTest",
+        "ktlintCheck",
+        "lintDebug",
+        "assembleDebug",
+        "git diff --check"
+      ],
+      "note": "These checks prove local source/build quality only. They do not replace the required live-service, signer-lineage, or physical-device receipts."
+    }
+  ]
+}
