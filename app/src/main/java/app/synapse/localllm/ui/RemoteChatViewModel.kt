@@ -58,6 +58,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -93,6 +94,7 @@ class RemoteChatViewModel(
     private val roomsBeingMarkedRead = mutableSetOf<RemoteRoomId>()
     private var pendingNotificationRoomId: RemoteRoomId? = null
     private var draftSaveJob: Job? = null
+    private var draftMutationGeneration = 0L
     private var readAcknowledgementJob: Job? = null
     private var messageSearchJob: Job? = null
     private var roomAiConfigurationJob: Job? = null
@@ -229,7 +231,7 @@ class RemoteChatViewModel(
         if (previousRoomId != roomId) {
             resetAttachmentTransfers()
             stopTyping(previousRoomId)
-            draftSaveJob?.cancel()
+            invalidatePendingDraftSave()
             readAcknowledgementJob?.cancel()
             roomAiConfigurationJob?.cancel()
         }
@@ -393,51 +395,64 @@ class RemoteChatViewModel(
         val idempotencyKey = RemoteIdempotencyKey(messageId.raw)
         val createdAt = clock.now()
         val replyToMessageId = mutableUiState.value.replyToMessageId
-        cacheRepository.enqueueMessage(
-            EnqueueRemoteMessageCommand(
-                message = RemoteCachedMessage(
-                    accountUid = account.accountUid,
-                    roomId = roomId,
-                    messageId = messageId,
-                    idempotencyKey = idempotencyKey,
-                    senderUid = RemoteProfileUid(account.accountUid.raw),
-                    authorKind = HUMAN_AUTHOR_KIND,
-                    body = normalizedBody,
-                    attachments = attachments,
-                    replyToMessageId = replyToMessageId,
-                    editedAt = null,
-                    deletedAt = null,
-                    revision = 1,
-                    reactionCounts = emptyMap(),
-                    deliveredToCount = 0,
-                    readByCount = 0,
-                    deliveryState = RemoteMessageDeliveryState.PENDING,
-                    clientCreatedAt = createdAt,
-                    serverCreatedAt = null,
-                    failureReason = null,
+        val sendDraftGeneration = cancelAndAwaitPendingDraftSave()
+        try {
+            cacheRepository.enqueueMessage(
+                EnqueueRemoteMessageCommand(
+                    message = RemoteCachedMessage(
+                        accountUid = account.accountUid,
+                        roomId = roomId,
+                        messageId = messageId,
+                        idempotencyKey = idempotencyKey,
+                        senderUid = RemoteProfileUid(account.accountUid.raw),
+                        authorKind = HUMAN_AUTHOR_KIND,
+                        body = normalizedBody,
+                        attachments = attachments,
+                        replyToMessageId = replyToMessageId,
+                        editedAt = null,
+                        deletedAt = null,
+                        revision = 1,
+                        reactionCounts = emptyMap(),
+                        deliveredToCount = 0,
+                        readByCount = 0,
+                        deliveryState = RemoteMessageDeliveryState.PENDING,
+                        clientCreatedAt = createdAt,
+                        serverCreatedAt = null,
+                        failureReason = null,
+                    ),
+                    outboxOperation = RemoteMessageOutboxOperation(
+                        accountUid = account.accountUid,
+                        operationId = "send-${messageId.raw}",
+                        roomId = roomId,
+                        messageId = messageId,
+                        idempotencyKey = idempotencyKey,
+                        senderUid = RemoteProfileUid(account.accountUid.raw),
+                        body = normalizedBody,
+                        attachments = attachments,
+                        replyToMessageId = replyToMessageId,
+                        state = RemoteOutboxState.PENDING,
+                        attemptCount = 0,
+                        createdAt = createdAt,
+                        lastAttemptAt = null,
+                        failureReason = null,
+                    ),
                 ),
-                outboxOperation = RemoteMessageOutboxOperation(
-                    accountUid = account.accountUid,
-                    operationId = "send-${messageId.raw}",
-                    roomId = roomId,
-                    messageId = messageId,
-                    idempotencyKey = idempotencyKey,
-                    senderUid = RemoteProfileUid(account.accountUid.raw),
-                    body = normalizedBody,
-                    attachments = attachments,
-                    replyToMessageId = replyToMessageId,
-                    state = RemoteOutboxState.PENDING,
-                    attemptCount = 0,
-                    createdAt = createdAt,
-                    lastAttemptAt = null,
-                    failureReason = null,
-                ),
-            ),
-        )
-        cacheRepository.clearDraft(account.accountUid, roomId)
+            )
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            preserveFailedSendDraft(account.accountUid, roomId, normalizedBody, createdAt, exception)
+            throw exception
+        }
+        val composerWasNotRevised = draftMutationGeneration == sendDraftGeneration
+        if (selectedRoomId.value != roomId || composerWasNotRevised) {
+            cacheRepository.clearDraft(account.accountUid, roomId)
+        }
         attachmentTransferController.completeSend()
-        mutableUiState.update { state ->
-            state.copy(composerText = "", replyToMessageId = null)
+        if (selectedRoomId.value == roomId && composerWasNotRevised) {
+            mutableUiState.update { state ->
+                state.copy(composerText = "", replyToMessageId = null)
+            }
         }
         stopTyping(roomId)
     }
@@ -516,10 +531,12 @@ class RemoteChatViewModel(
         mutableUiState.update { state -> state.copy(composerText = normalizedBody) }
         val accountUid = mutableUiState.value.account?.accountUid ?: return
         val roomId = selectedRoomId.value ?: return
+        val draftGeneration = nextDraftMutationGeneration()
         draftSaveJob?.cancel()
         draftSaveJob = viewModelScope.launch {
             delay(DRAFT_SAVE_DEBOUNCE_MILLIS)
             try {
+                if (draftGeneration != draftMutationGeneration || selectedRoomId.value != roomId) return@launch
                 if (normalizedBody.isBlank()) {
                     cacheRepository.clearDraft(accountUid, roomId)
                 } else {
@@ -832,7 +849,7 @@ class RemoteChatViewModel(
             resetAttachmentTransfers()
             attachmentGateway.clearAccountCache(account.accountUid)
             stopTyping(selectedRoomId.value)
-            draftSaveJob?.cancel()
+            invalidatePendingDraftSave()
             messageSearchJob?.cancel()
             roomAiConfigurationJob?.cancel()
             readAcknowledgementJob?.cancel()
@@ -939,8 +956,8 @@ class RemoteChatViewModel(
         action: suspend () -> Unit,
     ) {
         if (mutableUiState.value.isActionRunning) return
+        mutableUiState.update { state -> state.copy(isActionRunning = true, notice = null) }
         viewModelScope.launch {
-            mutableUiState.update { state -> state.copy(isActionRunning = true, notice = null) }
             try {
                 action()
                 mutableUiState.update { state ->
@@ -958,6 +975,42 @@ class RemoteChatViewModel(
                     )
                 }
             }
+        }
+    }
+
+    private fun nextDraftMutationGeneration(): Long {
+        draftMutationGeneration += 1L
+        return draftMutationGeneration
+    }
+
+    private fun invalidatePendingDraftSave() {
+        nextDraftMutationGeneration()
+        draftSaveJob?.cancel()
+        draftSaveJob = null
+    }
+
+    private suspend fun cancelAndAwaitPendingDraftSave(): Long {
+        val sendDraftGeneration = nextDraftMutationGeneration()
+        val pendingDraftSave = draftSaveJob
+        draftSaveJob = null
+        pendingDraftSave?.cancelAndJoin()
+        return sendDraftGeneration
+    }
+
+    private suspend fun preserveFailedSendDraft(
+        accountUid: RemoteAccountUid,
+        roomId: RemoteRoomId,
+        body: String,
+        updatedAt: java.time.Instant,
+        sendFailure: Exception,
+    ) {
+        if (body.isBlank()) return
+        try {
+            cacheRepository.saveDraft(RemoteMessageDraft(accountUid, roomId, body, updatedAt))
+        } catch (draftFailure: CancellationException) {
+            throw draftFailure
+        } catch (draftFailure: Exception) {
+            sendFailure.addSuppressed(draftFailure)
         }
     }
 
