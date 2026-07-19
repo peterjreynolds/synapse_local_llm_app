@@ -24,7 +24,7 @@ Source commit: `c23d0e6f66607643a853ce170830aea096f4ecea`
 | Gate | Status | Why |
 | --- | --- | --- |
 | App Check activation | `BLOCKED` | The Android provider SDK is not installed and enforcement is disabled. |
-| Live Firebase acceptance | `BLOCKED` | Emulator/Functions/rules checks are not a live production acceptance receipt. |
+| Live Firebase acceptance | `BLOCKED` | Live read-only production checks passed, but candidate-specific authenticated messaging, push, attachment, and account-enforcement evidence is still absent. |
 | Release signer comparison | `PASS` | Candidate package and signer match the canonical APK, and version code 2029 advances published 2028. |
 | Galaxy S9 / API 29 matrix | `BLOCKED` | No Galaxy S9 / API 29 device was visible through repository ADB. |
 | Modern API 33+ matrix | `BLOCKED` | No physical API 33+ device was visible through repository ADB. |
@@ -73,6 +73,32 @@ The live acceptance receipt must distinguish production evidence from emulator
 evidence and cover authenticated account access, room/message synchronization,
 push delivery, attachment behavior, account-state enforcement, backend revision,
 and cleanup-job health. Store only redacted identifiers and aggregate results.
+
+### Current Live Firebase Read-Only Receipt
+
+Measured against production project `synapse-chat-pjr-2026` at
+`2026-07-19T05:27:30.719Z` for candidate source commit
+`c23d0e6f66607643a853ce170830aea096f4ecea`. All checks in this receipt were
+read-only. The mutation-bearing acceptance harness was not authorized.
+
+| Boundary | Measured evidence | Candidate acceptance result |
+| --- | --- | --- |
+| Configuration and credentials | One active gcloud identity and Application Default Credentials reached the configured project. The repository project, Android package `app.synapse.localllm.debug`, and Storage bucket configuration agreed. | Configuration only; not user authentication. |
+| Backend deployment | `66/66` Functions in `northamerica-northeast1` were `ACTIVE`. `getOwnerOperationsSummary` routed 100% of traffic to ready revision `getowneroperationssummary-00003-jar`, Firebase Functions hash `4da3078dca6fddb1812fe293e5db1135c25b69b6`. | Live revision measured; candidate-source linkage still requires a deployment receipt. |
+| Provisioned accounts | Redacted Admin SDK reads found Peter enabled with consistent `ACTIVE`/`OWNER` Auth and profile state, and Trish enabled with consistent `ACTIVE`/`USER` Auth and profile state. Both profiles were allowed. | Account records are healthy; no client sign-in or enforcement attempt was made. |
+| Firestore and Storage | Aggregate reads found 3 active rooms, 210 messages, one direct room containing the provisioned accounts, and 5/5 active device records. Storage metadata and at least one object were readable. | Administrative reachability only; client rules and realtime sync remain unproven. |
+| Attachments | Historical aggregates found 21 upload records: 11 `ATTACHED`, 10 `CLEANED`, and none `PENDING`, `READY`, or `CANCELLED`. | No candidate-specific upload, inline open, or download was exercised. |
+| Notifications | Historical aggregates found 213 `COMPLETE` receipts and zero `PROCESSING`; 197 recorded at least one FCM send success and 99 recorded at least one failure, with possible overlap. | FCM send receipts are not candidate-specific physical-device delivery proof. |
+| Cleanup health | Both daily schedules were enabled and reported last attempts. The latest attachment and operational-data job receipts were `SUCCEEDED` on `2026-07-18`, each with zero affected documents. | Cleanup-job health measured. |
+| Authentication boundary | An unauthenticated live call to `getOwnerOperationsSummary` returned HTTP `401` / `UNAUTHENTICATED`. | Fail-closed rejection measured; successful authenticated access remains unproven. |
+| Candidate receipt | The repository harness exited before Firebase initialization when `SYNAPSE_LIVE_ACCEPTANCE` was absent. Candidate receipt count was zero before and after the probes. | No production acceptance data was written; gate remains `BLOCKED`. |
+
+Passing this gate requires explicit authorization for the temporary production
+mutations in `firebase/functions/scripts/liveAcceptance.mjs`, plus
+candidate-specific attachment, physical-device push-delivery, and account-state
+enforcement checks. The resulting receipt must link the deployed backend
+revision to the candidate and retain only redacted identifiers, aggregates, and
+cleanup confirmation.
 
 ## Signing Receipt Minimum
 

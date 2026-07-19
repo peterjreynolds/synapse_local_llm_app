@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-19T05:19:39Z",
+  "generatedAt": "2026-07-19T05:29:27Z",
   "sourceCommit": "c23d0e6f66607643a853ce170830aea096f4ecea",
   "releaseReady": false,
   "requiredGates": [
@@ -21,14 +21,21 @@
     {
       "id": "live-firebase-acceptance",
       "status": "BLOCKED",
-      "summary": "No live Firebase acceptance receipt exists for the candidate commit.",
+      "summary": "Live production read-only checks succeeded, but no candidate-specific authenticated messaging, push, attachment, or account-enforcement receipt exists.",
       "evidence": [
-        "Local Firebase Functions and emulator/rules tests passed during the implementation run, but emulator evidence is not live acceptance."
+        "At 2026-07-19T05:27:30.719Z, one active gcloud identity and Application Default Credentials reached project synapse-chat-pjr-2026; the repository default project, Android client configuration for app.synapse.localllm.debug, and configured Storage bucket all matched that project.",
+        "The northamerica-northeast1 control plane reported 66 of 66 deployed Functions ACTIVE. getOwnerOperationsSummary was ACTIVE at Cloud Run revision getowneroperationssummary-00003-jar, Firebase Functions hash 4da3078dca6fddb1812fe293e5db1135c25b69b6, with 100 percent traffic to that ready revision.",
+        "Redacted Admin SDK reads found both provisioned accounts enabled and internally consistent: Peter had ACTIVE/OWNER Auth claims and an allowed ACTIVE/OWNER profile; Trish had ACTIVE/USER Auth claims and an allowed ACTIVE/USER profile. No client sign-in was performed, so this does not prove authenticated app access or account-state enforcement.",
+        "Aggregate production reads found 3 active rooms, 210 messages, one active direct room containing the two provisioned accounts, and 5 of 5 device records active. Firestore and the configured Storage bucket were reachable; the bucket contained at least one object. These administrative reads do not prove client rules or realtime synchronization.",
+        "Historical attachment aggregates contained 21 upload records: 11 ATTACHED and 10 CLEANED, with zero PENDING, READY, or CANCELLED. Historical notification aggregates contained 213 COMPLETE receipts and zero PROCESSING; 197 receipts recorded at least one FCM send success and 99 recorded at least one failure, with overlap possible. These are not candidate-specific attachment or physical-device push-delivery evidence.",
+        "Both daily cleanup schedules were enabled and reported last attempts on 2026-07-18. Their Firestore job receipts reported SUCCEEDED with zero affected documents for attachment cleanup at 05:21:03Z and operational-data cleanup at 05:27:03Z.",
+        "A live unauthenticated call to getOwnerOperationsSummary returned HTTP 401 / UNAUTHENTICATED. The repository liveAcceptance.mjs harness exited 1 before initialization when SYNAPSE_LIVE_ACCEPTANCE was absent, and the candidate acceptance-receipt count remained zero after all probes; no production acceptance mutations were authorized or performed."
       ],
       "nextActions": [
-        "Run the repository's approved non-destructive live acceptance matrix against the production Firebase project.",
-        "Record backend revision, authenticated sign-in, room/message synchronization, push delivery, attachment flow, account-state enforcement, and cleanup-job health.",
-        "Store only redacted identifiers and aggregate results in the replacement receipt."
+        "Obtain explicit authorization for temporary production mutations, then run firebase/functions/scripts/liveAcceptance.mjs with SYNAPSE_LIVE_ACCEPTANCE=1, GOOGLE_CLOUD_PROJECT=synapse-chat-pjr-2026, and SYNAPSE_ACCEPTANCE_GIT_SHA=c23d0e6f66607643a853ce170830aea096f4ecea.",
+        "Run candidate-specific client checks for authenticated sign-in, bidirectional realtime room/message synchronization, and suspended or disabled account enforcement; record redacted aggregates and cleanup confirmation.",
+        "Run candidate-specific attachment upload, inline-open/download, and physical-device push delivery checks, because historical Firestore receipts and FCM send acceptance do not prove those user-visible flows.",
+        "Link the deployed backend revision to the candidate source in the final receipt and store only redacted identifiers, aggregate outcomes, and cleanup health."
       ]
     },
     {
