@@ -73,6 +73,12 @@ governance runtime, or an external sidecar.
   relationships while backfilling participants, memberships, and authorship.
 - Provider-neutral local sync metadata fields exist as contracts only; no fake
   remote synchronization or cloud-provider behavior is claimed.
+- App-owned Cinder remote-assistant conversation door with stable identity,
+  normal remote room/thread/composer presentation, account-scoped Room cache,
+  idempotent outbox delivery, a provider-neutral gateway router, deterministic
+  not-configured delivery state, and an explicit guard against phone-local
+  Synapse inference. An authenticated Cinder backend is not yet configured; see
+  [`cinder-conversation-integration.md`](cinder-conversation-integration.md).
 
 ## Synapse Chat Phase 1 — Complete
 
@@ -312,6 +318,22 @@ Goal: make embedded local inference feel reliable on Samsung S25 Ultra.
 - Add clear receipts for model import, hash verification, runtime start, runtime
   stop, and failed model loads.
 
+### Cinder Remote Assistant
+
+Goal: make Cinder feel like another normal conversation without coupling the
+Android app to an assistant runtime implementation.
+
+- Keep the implemented `assistant_cinder` door on the existing remote Room
+  cache, thread, composer, and outbox.
+- Implement the authenticated server adapter, durable idempotent acceptance
+  receipt, per-conversation ordering, reply store, metadata-only push, and
+  authenticated reply synchronization defined in
+  [`cinder-conversation-integration.md`](cinder-conversation-integration.md).
+- Keep credentials and provider-specific runtime types outside the APK.
+- Do not route Cinder turns into the phone-local Synapse inference coordinator.
+- Do not claim working replies until a real backend round trip and durable sync
+  receipt have been verified.
+
 ### Product Flavors
 
 Goal: share one solid core between Synapse AI and later characters/products.
@@ -367,6 +389,8 @@ and are not hidden prerequisites for remote chat.
 - Remote authentication, sync, and push must enter through provider-neutral
   contracts; provider SDK types do not belong in room/member/message domain
   records.
+- Remote-assistant transports must stay behind the app-owned gateway seam and
+  must fail closed when authentication or backend configuration is absent.
 - Memory, research, workspace files, and governance artifacts are separate concerns.
 - Research documents are not memory.
 - GGUF model files are not committed and are not included in normal APKs.

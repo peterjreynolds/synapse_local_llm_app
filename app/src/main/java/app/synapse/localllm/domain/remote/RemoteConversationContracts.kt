@@ -102,6 +102,8 @@ data class RemoteTypingParticipant(
 )
 
 interface RemoteConversationGateway {
+    fun assistantAvailability(roomId: RemoteRoomId): RemoteAssistantAvailability? = null
+
     fun observeRooms(accountUid: RemoteAccountUid): Flow<List<RemoteCachedRoom>>
 
     fun observeMessages(

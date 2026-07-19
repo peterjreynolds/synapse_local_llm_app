@@ -8,9 +8,11 @@ import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteProfilesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteRoomsCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
+import app.synapse.localllm.domain.remote.EnsureRemoteAssistantConversationCommand
 import app.synapse.localllm.domain.remote.RemoteAccountSessionResource
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAiProvenance
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAttachmentKind
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
@@ -132,6 +134,58 @@ class RoomRemoteChatCacheRepositoryTest {
         repository.activateAccount(TRISH_ACCOUNT)
         assertTrue(repository.observeMessages(ROOM_ID).first().isEmpty())
         assertTrue(repository.observePendingOutbox().first().isEmpty())
+    }
+
+    @Test
+    fun cinderDoorUsesTheNormalCacheAndSurvivesAuthoritativeFirebaseRoomReconciliation() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        repository.ensureAssistantConversation(
+            EnsureRemoteAssistantConversationCommand(
+                accountUid = PETER_ACCOUNT,
+                endpoint = RemoteAssistantConversationCatalog.cinder,
+            ),
+        )
+
+        val initialDoor = repository.observeRooms().first().single()
+        assertEquals(RemoteAssistantConversationCatalog.cinder.roomId, initialDoor.roomId)
+        assertEquals(RemoteRoomKind.ASSISTANT, initialDoor.kind)
+
+        cacheRoom(PETER_ACCOUNT, TRISH_PROFILE)
+        assertEquals(
+            setOf(ROOM_ID, RemoteAssistantConversationCatalog.cinder.roomId),
+            repository.observeRooms().first().map(RemoteCachedRoom::roomId).toSet(),
+        )
+
+        repository.cacheRooms(CacheRemoteRoomsCommand(PETER_ACCOUNT, emptyList()))
+        assertEquals(
+            listOf(RemoteAssistantConversationCatalog.cinder.roomId),
+            repository.observeRooms().first().map(RemoteCachedRoom::roomId),
+        )
+    }
+
+    @Test
+    fun cinderOutboxUsesTheSameIdempotentMessageAndOperationRows() = runTest {
+        repository.activateAccount(PETER_ACCOUNT)
+        repository.ensureAssistantConversation(
+            EnsureRemoteAssistantConversationCommand(
+                accountUid = PETER_ACCOUNT,
+                endpoint = RemoteAssistantConversationCatalog.cinder,
+            ),
+        )
+        val command = enqueueMessageCommand(
+            accountUid = PETER_ACCOUNT,
+            messageId = "cinder-message-1",
+            idempotencyKey = "cinder-message-1",
+            roomId = RemoteAssistantConversationCatalog.cinder.roomId,
+        )
+
+        val firstReceipt = repository.enqueueMessage(command)
+        val duplicateReceipt = repository.enqueueMessage(command)
+
+        assertEquals(RemoteCacheMutation.MESSAGE_ENQUEUED, firstReceipt.mutation)
+        assertEquals(RemoteCacheMutation.MESSAGE_ALREADY_ENQUEUED, duplicateReceipt.mutation)
+        assertEquals(1, repository.observeMessages(RemoteAssistantConversationCatalog.cinder.roomId).first().size)
+        assertEquals(1, repository.observePendingOutbox().first().size)
     }
 
     @Test
@@ -506,14 +560,15 @@ class RoomRemoteChatCacheRepositoryTest {
         accountUid: RemoteAccountUid,
         messageId: String,
         idempotencyKey: String,
+        roomId: RemoteRoomId = ROOM_ID,
     ): EnqueueRemoteMessageCommand {
-        val cachedMessage = remoteMessage(accountUid, messageId, idempotencyKey, null)
+        val cachedMessage = remoteMessage(accountUid, messageId, idempotencyKey, null, roomId)
         return EnqueueRemoteMessageCommand(
             message = cachedMessage,
             outboxOperation = RemoteMessageOutboxOperation(
                 accountUid = accountUid,
                 operationId = "operation-$messageId",
-                roomId = ROOM_ID,
+                roomId = roomId,
                 messageId = cachedMessage.messageId,
                 idempotencyKey = cachedMessage.idempotencyKey,
                 senderUid = PETER_PROFILE,

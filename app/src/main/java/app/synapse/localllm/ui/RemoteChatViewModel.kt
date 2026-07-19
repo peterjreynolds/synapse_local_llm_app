@@ -12,11 +12,14 @@ import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.remote.AcknowledgeRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
+import app.synapse.localllm.domain.remote.EnsureRemoteAssistantConversationCommand
 import app.synapse.localllm.domain.remote.LoadRemoteMessagesPageCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAiParticipantGateway
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationEndpoint
 import app.synapse.localllm.domain.remote.RemoteAttachmentGateway
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
@@ -228,6 +231,7 @@ class RemoteChatViewModel(
 
     fun selectRoom(roomId: RemoteRoomId?) {
         val previousRoomId = selectedRoomId.value
+        val assistantEndpoint = roomId?.let(RemoteAssistantConversationCatalog::findByRoomId)
         if (previousRoomId != roomId) {
             resetAttachmentTransfers()
             stopTyping(previousRoomId)
@@ -240,6 +244,9 @@ class RemoteChatViewModel(
         mutableUiState.update { state ->
             state.copy(
                 selectedRoomId = roomId,
+                selectedAssistantEndpoint = assistantEndpoint,
+                selectedAssistantAvailability = roomId?.let(state.assistantAvailabilities::get)
+                    ?: roomId?.let(conversationGateway::assistantAvailability),
                 composerText = "",
                 pendingAttachments = emptyList(),
                 attachmentDownloads = emptyMap(),
@@ -254,7 +261,7 @@ class RemoteChatViewModel(
             )
         }
         roomId?.let(::markSelectedRoomRead)
-        roomId?.let(::loadRoomAiConfiguration)
+        roomId?.takeIf { assistantEndpoint == null }?.let(::loadRoomAiConfiguration)
     }
 
     fun openNotificationRoom(roomId: RemoteRoomId?) {
@@ -738,6 +745,10 @@ class RemoteChatViewModel(
             state.copy(
                 authenticationState = RemoteAuthenticationState.SignedIn(account),
                 account = account,
+                assistantAvailabilities = RemoteAssistantConversationCatalog.endpoints.associateNotNull(
+                    keySelector = RemoteAssistantConversationEndpoint::roomId,
+                    valueTransform = { endpoint -> conversationGateway.assistantAvailability(endpoint.roomId) },
+                ),
                 notice = null,
             )
         }
@@ -746,6 +757,14 @@ class RemoteChatViewModel(
                 launch { cacheRepository.observeProfiles().collect { profiles ->
                     mutableUiState.update { state -> state.copy(profiles = profiles) }
                 } }
+                launchStartupMutation("Could not prepare the Cinder conversation.") {
+                    cacheRepository.ensureAssistantConversation(
+                        EnsureRemoteAssistantConversationCommand(
+                            accountUid = account.accountUid,
+                            endpoint = RemoteAssistantConversationCatalog.cinder,
+                        ),
+                    )
+                }
                 launch { cacheRepository.observeRooms().collect { rooms ->
                     val currentSelectedRoomId = selectedRoomId.value
                     val selectedRoomWasRemoved = currentSelectedRoomId != null &&
@@ -862,6 +881,9 @@ class RemoteChatViewModel(
                     profiles = emptyList(),
                     rooms = emptyList(),
                     selectedRoomId = null,
+                    assistantAvailabilities = emptyMap(),
+                    selectedAssistantEndpoint = null,
+                    selectedAssistantAvailability = null,
                     messages = emptyList(),
                     composerText = "",
                     pendingAttachments = emptyList(),
@@ -1160,6 +1182,15 @@ internal fun resolveAuthorizedNotificationRoom(
 
 internal fun shouldPublishRoomAiRefreshFailure(localAiEnabled: Boolean?): Boolean =
     localAiEnabled == true
+
+private inline fun <T, K, V : Any> Iterable<T>.associateNotNull(
+    keySelector: (T) -> K,
+    valueTransform: (T) -> V?,
+): Map<K, V> = buildMap {
+    this@associateNotNull.forEach { source ->
+        valueTransform(source)?.let { value -> put(keySelector(source), value) }
+    }
+}
 
 class RemoteChatViewModelFactory(
     private val graph: SynapseApplicationGraph,

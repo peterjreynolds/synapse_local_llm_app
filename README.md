@@ -65,6 +65,13 @@ provider-managed storage encryption are used. Push payloads carry routing
 identifiers rather than plaintext message bodies. The phone-local AI rooms and
 memory system remain app-local and are a separate boundary from remote chat.
 
+Cinder now appears as an app-owned assistant conversation in the normal remote
+chat list and uses the normal thread, composer, Room cache, and outbox. No
+authenticated Cinder backend is configured yet, so sends fail with an explicit
+not-connected state instead of fabricating replies. The required server
+contract is recorded in
+[`docs/cinder-conversation-integration.md`](docs/cinder-conversation-integration.md).
+
 ## Embedded Runtime
 
 The APK includes native `llama.cpp` libraries for `arm64-v8a`, but it does not

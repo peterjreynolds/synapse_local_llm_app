@@ -105,6 +105,27 @@ class RemoteLocalAiResponseCoordinatorTest {
         assertEquals(0, failedGateway.completedBodies.size)
     }
 
+    @Test
+    fun cinderAssistantClaimIsSkippedWithoutStartingPhoneLocalInference() = runTest {
+        val gateway = RecordingRemoteAiGateway()
+        val runtime = RecordingInferenceRuntime(listOf(ChatStreamEvent.Token("Must not run")))
+
+        coordinator(gateway, runtime).processClaim(
+            ACCOUNT_UID,
+            DEVICE_ID,
+            claim(
+                sourceBody = "Talk to Cinder",
+                responsePolicy = RemoteAiResponsePolicy.AUTOMATIC,
+                roomKind = RemoteRoomKind.ASSISTANT,
+            ),
+        )
+
+        assertEquals(1, gateway.skippedClaims)
+        assertTrue(runtime.requests.isEmpty())
+        assertTrue(gateway.completedBodies.isEmpty())
+        assertTrue(gateway.failedClaims.isEmpty())
+    }
+
     private fun coordinator(
         gateway: RecordingRemoteAiGateway,
         runtime: RecordingInferenceRuntime,
@@ -124,6 +145,7 @@ class RemoteLocalAiResponseCoordinatorTest {
     private fun claim(
         sourceBody: String,
         responsePolicy: RemoteAiResponsePolicy,
+        roomKind: RemoteRoomKind = RemoteRoomKind.GROUP,
     ): RemoteLocalAiResponseClaim {
         val sourceMessage = RemoteAiContextMessage(
             messageId = RemoteMessageId("source-message"),
@@ -136,7 +158,7 @@ class RemoteLocalAiResponseCoordinatorTest {
             leaseToken = "b".repeat(43),
             leaseExpiresAt = FIXED_NOW.plusSeconds(120),
             roomId = ROOM_ID,
-            roomKind = RemoteRoomKind.GROUP,
+            roomKind = roomKind,
             responsePolicy = responsePolicy,
             sourceMessage = sourceMessage,
             recentMessages = listOf(

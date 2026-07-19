@@ -51,6 +51,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.synapse.localllm.domain.remote.RemoteAssistantAvailability
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
@@ -85,7 +86,7 @@ internal fun RemoteChatsPane(
             groupViewModel.consumeNavigation()
         }
     }
-    if (selectedRoomId == null) {
+    if (remoteChatPaneRoute(state) == RemoteChatPaneRoute.CONVERSATION_LIST) {
         RemoteRoomList(
             state = state,
             onRoomSelected = { room -> viewModel.selectRoom(room.roomId) },
@@ -285,17 +286,24 @@ private fun RemoteRoomList(
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(visibleRooms, key = { room -> room.roomId.raw }) { room ->
                 val peer = state.profiles.firstOrNull { profile -> profile.profileUid == room.peerUid }
-                val displayName = if (room.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room.title
+                val displayName = when (room.kind) {
+                    RemoteRoomKind.DIRECT -> peer?.displayName ?: room.title
+                    RemoteRoomKind.GROUP,
+                    RemoteRoomKind.ASSISTANT,
+                    -> room.title
+                }
                 ListItem(
                     headlineContent = {
                         Text(displayName, fontWeight = FontWeight.SemiBold)
                     },
                     supportingContent = {
                         Text(
-                            room.latestMessagePreview ?: if (room.kind == RemoteRoomKind.GROUP) {
-                                "Group conversation"
-                            } else {
-                                "Private synced conversation"
+                            when (room.kind) {
+                                RemoteRoomKind.ASSISTANT -> remoteAssistantAvailabilityLabel(
+                                    state.assistantAvailabilities[room.roomId],
+                                )
+                                RemoteRoomKind.GROUP -> room.latestMessagePreview ?: "Group conversation"
+                                RemoteRoomKind.DIRECT -> room.latestMessagePreview ?: "Private synced conversation"
                             },
                         )
                     },
@@ -336,8 +344,12 @@ private fun RemoteRoomList(
                     },
                     modifier = Modifier.combinedClickable(
                         onClick = { onRoomSelected(room) },
-                        onLongClickLabel = "Conversation options",
-                        onLongClick = { actionRoomId = room.roomId.raw },
+                        onLongClickLabel = "Conversation options".takeIf {
+                            room.kind != RemoteRoomKind.ASSISTANT
+                        },
+                        onLongClick = {
+                            if (room.kind != RemoteRoomKind.ASSISTANT) actionRoomId = room.roomId.raw
+                        },
                     ),
                 )
                 HorizontalDivider()
@@ -380,6 +392,25 @@ private fun RemoteRoomList(
         )
     }
 }
+
+internal enum class RemoteChatPaneRoute {
+    CONVERSATION_LIST,
+    MESSAGE_THREAD,
+}
+
+internal fun remoteChatPaneRoute(state: RemoteChatUiState): RemoteChatPaneRoute =
+    if (state.selectedRoomId == null) {
+        RemoteChatPaneRoute.CONVERSATION_LIST
+    } else {
+        RemoteChatPaneRoute.MESSAGE_THREAD
+    }
+
+internal fun remoteAssistantAvailabilityLabel(availability: RemoteAssistantAvailability?): String =
+    when (availability) {
+        RemoteAssistantAvailability.Available -> "Connected"
+        is RemoteAssistantAvailability.Unavailable -> "Not connected"
+        null -> "Remote assistant"
+    }
 
 internal enum class RemoteMessageSearchPresentationState {
     HIDDEN,

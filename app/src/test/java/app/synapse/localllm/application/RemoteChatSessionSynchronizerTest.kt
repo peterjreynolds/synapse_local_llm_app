@@ -1,14 +1,18 @@
 package app.synapse.localllm.application
 
+import app.synapse.localllm.data.remote.RemoteConversationGatewayRouter
+import app.synapse.localllm.data.remote.UnavailableRemoteAssistantConversationGateway
 import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.AcknowledgeRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteProfilesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteRoomsCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
+import app.synapse.localllm.domain.remote.EnsureRemoteAssistantConversationCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomReceipt
 import app.synapse.localllm.domain.remote.LoadRemoteMessagesPageCommand
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
 import app.synapse.localllm.domain.remote.RemoteCacheMutationReceipt
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
@@ -90,11 +94,52 @@ class RemoteChatSessionSynchronizerTest {
         assertEquals(RemoteOutboxState.COMPLETE, cacheRepository.lastOutboxState)
     }
 
-    private fun pendingOperation(): RemoteMessageOutboxOperation =
+    @Test
+    fun cinderOutboxAttemptFailsOnceWithTheDeterministicNotConfiguredState() = runTest {
+        val firebaseGateway = RecordingConversationGateway()
+        val cacheRepository = RecordingCacheRepository()
+        val failures = mutableListOf<String>()
+        val synchronizer = RemoteChatSessionSynchronizer(
+            directoryGateway = EmptyDirectoryGateway,
+            conversationGateway = RemoteConversationGatewayRouter(
+                synchronizedConversationGateway = firebaseGateway,
+                assistantConversationGateway = UnavailableRemoteAssistantConversationGateway(),
+            ),
+            cacheRepository = cacheRepository,
+            clock = FixedClock,
+        )
+        backgroundScope.launch {
+            synchronizer.synchronize(
+                accountUid = PETER_ACCOUNT,
+                selectedRoomId = MutableStateFlow(RemoteAssistantConversationCatalog.cinder.roomId),
+                reportFailure = failures::add,
+            )
+        }
+        runCurrent()
+        val operation = pendingOperation(RemoteAssistantConversationCatalog.cinder.roomId)
+
+        cacheRepository.outboxOperations.emit(listOf(operation))
+        runCurrent()
+        cacheRepository.outboxOperations.emit(listOf(operation))
+        runCurrent()
+
+        assertEquals(0, firebaseGateway.sentCommands.size)
+        assertEquals(1, cacheRepository.deliveryUpdateCount)
+        assertEquals(RemoteMessageDeliveryState.FAILED, cacheRepository.lastDeliveryState)
+        assertEquals(RemoteOutboxState.FAILED, cacheRepository.lastOutboxState)
+        assertEquals(
+            "Cinder is not connected yet. An authenticated Cinder chat backend must be configured.",
+            cacheRepository.lastFailureReason,
+        )
+        assertEquals(listOf(cacheRepository.lastFailureReason), failures)
+        assertEquals(operation.messageId.raw, operation.idempotencyKey.raw)
+    }
+
+    private fun pendingOperation(roomId: RemoteRoomId = ROOM_ID): RemoteMessageOutboxOperation =
         RemoteMessageOutboxOperation(
             accountUid = PETER_ACCOUNT,
             operationId = "send-message-1",
-            roomId = ROOM_ID,
+            roomId = roomId,
             messageId = RemoteMessageId("message-1"),
             idempotencyKey = RemoteIdempotencyKey("message-1"),
             senderUid = RemoteProfileUid(PETER_ACCOUNT.raw),
@@ -194,6 +239,8 @@ class RemoteChatSessionSynchronizerTest {
         val outboxOperations = MutableSharedFlow<List<RemoteMessageOutboxOperation>>(extraBufferCapacity = 2)
         var lastDeliveryState: RemoteMessageDeliveryState? = null
         var lastOutboxState: RemoteOutboxState? = null
+        var lastFailureReason: String? = null
+        var deliveryUpdateCount = 0
 
         override suspend fun activateAccount(accountUid: RemoteAccountUid) = Unit
 
@@ -234,8 +281,10 @@ class RemoteChatSessionSynchronizerTest {
             attemptedAt: Instant,
             failureReason: String?,
         ): RemoteCacheMutationReceipt {
+            deliveryUpdateCount += 1
             lastDeliveryState = deliveryState
             lastOutboxState = outboxState
+            lastFailureReason = failureReason
             return receipt(RemoteCacheMutation.DELIVERY_UPDATED)
         }
 
@@ -249,6 +298,10 @@ class RemoteChatSessionSynchronizerTest {
             accountUid: RemoteAccountUid,
             roomId: RemoteRoomId,
         ): RemoteCacheMutationReceipt = receipt(RemoteCacheMutation.DRAFT_CLEARED)
+
+        override suspend fun ensureAssistantConversation(
+            command: EnsureRemoteAssistantConversationCommand,
+        ): RemoteCacheMutationReceipt = receipt(RemoteCacheMutation.ASSISTANT_CONVERSATION_ENSURED)
 
         override suspend fun hideMessageLocally(
             accountUid: RemoteAccountUid,

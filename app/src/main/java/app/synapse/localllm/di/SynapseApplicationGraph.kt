@@ -56,7 +56,9 @@ import app.synapse.localllm.data.remote.FirebaseRemoteGroupGateway
 import app.synapse.localllm.data.remote.FirebaseRemoteInvitationGateway
 import app.synapse.localllm.data.remote.FirebaseRemotePrivacyGateway
 import app.synapse.localllm.data.remote.RemoteAccountSessionCoordinator
+import app.synapse.localllm.data.remote.RemoteConversationGatewayRouter
 import app.synapse.localllm.data.remote.RoomRemoteChatCacheRepository
+import app.synapse.localllm.data.remote.UnavailableRemoteAssistantConversationGateway
 import app.synapse.localllm.data.runtime.AndroidDeviceRuntimeCapabilitiesReader
 import app.synapse.localllm.data.runtime.AndroidEmbeddedModelStore
 import app.synapse.localllm.data.runtime.AndroidForegroundModelDownloadController
@@ -170,13 +172,18 @@ class SynapseApplicationGraph private constructor(context: Context) {
             storage = firebaseStorage,
             sessionController = remoteAccountSessionController,
         )
-    val remoteConversationGateway =
+    private val firebaseRemoteConversationGateway =
         FirebaseRemoteConversationGateway(
             firebaseAuth = firebaseAuth,
             firestore = firestore,
             functions = firebaseFunctions,
             sessionController = remoteAccountSessionController,
         )
+    val remoteAssistantConversationGateway = UnavailableRemoteAssistantConversationGateway()
+    val remoteConversationGateway = RemoteConversationGatewayRouter(
+        synchronizedConversationGateway = firebaseRemoteConversationGateway,
+        assistantConversationGateway = remoteAssistantConversationGateway,
+    )
     val remoteDirectCallGateway =
         FirebaseRemoteDirectCallGateway(
             firebaseAuth = firebaseAuth,

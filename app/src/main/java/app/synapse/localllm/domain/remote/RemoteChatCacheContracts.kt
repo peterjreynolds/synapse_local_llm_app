@@ -32,7 +32,9 @@ fun isValidRemoteGroupRoomId(rawRoomId: String): Boolean =
     REMOTE_GROUP_ROOM_ID_PATTERN.matches(rawRoomId)
 
 fun isValidRemoteConversationRoomId(rawRoomId: String): Boolean =
-    isValidRemoteDirectRoomId(rawRoomId) || isValidRemoteGroupRoomId(rawRoomId)
+    isValidRemoteDirectRoomId(rawRoomId) ||
+        isValidRemoteGroupRoomId(rawRoomId) ||
+        isValidRemoteAssistantRoomId(rawRoomId)
 
 @JvmInline
 value class RemoteMessageId(val raw: String) {
@@ -66,6 +68,7 @@ enum class RemoteOutboxState {
 enum class RemoteRoomKind {
     DIRECT,
     GROUP,
+    ASSISTANT,
 }
 
 enum class RemoteRoomMemberRole {
@@ -129,6 +132,12 @@ data class RemoteCachedRoom(
                 require(directKey == null) { "Group rooms cannot have a direct key." }
                 require(peerUid == null) { "Group rooms cannot have a direct peer." }
             }
+
+            RemoteRoomKind.ASSISTANT -> {
+                require(directKey == null) { "Assistant rooms cannot have a direct key." }
+                require(peerUid == null) { "Assistant rooms cannot have a human peer UID." }
+                require(avatarObjectPath == null) { "Assistant rooms use app-owned presentation metadata." }
+            }
         }
     }
 }
@@ -178,6 +187,14 @@ data class RemoteCachedMessage(
                 aiParticipantId == "participant-synapse-local-ai" && aiProvenance != null,
             ) {
                 "Synapse AI messages require an explicit participant and provenance."
+            }
+
+            "REMOTE_AI" -> require(
+                aiParticipantId != null &&
+                    RemoteAssistantConversationCatalog.findByParticipantId(aiParticipantId) != null &&
+                    aiProvenance == RemoteAiProvenance.REMOTE_HOSTED,
+            ) {
+                "Remote AI messages require a registered assistant participant and hosted provenance."
             }
 
             else -> error("Remote message author kind is unsupported.")
@@ -268,6 +285,7 @@ enum class RemoteCacheMutation {
     CURSOR_SAVED,
     DRAFT_SAVED,
     DRAFT_CLEARED,
+    ASSISTANT_CONVERSATION_ENSURED,
     MESSAGE_HIDDEN_LOCALLY,
     CONVERSATION_HIDDEN_LOCALLY,
     CONVERSATION_SHOWN_LOCALLY,
@@ -321,6 +339,10 @@ interface RemoteChatCacheRepository {
     suspend fun clearDraft(
         accountUid: RemoteAccountUid,
         roomId: RemoteRoomId,
+    ): RemoteCacheMutationReceipt
+
+    suspend fun ensureAssistantConversation(
+        command: EnsureRemoteAssistantConversationCommand,
     ): RemoteCacheMutationReceipt
 
     suspend fun hideMessageLocally(

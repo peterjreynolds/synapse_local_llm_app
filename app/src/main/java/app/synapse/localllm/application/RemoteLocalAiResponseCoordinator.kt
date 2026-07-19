@@ -113,6 +113,11 @@ class RemoteLocalAiResponseCoordinator(
         claim: RemoteLocalAiResponseClaim,
         reportStatus: (RemoteLocalAiHostStatus) -> Unit = {},
     ) {
+        if (claim.roomKind == RemoteRoomKind.ASSISTANT) {
+            gateway.skipLocalResponse(accountUid, deviceId, claim)
+            reportStatus(RemoteLocalAiHostStatus.Idle)
+            return
+        }
         val routingDecision = responseRoutingPolicy.decide(
             room = claim.toRoutingRoom(clock.now()),
             humanMessageBody = claim.sourceMessage.body,
@@ -303,6 +308,7 @@ private fun RemoteLocalAiResponseClaim.toRoutingRoom(now: Instant): ChatRoomReco
         kind = when (roomKind) {
             RemoteRoomKind.DIRECT -> RoomKind.DIRECT
             RemoteRoomKind.GROUP -> RoomKind.GROUP
+            RemoteRoomKind.ASSISTANT -> error("Remote assistant rooms cannot enter phone-local inference.")
         },
         isPinned = false,
         members = members,

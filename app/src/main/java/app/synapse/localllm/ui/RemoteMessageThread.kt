@@ -85,6 +85,7 @@ import androidx.emoji2.emojipicker.EmojiPickerView
 import app.synapse.localllm.application.RemoteLocalAiHostStatus
 import app.synapse.localllm.domain.appearance.ChatBackground
 import app.synapse.localllm.domain.appearance.clampChatMessageScale
+import app.synapse.localllm.domain.remote.RemoteAssistantAvailability
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
@@ -179,7 +180,13 @@ internal fun RemoteMessageThread(
     val currentProfile = state.profiles.firstOrNull { profile ->
         profile.profileUid.raw == state.account?.accountUid?.raw
     }
-    val title = if (room?.kind == RemoteRoomKind.GROUP) room.title else peer?.displayName ?: room?.title ?: "Private conversation"
+    val title = when (room?.kind) {
+        RemoteRoomKind.DIRECT -> peer?.displayName ?: room.title
+        RemoteRoomKind.GROUP,
+        RemoteRoomKind.ASSISTANT,
+        -> room.title
+        null -> "Private conversation"
+    }
 
     LaunchedEffect(showRoomMembers, room?.roomId) {
         if (showRoomMembers && room?.kind == RemoteRoomKind.GROUP) {
@@ -218,7 +225,9 @@ internal fun RemoteMessageThread(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .clickable { showRoomMembers = !showRoomMembers }
+                    .clickable(enabled = room?.kind != RemoteRoomKind.ASSISTANT) {
+                        showRoomMembers = !showRoomMembers
+                    }
                     .padding(end = 8.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -236,10 +245,14 @@ internal fun RemoteMessageThread(
                                         state.profiles.firstOrNull { profile -> profile.profileUid == uid }?.displayName
                                     }.joinToString().takeIf(String::isNotBlank)?.plus(" typing…")
                                 }
-                                ?: if (room?.kind == RemoteRoomKind.GROUP) {
-                                    "Group conversation"
-                                } else {
-                                    remotePresenceLabel(peer)
+                                ?: when (room?.kind) {
+                                    RemoteRoomKind.ASSISTANT -> remoteAssistantAvailabilityLabel(
+                                        state.selectedAssistantAvailability,
+                                    )
+                                    RemoteRoomKind.GROUP -> "Group conversation"
+                                    RemoteRoomKind.DIRECT,
+                                    null,
+                                    -> remotePresenceLabel(peer)
                                 }
                         },
                         style = MaterialTheme.typography.labelSmall,
@@ -349,7 +362,9 @@ internal fun RemoteMessageThread(
                 if (state.messages.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
-                            text = "Messages will synchronize here.",
+                            text = (state.selectedAssistantAvailability as? RemoteAssistantAvailability.Unavailable)
+                                ?.userMessage
+                                ?: "Messages will synchronize here.",
                             color = appearanceState.appearance.bubblePalette.presentation().contentColor,
                         )
                     }
@@ -412,14 +427,15 @@ internal fun RemoteMessageThread(
                                     bubbleContentColor = bubblePalette.contentColor,
                                     canDeleteForEveryone = canDeleteForEveryone,
                                     selectedReaction = state.ownReactionSelections[message.messageId],
-                                    senderDisplayName = if (message.authorKind == "SYNAPSE_AI") {
-                                        "Synapse • Phone-local AI"
-                                    } else if (room?.kind == RemoteRoomKind.GROUP) {
-                                        state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
-                                            ?.displayName
-                                            ?: "Group member"
-                                    } else {
-                                        null
+                                    senderDisplayName = when {
+                                        message.authorKind == "SYNAPSE_AI" -> "Synapse • Phone-local AI"
+                                        message.authorKind == "REMOTE_AI" ->
+                                            state.selectedAssistantEndpoint?.displayName ?: "Remote assistant"
+                                        room?.kind == RemoteRoomKind.GROUP ->
+                                            state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
+                                                ?.displayName
+                                                ?: "Group member"
+                                        else -> null
                                     },
                                     onReply = { onReply(message.messageId) },
                                     onToggleReaction = { emoji -> onToggleReaction(message, emoji) },

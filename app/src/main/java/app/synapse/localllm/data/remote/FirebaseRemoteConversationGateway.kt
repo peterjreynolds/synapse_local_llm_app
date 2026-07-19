@@ -578,6 +578,7 @@ class FirebaseRemoteConversationGateway(
             }
 
             RemoteRoomKind.GROUP -> null to null
+            RemoteRoomKind.ASSISTANT -> return null
         }
         val title = getString("title")?.takeIf(String::isNotBlank) ?: return null
         val updatedAt = getTimestamp("updatedAt") ?: return null

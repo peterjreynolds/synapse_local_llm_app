@@ -17,8 +17,10 @@ import app.synapse.localllm.domain.remote.CacheRemoteMessagesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteProfilesCommand
 import app.synapse.localllm.domain.remote.CacheRemoteRoomsCommand
 import app.synapse.localllm.domain.remote.EnqueueRemoteMessageCommand
+import app.synapse.localllm.domain.remote.EnsureRemoteAssistantConversationCommand
 import app.synapse.localllm.domain.remote.RemoteAccountSessionController
 import app.synapse.localllm.domain.remote.RemoteAccountUid
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAttachmentKind
 import app.synapse.localllm.domain.remote.RemoteCacheMutation
@@ -41,6 +43,8 @@ import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMemberRole
 import app.synapse.localllm.domain.remote.RemoteSyncCursor
 import app.synapse.localllm.domain.remote.SearchRemoteMessagesCommand
+import app.synapse.localllm.domain.remote.isValidRemoteAssistantRoomId
+import app.synapse.localllm.domain.remote.toCachedRoom
 import app.synapse.localllm.domain.time.SynapseClock
 import java.nio.ByteBuffer
 import java.security.MessageDigest
@@ -148,10 +152,14 @@ class RoomRemoteChatCacheRepository(
         require(command.rooms.all { room -> room.accountUid == command.accountUid }) {
             "Every cached room must belong to the active account scope."
         }
+        require(command.rooms.none { room -> isValidRemoteAssistantRoomId(room.roomId.raw) }) {
+            "Remote providers cannot overwrite app-owned assistant conversations."
+        }
         val cachedAt = clock.now()
         val removedRooms = database.withTransaction {
             remoteChatCacheDao.upsertRooms(command.rooms.map { room -> room.toEntity(cachedAt) })
-            val authorizedRoomIds = command.rooms.map { room -> room.roomId.raw }
+            val authorizedRoomIds = command.rooms.map { room -> room.roomId.raw } +
+                RemoteAssistantConversationCatalog.endpoints.map { endpoint -> endpoint.roomId.raw }
             if (authorizedRoomIds.isEmpty()) {
                 remoteChatCacheDao.deleteAllMessageSearchEntries(command.accountUid.raw)
                 remoteChatCacheDao.deleteAllRooms(command.accountUid.raw)
@@ -277,6 +285,32 @@ class RoomRemoteChatCacheRepository(
         requireActiveAccount(accountUid)
         val affectedRows = remoteChatCacheDao.deleteDraft(accountUid.raw, roomId.raw)
         return receipt(accountUid, RemoteCacheMutation.DRAFT_CLEARED, affectedRows)
+    }
+
+    override suspend fun ensureAssistantConversation(
+        command: EnsureRemoteAssistantConversationCommand,
+    ): RemoteCacheMutationReceipt {
+        requireActiveAccount(command.accountUid)
+        require(RemoteAssistantConversationCatalog.findByRoomId(command.endpoint.roomId) == command.endpoint) {
+            "Only registered app-owned assistant conversations can be cached."
+        }
+        val cachedAt = clock.now()
+        val affectedRows = database.withTransaction {
+            remoteChatCacheDao.upsertRooms(
+                listOf(command.endpoint.toCachedRoom(command.accountUid).toEntity(cachedAt)),
+            )
+            remoteChatCacheDao.showRoomLocally(
+                accountUid = command.accountUid.raw,
+                remoteRoomId = command.endpoint.roomId.raw,
+                updatedAtEpochMillis = cachedAt.toEpochMilli(),
+            )
+            1
+        }
+        return receipt(
+            command.accountUid,
+            RemoteCacheMutation.ASSISTANT_CONVERSATION_ENSURED,
+            affectedRows,
+        )
     }
 
     override suspend fun hideMessageLocally(

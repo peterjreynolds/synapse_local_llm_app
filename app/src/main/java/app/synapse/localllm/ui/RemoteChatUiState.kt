@@ -1,21 +1,23 @@
 package app.synapse.localllm.ui
 
+import app.synapse.localllm.application.RemoteLocalAiHostStatus
 import app.synapse.localllm.domain.remote.RemoteAuthenticatedAccount
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAttachmentSelection
+import app.synapse.localllm.domain.remote.RemoteAssistantAvailability
+import app.synapse.localllm.domain.remote.RemoteAssistantConversationEndpoint
 import app.synapse.localllm.domain.remote.RemoteAuthenticationState
-import app.synapse.localllm.domain.remote.RemoteCachedRoom
+import app.synapse.localllm.domain.remote.RemoteCachedAttachment
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
-import app.synapse.localllm.domain.remote.RemoteCachedAttachment
-import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteCachedRoom
+import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteMessageSearchResult
 import app.synapse.localllm.domain.remote.RemoteNotificationPreferences
 import app.synapse.localllm.domain.remote.RemoteProfileUid
-import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteRoomAiConfiguration
-import app.synapse.localllm.application.RemoteLocalAiHostStatus
+import app.synapse.localllm.domain.remote.RemoteRoomId
 
 data class RemoteChatUiState(
     val authenticationState: RemoteAuthenticationState = RemoteAuthenticationState.SignedOut,
@@ -23,6 +25,9 @@ data class RemoteChatUiState(
     val profiles: List<RemoteCachedProfile> = emptyList(),
     val rooms: List<RemoteCachedRoom> = emptyList(),
     val selectedRoomId: RemoteRoomId? = null,
+    val assistantAvailabilities: Map<RemoteRoomId, RemoteAssistantAvailability> = emptyMap(),
+    val selectedAssistantEndpoint: RemoteAssistantConversationEndpoint? = null,
+    val selectedAssistantAvailability: RemoteAssistantAvailability? = null,
     val messages: List<RemoteCachedMessage> = emptyList(),
     val composerText: String = "",
     val pendingAttachments: List<RemotePendingAttachmentUi> = emptyList(),
