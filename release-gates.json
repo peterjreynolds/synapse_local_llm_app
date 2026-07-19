@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-19T05:15:50Z",
+  "generatedAt": "2026-07-19T05:19:39Z",
   "sourceCommit": "c23d0e6f66607643a853ce170830aea096f4ecea",
   "releaseReady": false,
   "requiredGates": [
@@ -47,25 +47,31 @@
     {
       "id": "physical-device-galaxy-s9-api29",
       "status": "BLOCKED",
-      "summary": "No Galaxy S9 / Android API 29 sideload and in-place update receipt is attached to this candidate.",
-      "evidence": [],
+      "summary": "A Galaxy S9 / Android API 29 device was not visible through the repository Android toolchain, so no physical acceptance claim was made.",
+      "evidence": [
+        "At 2026-07-19T05:19:39Z, repository ADB 1.0.41 / platform-tools 37.0.0 reported zero ready devices, zero offline or unauthorized device entries, and zero mDNS-discovered ADB services in three consecutive scans.",
+        "No candidate APK was installed, no app data was changed, and launch/session, direct or group messaging, attachment, notification, updater, and Cinder behavior remain unmeasured for the Galaxy S9 / API 29 class."
+      ],
       "nextActions": [
-        "Install the candidate over the existing app without clearing data.",
-        "Verify launch, retained account/session data, direct and group messaging, attachments, notifications, updater flow, and Cinder's unavailable-state behavior.",
-        "When App Check is present, verify a valid outside-Play token and no legitimate sideload denial.",
-        "Record OS/API, redacted device fingerprint, installed version, test results, and timestamp."
+        "Connect and USB-authorize a Galaxy S9 running Android 10 / API 29 until the repository toolchain lists it in the ready device state.",
+        "Record the pre-install package/version and a redacted one-way device receipt ID, then install candidate versionCode 2029 with adb install -r without clearing app data.",
+        "Verify launch and retained account/session state, direct and group messaging, attachments, notifications, updater flow, and Cinder's unavailable-state behavior on that device.",
+        "When App Check is present, verify a valid outside-Play token and no legitimate sideload denial, then record timestamped tester attestation and only then mark this gate PASS."
       ]
     },
     {
       "id": "physical-device-modern-api33-plus",
       "status": "BLOCKED",
-      "summary": "No modern Android API 33+ sideload and in-place update receipt is attached to this candidate.",
-      "evidence": [],
+      "summary": "No modern Android API 33+ device was visible through the repository Android toolchain, so no physical acceptance claim was made.",
+      "evidence": [
+        "At 2026-07-19T05:19:39Z, repository ADB 1.0.41 / platform-tools 37.0.0 reported zero ready devices, zero offline or unauthorized device entries, and zero mDNS-discovered ADB services in three consecutive scans.",
+        "No candidate APK was installed, no app data was changed, and launch/session, direct or group messaging, attachment, notification, updater, and Cinder behavior remain unmeasured for the modern API 33+ class."
+      ],
       "nextActions": [
-        "Install the candidate over the existing app without clearing data.",
-        "Verify launch, retained account/session data, direct and group messaging, attachments, notifications, updater flow, and Cinder's unavailable-state behavior.",
-        "When App Check is present, verify a valid outside-Play token and no legitimate sideload denial.",
-        "Record OS/API, redacted device fingerprint, installed version, test results, and timestamp."
+        "Connect and USB-authorize a physical Android API 33+ device until the repository toolchain lists it in the ready device state.",
+        "Record the pre-install package/version and a redacted one-way device receipt ID, then install candidate versionCode 2029 with adb install -r without clearing app data.",
+        "Verify launch and retained account/session state, direct and group messaging, attachments, notifications, updater flow, and Cinder's unavailable-state behavior on that device.",
+        "When App Check is present, verify a valid outside-Play token and no legitimate sideload denial, then record timestamped tester attestation and only then mark this gate PASS."
       ]
     }
   ],

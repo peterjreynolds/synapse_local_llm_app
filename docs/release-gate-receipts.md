@@ -26,8 +26,8 @@ Source commit: `c23d0e6f66607643a853ce170830aea096f4ecea`
 | App Check activation | `BLOCKED` | The Android provider SDK is not installed and enforcement is disabled. |
 | Live Firebase acceptance | `BLOCKED` | Emulator/Functions/rules checks are not a live production acceptance receipt. |
 | Release signer comparison | `PASS` | Candidate package and signer match the canonical APK, and version code 2029 advances published 2028. |
-| Galaxy S9 / API 29 matrix | `BLOCKED` | No physical sideload and in-place update receipt exists for this candidate. |
-| Modern API 33+ matrix | `BLOCKED` | No physical sideload and in-place update receipt exists for this candidate. |
+| Galaxy S9 / API 29 matrix | `BLOCKED` | No Galaxy S9 / API 29 device was visible through repository ADB. |
+| Modern API 33+ matrix | `BLOCKED` | No physical API 33+ device was visible through repository ADB. |
 
 Supporting local Android validation is `PASS`: `testDebugUnitTest`,
 `ktlintCheck`, `lintDebug`, `assembleDebug`, and `git diff --check` completed
@@ -55,6 +55,17 @@ Each device receipt must record:
 - Cinder unavailable-state behavior until its backend is connected;
 - App Check token/sideload behavior after the provider is introduced;
 - timestamp and tester attestation.
+
+### Current Device Discovery Receipt
+
+At `2026-07-19T05:19:39Z`, the repository toolchain's ADB `1.0.41`
+(platform-tools `37.0.0`) completed three discovery scans. Every scan reported
+zero ready devices and zero offline or unauthorized entries; ADB mDNS also
+reported zero services. Therefore neither required physical-device class was
+available. No APK was installed, no app data was changed, and no launch,
+session-retention, messaging, attachment, notification, updater, or Cinder
+behavior was claimed. Both physical-device gates remain `BLOCKED` pending the
+class-specific actions in `release-gates.json`.
 
 ## Live Firebase Receipt Minimum
 
