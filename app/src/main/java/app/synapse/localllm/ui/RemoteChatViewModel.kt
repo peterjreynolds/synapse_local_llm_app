@@ -18,6 +18,7 @@ import app.synapse.localllm.domain.remote.OpenRemoteDirectRoomCommand
 import app.synapse.localllm.domain.remote.RemoteAccountState
 import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAiParticipantGateway
+import app.synapse.localllm.domain.remote.RemoteAssistantAvailability
 import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteAssistantConversationEndpoint
 import app.synapse.localllm.domain.remote.RemoteAttachmentGateway
@@ -394,6 +395,10 @@ class RemoteChatViewModel(
         }
         val account = requireSignedInAccount()
         val roomId = selectedRoomId.value ?: throw IllegalArgumentException("Open a conversation first.")
+        val assistantAvailability = conversationGateway.assistantAvailability(roomId)
+        if (assistantAvailability is RemoteAssistantAvailability.Unavailable) {
+            throw RemoteChatException(assistantAvailability.userMessage)
+        }
         val attachments = attachmentTransferController.readyAttachments()
         require(attachments.size == pendingAttachments.size) { "A ready attachment is missing its upload receipt." }
         val messageId = attachmentTransferController.messageIdForSend {

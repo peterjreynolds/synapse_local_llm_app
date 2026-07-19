@@ -50,6 +50,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import app.synapse.localllm.domain.remote.RemoteAssistantAvailability
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 
 @Composable
@@ -85,11 +86,16 @@ internal fun RemoteMessageComposer(
         granted ->
         if (granted) onStartVoiceNote() else onVoicePermissionDenied()
     }
-    val canAddAttachment = !state.isRecordingVoiceNote &&
+    val assistantUnavailableReason =
+        (state.selectedAssistantAvailability as? RemoteAssistantAvailability.Unavailable)?.userMessage
+    val submissionEnabled = remoteComposerSubmissionEnabled(state.selectedAssistantAvailability)
+    val canAddAttachment = submissionEnabled &&
+        !state.isRecordingVoiceNote &&
         !state.isActionRunning &&
         state.pendingAttachments.size < MAXIMUM_PENDING_ATTACHMENTS
     val showMentionSynapse = state.roomAiConfiguration?.localAiEnabled == true
-    val canOpenAddMenu = !state.isRecordingVoiceNote &&
+    val canOpenAddMenu = submissionEnabled &&
+        !state.isRecordingVoiceNote &&
         !state.isActionRunning &&
         (canAddAttachment || showMentionSynapse)
     val canSend = remoteComposerCanSend(
@@ -97,6 +103,7 @@ internal fun RemoteMessageComposer(
         attachmentStates = state.pendingAttachments.map(RemotePendingAttachmentUi::state),
         isRecordingVoiceNote = state.isRecordingVoiceNote,
         isActionRunning = state.isActionRunning,
+        submissionEnabled = submissionEnabled,
     )
     val primaryAction = remoteComposerPrimaryAction(
         canSend = canSend,
@@ -132,6 +139,14 @@ internal fun RemoteMessageComposer(
             onRetry = onRetryAttachment,
             onCancel = onCancelAttachment,
         )
+        assistantUnavailableReason?.let { reason ->
+            Text(
+                text = reason,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         if (state.isRecordingVoiceNote) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -265,7 +280,7 @@ internal fun RemoteMessageComposer(
                                 microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             }
                         },
-                        enabled = state.isRecordingVoiceNote || !state.isActionRunning,
+                        enabled = state.isRecordingVoiceNote || (!state.isActionRunning && submissionEnabled),
                         modifier = if (state.isRecordingVoiceNote) {
                             Modifier
                                 .clip(CircleShape)
@@ -314,12 +329,16 @@ internal fun remoteComposerCanSend(
     attachmentStates: List<RemoteAttachmentTransferState>,
     isRecordingVoiceNote: Boolean,
     isActionRunning: Boolean,
-): Boolean = !isRecordingVoiceNote && !isActionRunning && (
+    submissionEnabled: Boolean = true,
+): Boolean = submissionEnabled && !isRecordingVoiceNote && !isActionRunning && (
     composerText.isNotBlank() ||
         (
             attachmentStates.isNotEmpty() &&
                 attachmentStates.all { state -> state == RemoteAttachmentTransferState.READY }
             )
     )
+
+internal fun remoteComposerSubmissionEnabled(availability: RemoteAssistantAvailability?): Boolean =
+    availability !is RemoteAssistantAvailability.Unavailable
 
 private const val MAXIMUM_PENDING_ATTACHMENTS = 8

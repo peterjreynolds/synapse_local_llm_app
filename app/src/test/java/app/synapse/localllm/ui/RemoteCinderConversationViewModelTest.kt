@@ -41,6 +41,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -115,11 +116,41 @@ class RemoteCinderConversationViewModelTest {
             coVerify(exactly = 0) {
                 remoteAiParticipantGateway.getRoomConfiguration(ACTIVE_ACCOUNT.accountUid, endpoint.roomId)
             }
+
+            viewModel.updateComposerText("Hello Cinder")
+            runCurrent()
+            viewModel.sendMessage(viewModel.uiState.value.composerText)
+            runCurrent()
+
+            assertEquals("Hello Cinder", viewModel.uiState.value.composerText)
+            assertEquals(availability.userMessage, viewModel.uiState.value.notice)
+            coVerify(exactly = 0) { cacheRepository.enqueueMessage(any()) }
+            coVerify(exactly = 0) { cacheRepository.clearDraft(any(), any()) }
         } finally {
             viewModel.viewModelScope.cancel()
             runCurrent()
             Dispatchers.resetMain()
         }
+    }
+
+    @Test
+    fun unavailableAssistantDisablesSubmissionWhileKeepingTheComposerEditable() {
+        val unavailable = RemoteAssistantAvailability.Unavailable(
+            "Cinder is not connected yet. An authenticated Cinder chat backend must be configured.",
+        )
+
+        assertFalse(remoteComposerSubmissionEnabled(unavailable))
+        assertTrue(remoteComposerSubmissionEnabled(RemoteAssistantAvailability.Available))
+        assertTrue(remoteComposerSubmissionEnabled(null))
+        assertFalse(
+            remoteComposerCanSend(
+                composerText = "Keep this draft",
+                attachmentStates = emptyList(),
+                isRecordingVoiceNote = false,
+                isActionRunning = false,
+                submissionEnabled = false,
+            ),
+        )
     }
 
     private object FixedClock : SynapseClock {

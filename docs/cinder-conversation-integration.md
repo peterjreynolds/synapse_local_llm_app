@@ -17,9 +17,10 @@ second message store.
   preserves it when authoritative Firebase human-room synchronization removes
   rooms that are no longer authorized.
 - Selecting Cinder opens the normal remote message thread and composer.
-- A text send creates one normal optimistic cached human message and one normal
-  idempotent outbox operation. The current unavailable adapter then marks that
-  operation failed with an actionable not-configured reason.
+- When the endpoint is available, a text send uses one normal optimistic cached
+  human message and one normal idempotent outbox operation. The current
+  unavailable adapter blocks submission before enqueue and preserves the draft
+  with an actionable not-configured reason.
 - The conversation gateway router keeps Firebase human rooms on their existing
   gateway and routes only registered assistant room IDs to the app-owned
   assistant gateway seam.
@@ -116,5 +117,5 @@ remote order.
 This repository contains no deployed authenticated Cinder ingress, durable
 turn/reply store, provider credential, response synchronization feed, or push
 producer. Until those server owners exist, the app-side gateway remains
-deliberately unavailable and every queued Cinder send ends in the explicit
-not-connected state.
+deliberately unavailable, and Cinder submission stays disabled before any
+message or outbox row is created.
