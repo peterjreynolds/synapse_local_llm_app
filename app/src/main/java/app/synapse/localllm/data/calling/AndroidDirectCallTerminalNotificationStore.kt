@@ -2,6 +2,7 @@ package app.synapse.localllm.data.calling
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import app.synapse.localllm.domain.calling.DirectCallTerminalNotificationStore
 import app.synapse.localllm.domain.remote.RemoteDirectCallId
 
@@ -22,7 +23,9 @@ class AndroidDirectCallTerminalNotificationStore private constructor(
             add(callId.raw)
             addAll(readCallIds().filterNot { existingCallId -> existingCallId == callId.raw })
         }.take(MAXIMUM_RETAINED_CALL_IDS)
-        preferences.edit().putString(TERMINAL_CALL_IDS_KEY, retainedCallIds.joinToString(SEPARATOR)).apply()
+        preferences.edit {
+            putString(TERMINAL_CALL_IDS_KEY, retainedCallIds.joinToString(SEPARATOR))
+        }
     }
 
     private fun readCallIds(): List<String> =
