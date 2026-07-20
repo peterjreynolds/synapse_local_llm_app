@@ -13,7 +13,7 @@ object RemoteAttachmentPolicy {
         displayName: String,
         mimeType: String,
         byteCount: Long,
-        audioDurationMillis: Long? = null,
+        mediaDurationMillis: Long? = null,
         isVoiceNote: Boolean = false,
     ): RemoteAttachmentPolicyDecision {
         val normalizedMimeType = canonicalMimeType(mimeType)
@@ -27,18 +27,20 @@ object RemoteAttachmentPolicy {
             require(normalizedMimeType == VOICE_NOTE_MIME_TYPE) { "Voice notes must use AAC audio in an M4A container." }
         }
         val durationMillis = when (kind) {
-            RemoteAttachmentKind.AUDIO -> {
-                requireNotNull(audioDurationMillis) {
-                    "Audio duration must be measured before upload."
+            RemoteAttachmentKind.AUDIO,
+            RemoteAttachmentKind.VIDEO,
+            -> {
+                requireNotNull(mediaDurationMillis) {
+                    "Audio and video duration must be measured before upload."
                 }
             }
 
-            RemoteAttachmentKind.VOICE_NOTE -> requireNotNull(audioDurationMillis)
+            RemoteAttachmentKind.VOICE_NOTE -> requireNotNull(mediaDurationMillis)
             else -> null
         }
         durationMillis?.let { duration ->
             require(duration in 1..MAXIMUM_AUDIO_DURATION_MILLIS) {
-                "Audio attachments must be no longer than 60 minutes."
+                "Audio and video attachments must be no longer than 60 minutes."
             }
         }
         return RemoteAttachmentPolicyDecision(

@@ -115,6 +115,7 @@ export {
 } from "./cinderConversation.js";
 export {
   getCinderParticipant,
+  listCinderParticipants,
   setCinderParticipant,
 } from "./cinderParticipant.js";
 export {notifyCinderMessage} from "./cinderNotification.js";

@@ -40,7 +40,7 @@ export const prepareRemoteAttachment = onCall(
       command.attachmentId,
       "content",
     );
-    const thumbnailObjectPath = command.kind === "IMAGE" ? buildAttachmentObjectPath(
+    const thumbnailObjectPath = command.kind === "IMAGE" || command.kind === "VIDEO" ? buildAttachmentObjectPath(
       command.roomId,
       command.messageId,
       command.attachmentId,

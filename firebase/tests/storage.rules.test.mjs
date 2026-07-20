@@ -80,7 +80,7 @@ async function seedAttachmentUpload({
       mimeType,
       roomId: GROUP_ROOM_ID,
       status,
-      thumbnailObjectPath: kind === "IMAGE" ?
+      thumbnailObjectPath: kind === "IMAGE" || kind === "VIDEO" ?
         `roomAttachments/${GROUP_ROOM_ID}/${MESSAGE_ID}/${ATTACHMENT_ID}/thumbnail` : null,
     });
   });
@@ -271,4 +271,34 @@ test("requires bounded JPEG thumbnails and revokes reads after membership deleti
     );
   });
   await assertFails(getMetadata(ref(trishStorage, `${prefix}/content`)));
+});
+
+test("allows a bounded JPEG poster only for a declared video upload", async () => {
+  await seedAttachmentUpload({kind: "VIDEO", mimeType: "video/mp4"});
+  const prefix = `roomAttachments/${GROUP_ROOM_ID}/${MESSAGE_ID}/${ATTACHMENT_ID}`;
+  const peterStorage = activeContext(PETER_UID).storage(BUCKET);
+
+  await assertSucceeds(uploadBytes(
+    ref(peterStorage, `${prefix}/content`),
+    new Uint8Array([1, 2, 3]),
+    {contentType: "video/mp4", customMetadata: attachmentMetadata("content")},
+  ));
+  await assertSucceeds(uploadBytes(
+    ref(peterStorage, `${prefix}/thumbnail`),
+    new Uint8Array([4, 5, 6]),
+    {contentType: "image/jpeg", customMetadata: attachmentMetadata("thumbnail")},
+  ));
+
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(
+      doc(context.firestore(), "attachmentUploads", ATTACHMENT_ID),
+      {kind: "DOCUMENT", thumbnailObjectPath: null},
+      {merge: true},
+    );
+  });
+  await assertFails(uploadBytes(
+    ref(peterStorage, `${prefix}/thumbnail`),
+    new Uint8Array([7, 8, 9]),
+    {contentType: "image/jpeg", customMetadata: attachmentMetadata("thumbnail")},
+  ));
 });

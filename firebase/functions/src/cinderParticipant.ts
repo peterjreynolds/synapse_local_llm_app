@@ -14,6 +14,7 @@ import {
   CinderWorkState,
   DEFAULT_CINDER_PARTICIPATION_MODE,
   isLegacyCinderParticipantResponsePolicy,
+  parseCinderParticipantListQuery,
   parseCinderParticipantQuery,
   parseSetCinderParticipantCommand,
   resolveStoredCinderParticipationMode,
@@ -62,6 +63,30 @@ export const getCinderParticipant = onCall(
       ...participantState,
       workState: resolveCinderWorkState(jobs.docs.map((job) => job.get("state"))),
     };
+  },
+);
+
+export const listCinderParticipants = onCall(
+  {region: FIREBASE_FUNCTIONS_REGION},
+  async (request): Promise<{participants: CinderParticipantState[]}> => {
+    const {uid: actorUid} = await requireActiveAccount(request.auth);
+    await enforceCallableRateLimit(actorUid, "cinderPresencePolling");
+    const {roomIds} = parseCinderParticipantListQuery(request.data);
+    const participants = await firebaseAdminFirestore.runTransaction(async (transaction) =>
+      Promise.all(roomIds.map(async (roomId) => {
+        const roomReference = firebaseAdminFirestore.doc(`rooms/${roomId}`);
+        const authorization = await requireActiveRoomActor(transaction, roomReference, actorUid);
+        const participantSnapshot = await transaction.get(
+          roomReference.collection("participants").doc(CINDER_PARTICIPANT_ID),
+        );
+        return buildCinderParticipantState(
+          roomId,
+          canManageCinderParticipant(authorization.kind, authorization.role),
+          participantSnapshot.exists ? participantSnapshot.data() : undefined,
+        );
+      })),
+    );
+    return {participants};
   },
 );
 

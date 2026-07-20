@@ -108,7 +108,7 @@ service firebase.storage {
           ||
           (
             variant == 'thumbnail'
-            && attachmentUpload(attachmentId).kind == 'IMAGE'
+            && attachmentUpload(attachmentId).kind in ['IMAGE', 'VIDEO']
             && request.resource.size > 0
             && request.resource.size <= 256 * 1024
             && request.resource.contentType == 'image/jpeg'

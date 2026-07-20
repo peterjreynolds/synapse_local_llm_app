@@ -10,6 +10,7 @@ import {
   cinderTimestampSequence,
   hasExplicitCinderMention,
   isCinderHumanRoomQueueEligible,
+  isTrustedCinderRemoteAiMessage,
   normalizeCinderMessageBody,
   resolveStoredCinderParticipationMode,
 } from "./cinderDomain.js";
@@ -29,6 +30,7 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
     const sourceSenderUid = messageSnapshot.get("senderUid");
     const sourceServerCreatedAt = messageSnapshot.get("createdAt");
     const sourceRevision = messageSnapshot.get("revision") ?? 1;
+    const rawReplyToMessageId = messageSnapshot.get("replyToMessageId");
     if (
       authorKind !== "HUMAN" ||
       typeof body !== "string" ||
@@ -41,6 +43,13 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
       sourceRevision < 1
     ) {
       return;
+    }
+    let replyToMessageId: string | null = null;
+    if (rawReplyToMessageId !== null && rawReplyToMessageId !== undefined) {
+      if (typeof rawReplyToMessageId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(rawReplyToMessageId)) {
+        return;
+      }
+      replyToMessageId = rawReplyToMessageId;
     }
     let normalizedBody: string;
     try {
@@ -72,6 +81,7 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
     });
     const jobReference = firebaseAdminFirestore.doc(`cinderResponseJobs/${jobId}`);
     const auditReference = firebaseAdminFirestore.doc(`cinderResponseAudits/${jobId}`);
+    const explicitMention = hasExplicitCinderMention(normalizedBody);
     await firebaseAdminFirestore.runTransaction(async (transaction) => {
       const [roomSnapshot, participantSnapshot, membershipSnapshot, profileSnapshot, jobSnapshot, auditSnapshot] =
         await Promise.all([
@@ -82,6 +92,20 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
           transaction.get(jobReference),
           transaction.get(auditReference),
         ]);
+      const replySnapshot = replyToMessageId === null ? null : await transaction.get(
+        roomReference.collection("messages").doc(replyToMessageId),
+      );
+      const directReply = replySnapshot !== null &&
+        replySnapshot.exists &&
+        replySnapshot.get("deletedAt") === null &&
+        isTrustedCinderRemoteAiMessage({
+          aiParticipantId: replySnapshot.get("aiParticipantId"),
+          aiProvenance: replySnapshot.get("aiProvenance"),
+          aiProvider: replySnapshot.get("aiProvider"),
+          assistantId: replySnapshot.get("assistantId"),
+          authorKind: replySnapshot.get("authorKind"),
+          senderUid: replySnapshot.get("senderUid"),
+        });
       const roomKind = roomSnapshot.get("kind");
       if (
         !roomSnapshot.exists ||
@@ -106,6 +130,7 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
       if (!isCinderHumanRoomQueueEligible({
         authorKind,
         body: normalizedBody,
+        directReply,
         participantActive: participantSnapshot.get("active") === true,
         participantId: participantSnapshot.get("participantId"),
         participantKind: participantSnapshot.get("kind"),
@@ -152,13 +177,14 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
         sourceServerCreatedAt.nanoseconds,
       );
       const queuedAt = Timestamp.now();
-      const explicitMention = hasExplicitCinderMention(normalizedBody);
       transaction.create(jobReference, {
         accountUid: sourceSenderUid,
         assistantId: CINDER_ASSISTANT_ID,
         attemptCount: 0,
         contentDigest,
         createdAt: queuedAt,
+        directReply,
+        directReplyToMessageId: directReply ? replyToMessageId : null,
         explicitMention,
         idempotencyKey: jobId,
         leaseClaimedAt: null,

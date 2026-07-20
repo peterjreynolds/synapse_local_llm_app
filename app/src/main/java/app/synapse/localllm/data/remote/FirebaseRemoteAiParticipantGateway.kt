@@ -42,6 +42,21 @@ class FirebaseRemoteAiParticipantGateway(
             .toCinderParticipantState(roomId)
     }
 
+    override suspend fun getCinderParticipants(
+        accountUid: RemoteAccountUid,
+        roomIds: List<RemoteRoomId>,
+    ): Map<RemoteRoomId, RemoteCinderParticipantState> {
+        requireAuthenticatedUid(accountUid)
+        require(roomIds.size in 1..MAXIMUM_CINDER_PARTICIPANT_BATCH_SIZE) {
+            "Cinder participant summaries must be requested in bounded batches."
+        }
+        require(roomIds.distinct().size == roomIds.size) {
+            "Cinder participant summary rooms must be distinct."
+        }
+        val response = call("listCinderParticipants", mapOf("roomIds" to roomIds.map(RemoteRoomId::raw)))
+        return response.toCinderParticipantStates(roomIds)
+    }
+
     override suspend fun updateCinderParticipant(
         command: UpdateRemoteCinderParticipantCommand,
     ): RemoteCinderParticipantState {
@@ -217,6 +232,25 @@ internal fun Map<*, *>.toCinderParticipantState(expectedRoomId: RemoteRoomId): R
     )
 }
 
+internal fun Map<*, *>.toCinderParticipantStates(
+    expectedRoomIds: List<RemoteRoomId>,
+): Map<RemoteRoomId, RemoteCinderParticipantState> {
+    val rawParticipants = this["participants"] as? List<*> ?: malformedAiResponse()
+    val participants = rawParticipants.map { rawParticipant ->
+        val participant = rawParticipant.requireAiMap("Cinder participant summary")
+        val roomId = RemoteRoomId(participant.requireAiString("roomId"))
+        participant.toCinderParticipantState(roomId)
+    }
+    if (
+        participants.size != expectedRoomIds.size ||
+        participants.distinctBy(RemoteCinderParticipantState::roomId).size != participants.size ||
+        participants.mapTo(mutableSetOf(), RemoteCinderParticipantState::roomId) != expectedRoomIds.toSet()
+    ) {
+        malformedAiResponse()
+    }
+    return participants.associateBy(RemoteCinderParticipantState::roomId)
+}
+
 private fun Map<*, *>.toRoomAiConfiguration(): RemoteRoomAiConfiguration {
     val hostedPolicy = this["hostedExecutionPolicy"].requireAiMap("hosted AI execution policy")
     return RemoteRoomAiConfiguration(
@@ -296,3 +330,4 @@ private fun malformedAiResponse(): Nothing =
     throw RemoteChatException("Synapse returned malformed remote AI participant state.")
 
 private const val CINDER_PROVIDER = "OPENCLAW_CINDER"
+private const val MAXIMUM_CINDER_PARTICIPANT_BATCH_SIZE = 30

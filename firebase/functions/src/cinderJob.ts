@@ -22,6 +22,8 @@ export interface CinderJobDocument {
   attemptCount: number;
   contentDigest: string;
   createdAt: Timestamp;
+  directReply: boolean;
+  directReplyToMessageId: string | null;
   explicitMention: boolean;
   idempotencyKey: string;
   leaseDigest: string | null;
@@ -57,6 +59,9 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
   const attemptCount = snapshot.get("attemptCount");
   const contentDigest = snapshot.get("contentDigest");
   const createdAt = snapshot.get("createdAt");
+  const persistedDirectReply = snapshot.get("directReply");
+  const directReply = persistedDirectReply ?? false;
+  const directReplyToMessageId = snapshot.get("directReplyToMessageId") ?? null;
   const explicitMention = snapshot.get("explicitMention");
   const idempotencyKey = snapshot.get("idempotencyKey");
   const leaseDigest = snapshot.get("leaseDigest");
@@ -109,9 +114,21 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
     typeof contentDigest !== "string" ||
     !/^[a-f0-9]{64}$/.test(contentDigest) ||
     !(createdAt instanceof Timestamp) ||
+    typeof directReply !== "boolean" ||
+    (persistedDirectReply !== undefined && typeof persistedDirectReply !== "boolean") ||
+    (directReply && (
+      typeof directReplyToMessageId !== "string" ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(directReplyToMessageId)
+    )) ||
+    (!directReply && directReplyToMessageId !== null) ||
     typeof explicitMention !== "boolean" ||
-    (roomKind === "ASSISTANT" && explicitMention !== false) ||
-    (roomKind !== "ASSISTANT" && participationMode === "MENTION" && explicitMention !== true) ||
+    (roomKind === "ASSISTANT" && (explicitMention !== false || directReply)) ||
+    (
+      roomKind !== "ASSISTANT" &&
+      participationMode === "MENTION" &&
+      explicitMention !== true &&
+      !directReply
+    ) ||
     typeof idempotencyKey !== "string" ||
     !/^[A-Za-z0-9_-]{1,128}$/.test(idempotencyKey) ||
     participantActive !== true ||
@@ -151,6 +168,8 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
     attemptCount,
     contentDigest,
     createdAt,
+    directReply,
+    directReplyToMessageId: directReplyToMessageId as string | null,
     explicitMention,
     idempotencyKey,
     leaseDigest: leaseDigest as string | null,
@@ -253,6 +272,8 @@ export function terminalCinderAuditFields(
     completedAt,
     completionState,
     contentDigest: job.contentDigest,
+    directReply: job.directReply,
+    directReplyToMessageId: job.directReplyToMessageId,
     explicitMention: job.explicitMention,
     idempotencyKey: job.idempotencyKey,
     jobId,

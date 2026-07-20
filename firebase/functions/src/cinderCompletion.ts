@@ -11,6 +11,7 @@ import {
   cinderTimestampSequence,
   CompleteCinderResponseCommand,
   digestCinderResponseBody,
+  isTrustedCinderRemoteAiMessage,
   resolveStoredCinderParticipationMode,
 } from "./cinderDomain.js";
 import {
@@ -169,16 +170,25 @@ async function completeHumanRoomResponse(
   const messageId = buildCinderResponseMessageId(jobId);
   const responseReference = roomReference.collection("messages").doc(messageId);
   const auditReference = cinderAuditReference(jobId);
-  const [roomSnapshot, participantSnapshot, sourceSnapshot, responseSnapshot] = await Promise.all([
+  const [
+    roomSnapshot,
+    participantSnapshot,
+    sourceSnapshot,
+    responseSnapshot,
+    directReplySnapshot,
+  ] = await Promise.all([
     transaction.get(roomReference),
     transaction.get(participantReference),
     transaction.get(sourceReference),
     transaction.get(responseReference),
+    job.directReplyToMessageId === null ? Promise.resolve(null) :
+      transaction.get(roomReference.collection("messages").doc(job.directReplyToMessageId)),
   ]);
   const unavailableReason = humanRoomCompletionUnavailableReason(
     roomSnapshot,
     participantSnapshot,
     sourceSnapshot,
+    directReplySnapshot,
     job,
   );
   if (unavailableReason !== null) {
@@ -291,6 +301,7 @@ function humanRoomCompletionUnavailableReason(
   roomSnapshot: DocumentSnapshot,
   participantSnapshot: DocumentSnapshot,
   sourceSnapshot: DocumentSnapshot,
+  directReplySnapshot: DocumentSnapshot | null,
   job: CinderJobDocument,
 ): CinderCompletionSkipReason | null {
   if (
@@ -320,9 +331,27 @@ function humanRoomCompletionUnavailableReason(
   });
   if (
     participationMode === null ||
-    !cinderModeAllowsQueuedResponse(participationMode, job.explicitMention)
+    !cinderModeAllowsQueuedResponse(participationMode, job.explicitMention, job.directReply)
   ) {
     return "MODE_DISALLOWS_RESPONSE";
+  }
+  if (
+    job.directReply &&
+    (
+      directReplySnapshot === null ||
+      !directReplySnapshot.exists ||
+      directReplySnapshot.get("deletedAt") !== null ||
+      !isTrustedCinderRemoteAiMessage({
+        aiParticipantId: directReplySnapshot.get("aiParticipantId"),
+        aiProvenance: directReplySnapshot.get("aiProvenance"),
+        aiProvider: directReplySnapshot.get("aiProvider"),
+        assistantId: directReplySnapshot.get("assistantId"),
+        authorKind: directReplySnapshot.get("authorKind"),
+        senderUid: directReplySnapshot.get("senderUid"),
+      })
+    )
+  ) {
+    return "SOURCE_UNAVAILABLE";
   }
   return null;
 }

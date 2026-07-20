@@ -47,6 +47,7 @@ import app.synapse.localllm.domain.remote.RemoteOutboxState
 import app.synapse.localllm.domain.remote.RemotePasswordChangeCommand
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import app.synapse.localllm.domain.remote.RemoteRoomKind
 import app.synapse.localllm.domain.remote.RemoteRoomMuteDuration
 import app.synapse.localllm.domain.remote.RemoteSignInCommand
 import app.synapse.localllm.domain.remote.RemoteVoiceNoteRecorder
@@ -107,6 +108,8 @@ class RemoteChatViewModel(
     private var messageSearchJob: Job? = null
     private var roomAiConfigurationJob: Job? = null
     private var cinderParticipantJob: Job? = null
+    private var cinderParticipantSummariesJob: Job? = null
+    private var cinderParticipantSummaryRoomIds = emptyList<RemoteRoomId>()
     private var typingHeartbeatJob: Job? = null
     private var typingRoomId: RemoteRoomId? = null
     private val attachmentTransferController = RemoteAttachmentTransferController(
@@ -915,6 +918,7 @@ class RemoteChatViewModel(
                         mutableUiState.value.rooms.any { room -> room.roomId == currentSelectedRoomId } &&
                         rooms.none { room -> room.roomId == currentSelectedRoomId }
                     mutableUiState.update { state -> state.copy(rooms = rooms) }
+                    synchronizeCinderParticipantSummaries(account.accountUid, rooms)
                     if (selectedRoomWasRemoved) selectRoom(null)
                     openPendingNotificationRoomIfAvailable(rooms)
                     rooms.firstOrNull { room ->
@@ -1016,6 +1020,8 @@ class RemoteChatViewModel(
             messageSearchJob?.cancel()
             roomAiConfigurationJob?.cancel()
             cinderParticipantJob?.cancel()
+            cinderParticipantSummariesJob?.cancel()
+            cinderParticipantSummaryRoomIds = emptyList()
             readAcknowledgementJob?.cancel()
             cacheRepository.clearActiveAccount()
             selectedRoomId.value = null
@@ -1044,6 +1050,7 @@ class RemoteChatViewModel(
                     currentDeviceId = null,
                     roomAiConfiguration = null,
                     cinderParticipant = null,
+                    cinderParticipantsByRoomId = emptyMap(),
                     localAiHostStatus = RemoteLocalAiHostStatus.Idle,
                     isActionRunning = false,
                 )
@@ -1155,9 +1162,52 @@ class RemoteChatViewModel(
         mutableUiState.update { state ->
             val currentParticipant = state.cinderParticipant
             if (shouldApplyCinderParticipantState(roomId, currentParticipant, participant)) {
-                state.copy(cinderParticipant = participant)
+                state.copy(
+                    cinderParticipant = participant,
+                    cinderParticipantsByRoomId = state.cinderParticipantsByRoomId + (roomId to participant),
+                )
             } else {
                 state
+            }
+        }
+    }
+
+    private fun synchronizeCinderParticipantSummaries(
+        accountUid: RemoteAccountUid,
+        rooms: List<RemoteCachedRoom>,
+    ) {
+        val roomIds = rooms
+            .asSequence()
+            .filter { room -> room.kind != RemoteRoomKind.ASSISTANT }
+            .map(RemoteCachedRoom::roomId)
+            .distinct()
+            .sortedBy(RemoteRoomId::raw)
+            .toList()
+        if (roomIds == cinderParticipantSummaryRoomIds) return
+        cinderParticipantSummaryRoomIds = roomIds
+        cinderParticipantSummariesJob?.cancel()
+        mutableUiState.update { state ->
+            state.copy(cinderParticipantsByRoomId = state.cinderParticipantsByRoomId.filterKeys(roomIds::contains))
+        }
+        if (roomIds.isEmpty()) return
+        cinderParticipantSummariesJob = viewModelScope.launch {
+            while (mutableUiState.value.account?.accountUid == accountUid) {
+                try {
+                    val participants = roomIds
+                        .chunked(MAXIMUM_CINDER_PARTICIPANT_SUMMARY_BATCH_SIZE)
+                        .flatMap { roomIdBatch ->
+                            remoteAiParticipantGateway.getCinderParticipants(accountUid, roomIdBatch).values
+                        }
+                        .associateBy(RemoteCinderParticipantState::roomId)
+                    if (cinderParticipantSummaryRoomIds == roomIds) {
+                        mutableUiState.update { state -> state.copy(cinderParticipantsByRoomId = participants) }
+                    }
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (_: Exception) {
+                    // Room details remains the authoritative fallback when a noncritical list summary cannot refresh.
+                }
+                delay(CINDER_PARTICIPANT_SUMMARY_REFRESH_MILLIS)
             }
         }
     }
@@ -1360,6 +1410,8 @@ class RemoteChatViewModel(
         const val DRAFT_SAVE_DEBOUNCE_MILLIS = 300L
         const val TYPING_HEARTBEAT_MILLIS = 5_000L
         const val CINDER_PARTICIPANT_REFRESH_MILLIS = 5_000L
+        const val CINDER_PARTICIPANT_SUMMARY_REFRESH_MILLIS = 60_000L
+        const val MAXIMUM_CINDER_PARTICIPANT_SUMMARY_BATCH_SIZE = 30
         const val CONFIRMED_DELETION_EFFECT_MILLIS = 900L
         const val REMOTE_LOGOUT_CLEANUP_TIMEOUT_MILLIS = 10_000L
         private const val ROOM_AI_CONFIGURATION_REFRESH_MILLIS = 60_000L

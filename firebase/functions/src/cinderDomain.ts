@@ -136,6 +136,16 @@ export function parseCinderParticipantQuery(input: unknown): {roomId: string} {
   return {roomId: parseHumanRoomId(command.roomId)};
 }
 
+export function parseCinderParticipantListQuery(input: unknown): {roomIds: string[]} {
+  const command = requireRecord(input);
+  if (!Array.isArray(command.roomIds) || command.roomIds.length < 1 || command.roomIds.length > 30) {
+    invalidCinderCommand();
+  }
+  const roomIds = command.roomIds.map(parseHumanRoomId);
+  if (new Set(roomIds).size !== roomIds.length) invalidCinderCommand();
+  return {roomIds};
+}
+
 export function parseSyncCinderMessagesCommand(input: unknown): SyncCinderMessagesCommand {
   const command = requireRecord(input);
   const afterSequence = command.afterSequence ?? 0;
@@ -228,6 +238,7 @@ export function hasExplicitCinderMention(body: string): boolean {
 export function isCinderHumanRoomQueueEligible(input: {
   authorKind: unknown;
   body: unknown;
+  directReply: boolean;
   participantActive: boolean;
   participantId: unknown;
   participantKind: unknown;
@@ -247,7 +258,10 @@ export function isCinderHumanRoomQueueEligible(input: {
     return false;
   }
   return input.participationMode === "AUTO" ||
-    (input.participationMode === "MENTION" && hasExplicitCinderMention(input.body));
+    (
+      input.participationMode === "MENTION" &&
+      (hasExplicitCinderMention(input.body) || input.directReply)
+    );
 }
 
 export function cinderResponsePolicyForMode(
@@ -268,8 +282,9 @@ export function resolveStoredCinderParticipationMode(input: {
 export function cinderModeAllowsQueuedResponse(
   mode: CinderParticipationMode,
   explicitMention: boolean,
+  directReply = false,
 ): boolean {
-  return mode === "AUTO" || (mode === "MENTION" && explicitMention);
+  return mode === "AUTO" || (mode === "MENTION" && (explicitMention || directReply));
 }
 
 export function cinderModeAllowsProactiveMessage(mode: CinderParticipationMode): boolean {

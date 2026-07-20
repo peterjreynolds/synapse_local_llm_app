@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
+import app.synapse.localllm.domain.remote.RemoteAttachmentKind
 import java.io.ByteArrayInputStream
 import java.io.File
 import kotlinx.coroutines.test.runTest
@@ -188,10 +189,30 @@ class AndroidRemoteAttachmentSelectionStagerTest {
             }
         }
 
-        val thumbnail = AndroidRemoteImageThumbnailEncoder().encode(source)
+        val thumbnail = AndroidRemoteVisualThumbnailEncoder().encode(source, RemoteAttachmentKind.IMAGE)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(thumbnail, 0, thumbnail.size, bounds)
 
+        assertTrue(thumbnail.isNotEmpty())
+        assertTrue(thumbnail.size <= 256 * 1024)
+        assertTrue(maxOf(bounds.outWidth, bounds.outHeight) <= 512)
+        source.delete()
+    }
+
+    @Test
+    fun `video thumbnail encoder uses one bounded poster frame`() {
+        val source = File(context.cacheDir, "thumbnail-source.mp4").apply { writeBytes(byteArrayOf(1)) }
+        var decodedFiles = emptyList<File>()
+        val encoder = AndroidRemoteVisualThumbnailEncoder { videoFile ->
+            decodedFiles = decodedFiles + videoFile
+            Bitmap.createBitmap(1_200, 1_600, Bitmap.Config.ARGB_8888)
+        }
+
+        val thumbnail = encoder.encode(source, RemoteAttachmentKind.VIDEO)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(thumbnail, 0, thumbnail.size, bounds)
+
+        assertEquals(listOf(source), decodedFiles)
         assertTrue(thumbnail.isNotEmpty())
         assertTrue(thumbnail.size <= 256 * 1024)
         assertTrue(maxOf(bounds.outWidth, bounds.outHeight) <= 512)

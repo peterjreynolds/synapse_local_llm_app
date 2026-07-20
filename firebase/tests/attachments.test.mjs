@@ -287,6 +287,60 @@ test("GIF images retain their MIME type and require a separate JPEG thumbnail", 
   );
 });
 
+test("videos retain measured duration and require a separate JPEG poster", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  await signIn("trish", trish);
+  const created = await call(peterClient, "createGroupRoom")({
+    memberUids: [trish.uid],
+    title: "Video attachments",
+  });
+  const roomId = created.data.roomId;
+  const messageId = "message-with-video";
+  const videoBytes = new Uint8Array([0, 0, 0, 1]);
+  const prepared = await call(peterClient, "prepareRemoteAttachment")({
+    attachmentId: ATTACHMENT_ID,
+    byteCount: videoBytes.byteLength,
+    displayName: "clip.untrusted-extension",
+    durationMillis: 9_000,
+    kind: "VIDEO",
+    messageId,
+    mimeType: "video/mp4",
+    roomId,
+  });
+
+  assert.match(prepared.data.thumbnailObjectPath, /\/thumbnail$/u);
+  await uploadBytes(ref(peterClient.storage, prepared.data.contentObjectPath), videoBytes, {
+    contentType: "video/mp4",
+    customMetadata: uploadMetadata(peter.uid, roomId, messageId, "content"),
+  });
+  await uploadBytes(ref(peterClient.storage, prepared.data.thumbnailObjectPath), new Uint8Array([1, 2, 3]), {
+    contentType: "image/jpeg",
+    customMetadata: uploadMetadata(peter.uid, roomId, messageId, "thumbnail"),
+  });
+  assert.equal((await call(peterClient, "finalizeRemoteAttachment")({
+    attachmentId: ATTACHMENT_ID,
+    messageId,
+    roomId,
+  })).data.status, "READY");
+
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [ATTACHMENT_ID],
+    body: "",
+    clientCreatedAtMillis: Date.now(),
+    messageId,
+    replyToMessageId: null,
+    roomId,
+  });
+  const [sentAttachment] = (await adminFirestore.doc(`rooms/${roomId}/messages/${messageId}`).get())
+    .get("attachments");
+  assert.equal(sentAttachment.displayName, "clip.mp4");
+  assert.equal(sentAttachment.durationMillis, 9_000);
+  assert.equal(sentAttachment.kind, "VIDEO");
+  assert.equal(sentAttachment.thumbnailObjectPath, prepared.data.thumbnailObjectPath);
+});
+
 test("active owner can upload and finalize an attachment in a direct room", async () => {
   const peter = await seedActiveAccount("peter", "OWNER");
   const trish = await seedActiveAccount("trish");

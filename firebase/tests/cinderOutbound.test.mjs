@@ -16,8 +16,10 @@ const WORKER_ENDPOINT =
   `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/sendCinderOutboundMessage`;
 const CLAIM_ENDPOINT =
   `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/claimCinderResponse`;
-const SKIP_ENDPOINT =
-  `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/skipCinderResponseJob`;
+const COMPLETE_ENDPOINT =
+  `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/completeCinderResponseJob`;
+const FAIL_ENDPOINT =
+  `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/failCinderResponseJob`;
 const WORKER_TOKEN = "cinder-outbound-emulator-worker-token-1234567890";
 const WORKER_ID = "openclaw-cinder-emulator";
 const PASSWORD = "cinder outbound emulator password";
@@ -216,6 +218,11 @@ test("human-room outbound delivery follows one room-scoped participant revision 
   assert.equal(added.data.mode, "AUTO");
   assert.deepEqual(duplicateAdd.data, added.data);
   assert.equal(await participantAuditCount(roomId), 1);
+  const ownerSummaries = await call(peterClient, "listCinderParticipants")({roomIds: [roomId]});
+  assert.equal(ownerSummaries.data.participants.length, 1);
+  assert.equal(ownerSummaries.data.participants[0].active, true);
+  assert.equal(ownerSummaries.data.participants[0].mode, "AUTO");
+  assert.equal(ownerSummaries.data.participants[0].canManage, true);
 
   const first = await sendOutbound({
     accountUid: peter.uid,
@@ -238,6 +245,8 @@ test("human-room outbound delivery follows one room-scoped participant revision 
   assert.equal(sharedState.data.mode, "AUTO");
   assert.equal(sharedState.data.revision, 1);
   assert.equal(sharedState.data.canManage, false);
+  const memberSummaries = await call(trishClient, "listCinderParticipants")({roomIds: [roomId]});
+  assert.equal(memberSummaries.data.participants[0].canManage, false);
 
   const mentionMode = await call(peterClient, "setCinderParticipant")({
     active: true,
@@ -357,15 +366,68 @@ test("Silent, Mention, and Auto queue only eligible work and capability-gate aut
   ).size === 1);
   const mentionClaim = await workerRequest(CLAIM_ENDPOINT, {workerId: `${WORKER_ID}-legacy`});
   assert.equal(mentionClaim.status, 200);
+  assert.equal(mentionClaim.body.result.claim.directReply, false);
   assert.equal(mentionClaim.body.result.claim.explicitMention, true);
   assert.equal(mentionClaim.body.result.claim.responsePolicy, "MENTION_ONLY");
-  await workerRequest(SKIP_ENDPOINT, {
+  const mentionCompletion = await workerRequest(COMPLETE_ENDPOINT, {
+    body: "Here is the requested room summary.",
     jobId: mentionClaim.body.result.claim.jobId,
     leaseId: mentionClaim.body.result.claim.leaseId,
     leaseToken: mentionClaim.body.result.claim.leaseToken,
-    reason: "DISPATCH_SKIPPED",
     workerId: `${WORKER_ID}-legacy`,
   });
+  assert.equal(mentionCompletion.status, 200);
+
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "A reply to another human is still ordinary room context.",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "human-reply-source",
+    replyToMessageId: "mention-ineligible-source",
+    roomId,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  assert.equal(
+    (await adminFirestore.collection("cinderResponseJobs").where("roomId", "==", roomId).get()).size,
+    0,
+  );
+
+  const cinderResponseMessageId = mentionCompletion.body.result.messageId;
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "Could you expand on that conclusion?",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "direct-reply-source",
+    replyToMessageId: cinderResponseMessageId,
+    roomId,
+  });
+  await waitForCondition(async () => (
+    await adminFirestore.collection("cinderResponseJobs").where("roomId", "==", roomId).get()
+  ).size === 1);
+  const directReplyClaim = await workerRequest(CLAIM_ENDPOINT, {workerId: `${WORKER_ID}-direct-reply`});
+  assert.equal(directReplyClaim.status, 200);
+  assert.equal(directReplyClaim.body.result.claim.directReply, true);
+  assert.equal(directReplyClaim.body.result.claim.explicitMention, false);
+  assert.equal(directReplyClaim.body.result.claim.responsePolicy, "MENTION_ONLY");
+  const retryReceipt = await workerRequest(FAIL_ENDPOINT, {
+    failureCode: "OPENCLAW_UNAVAILABLE",
+    jobId: directReplyClaim.body.result.claim.jobId,
+    leaseId: directReplyClaim.body.result.claim.leaseId,
+    leaseToken: directReplyClaim.body.result.claim.leaseToken,
+    retryable: true,
+    workerId: `${WORKER_ID}-direct-reply`,
+  });
+  assert.equal(retryReceipt.body.result.retryScheduled, true);
+  await adminFirestore.doc(`rooms/${roomId}/messages/${cinderResponseMessageId}`).update({
+    deletedAt: AdminTimestamp.now(),
+  });
+  const deletedTargetClaim = await workerRequest(CLAIM_ENDPOINT, {workerId: `${WORKER_ID}-deleted-target`});
+  assert.equal(deletedTargetClaim.body.result.claim, null);
+  const directReplyAudit = await adminFirestore
+    .doc(`cinderResponseAudits/${directReplyClaim.body.result.claim.jobId}`)
+    .get();
+  assert.equal(directReplyAudit.get("directReply"), true);
+  assert.equal(directReplyAudit.get("reason"), "SOURCE_UNAVAILABLE");
 
   await call(peterClient, "setCinderParticipant")({
     active: true,
@@ -391,6 +453,7 @@ test("Silent, Mention, and Auto queue only eligible work and capability-gate aut
     workerId: `${WORKER_ID}-modern`,
   });
   assert.equal(automaticClaim.status, 200);
+  assert.equal(automaticClaim.body.result.claim.directReply, false);
   assert.equal(automaticClaim.body.result.claim.explicitMention, false);
   assert.equal(automaticClaim.body.result.claim.responsePolicy, "AUTOMATIC");
 });

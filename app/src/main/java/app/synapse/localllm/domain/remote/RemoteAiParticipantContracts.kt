@@ -134,6 +134,13 @@ interface RemoteAiParticipantGateway {
         roomId: RemoteRoomId,
     ): RemoteCinderParticipantState
 
+    suspend fun getCinderParticipants(
+        accountUid: RemoteAccountUid,
+        roomIds: List<RemoteRoomId>,
+    ): Map<RemoteRoomId, RemoteCinderParticipantState> = buildMap {
+        roomIds.forEach { roomId -> put(roomId, getCinderParticipant(accountUid, roomId)) }
+    }
+
     suspend fun updateCinderParticipant(
         command: UpdateRemoteCinderParticipantCommand,
     ): RemoteCinderParticipantState

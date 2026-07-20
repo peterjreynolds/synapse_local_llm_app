@@ -7,6 +7,7 @@ import app.synapse.localllm.domain.remote.RemoteAiProvenance
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCinderWorkState
+import app.synapse.localllm.domain.remote.RemoteCinderParticipationMode
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
@@ -24,6 +25,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RemoteChatPresentationTest {
+    @Test
+    fun cinderModeCueUsesCompactAuthoritativeLabels() {
+        assertEquals("Silent", RemoteCinderParticipationMode.SILENT.cinderModeLabel())
+        assertEquals("Mention", RemoteCinderParticipationMode.MENTION.cinderModeLabel())
+        assertEquals("Auto", RemoteCinderParticipationMode.AUTO.cinderModeLabel())
+    }
+
     @Test
     fun presenceLabelDistinguishesOnlineLastSeenAndUnknownProfiles() {
         assertEquals("Private synced chat", remotePresenceLabel(null))

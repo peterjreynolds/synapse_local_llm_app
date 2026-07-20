@@ -33,7 +33,7 @@ class RemoteAttachmentPolicyTest {
             displayName = "Voice note.m4a",
             mimeType = "audio/mp4",
             byteCount = 4_096,
-            audioDurationMillis = 12_500,
+            mediaDurationMillis = 12_500,
             isVoiceNote = true,
         )
 
@@ -59,11 +59,12 @@ class RemoteAttachmentPolicyTest {
             displayName = "launch.clip",
             mimeType = "video/mp4",
             byteCount = 8L * 1024 * 1024,
+            mediaDurationMillis = 45_000,
         )
 
         assertEquals("launch.mp4", decision.displayName)
         assertEquals(RemoteAttachmentKind.VIDEO, decision.kind)
-        assertEquals(null, decision.durationMillis)
+        assertEquals(45_000L, decision.durationMillis)
     }
 
     @Test
