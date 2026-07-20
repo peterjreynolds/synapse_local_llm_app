@@ -2,6 +2,7 @@ import {DocumentSnapshot, Timestamp, Transaction} from "firebase-admin/firestore
 import {HttpsError} from "firebase-functions/v2/https";
 import {
   buildCinderResponseMessageId,
+  cinderModeAllowsQueuedResponse,
   CINDER_AI_PROVENANCE,
   CINDER_AI_PROVIDER,
   CINDER_ASSISTANT_ID,
@@ -10,6 +11,7 @@ import {
   cinderTimestampSequence,
   CompleteCinderResponseCommand,
   digestCinderResponseBody,
+  resolveStoredCinderParticipationMode,
 } from "./cinderDomain.js";
 import {
   CinderJobDocument,
@@ -25,10 +27,13 @@ import {firebaseAdminFirestore} from "./firebaseAdmin.js";
 export interface CinderCompletionReceipt {
   completionState: "COMPLETE" | "SKIPPED";
   messageId: string | null;
-  reason: "PARTICIPANT_REMOVED" | "SOURCE_UNAVAILABLE" | null;
+  reason: CinderCompletionSkipReason | null;
   roomId: string;
   sequence: number | null;
 }
+
+type CinderCompletionSkipReason =
+  "MODE_DISALLOWS_RESPONSE" | "PARTICIPANT_REMOVED" | "SOURCE_UNAVAILABLE";
 
 export async function completeCinderResponse(
   command: CompleteCinderResponseCommand,
@@ -287,7 +292,7 @@ function humanRoomCompletionUnavailableReason(
   participantSnapshot: DocumentSnapshot,
   sourceSnapshot: DocumentSnapshot,
   job: CinderJobDocument,
-): "PARTICIPANT_REMOVED" | "SOURCE_UNAVAILABLE" | null {
+): CinderCompletionSkipReason | null {
   if (
     !roomSnapshot.exists ||
     roomSnapshot.get("deletedAt") !== null ||
@@ -308,6 +313,16 @@ function humanRoomCompletionUnavailableReason(
     participantSnapshot.get("provider") !== CINDER_AI_PROVIDER
   ) {
     return "PARTICIPANT_REMOVED";
+  }
+  const participationMode = resolveStoredCinderParticipationMode({
+    mode: participantSnapshot.get("mode"),
+    responsePolicy: participantSnapshot.get("responsePolicy"),
+  });
+  if (
+    participationMode === null ||
+    !cinderModeAllowsQueuedResponse(participationMode, job.explicitMention)
+  ) {
+    return "MODE_DISALLOWS_RESPONSE";
   }
   return null;
 }
@@ -336,7 +351,10 @@ function readIdempotentCompletionReceipt(
     typeof roomId !== "string" ||
     (messageId !== null && typeof messageId !== "string") ||
     (sequence !== null && (typeof sequence !== "number" || !Number.isSafeInteger(sequence))) ||
-    (reason !== null && reason !== "PARTICIPANT_REMOVED" && reason !== "SOURCE_UNAVAILABLE") ||
+    (reason !== null &&
+      reason !== "MODE_DISALLOWS_RESPONSE" &&
+      reason !== "PARTICIPANT_REMOVED" &&
+      reason !== "SOURCE_UNAVAILABLE") ||
     (completionState === "COMPLETE" && (messageId === null || sequence === null || reason !== null)) ||
     (completionState === "SKIPPED" && (messageId !== null || sequence !== null || reason === null))
   ) {
@@ -345,7 +363,7 @@ function readIdempotentCompletionReceipt(
   return {
     completionState,
     messageId: messageId as string | null,
-    reason: reason as "PARTICIPANT_REMOVED" | "SOURCE_UNAVAILABLE" | null,
+    reason: reason as CinderCompletionSkipReason | null,
     roomId,
     sequence: sequence as number | null,
   };

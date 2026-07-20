@@ -9,13 +9,15 @@ import {
   CINDER_AI_PROVIDER,
   CINDER_ASSISTANT_ID,
   CINDER_ASSISTANT_ROOM_ID,
+  CINDER_LEGACY_RESPONSE_POLICY,
   CINDER_PARTICIPANT_ID,
-  CINDER_RESPONSE_POLICY,
   CINDER_WORKER_PROTOCOL_VERSION,
+  CinderWorkState,
   isCinderWorkerAvailable,
   isTrustedCinderRemoteAiMessage,
   parseSubmitCinderMessageCommand,
   parseSyncCinderMessagesCommand,
+  resolveCinderWorkState,
 } from "./cinderDomain.js";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
 
@@ -24,6 +26,7 @@ export interface CinderAvailabilityReceipt {
   availableUntilMillis: number | null;
   checkedAtMillis: number;
   protocolVersion: typeof CINDER_WORKER_PROTOCOL_VERSION;
+  workState: CinderWorkState;
 }
 
 export interface CinderMessageSyncRecord {
@@ -50,8 +53,22 @@ export const getCinderAvailability = onCall(
     const {uid: actorUid} = await requireActiveAccount(request.auth);
     await enforceCallableRateLimit(actorUid, "cinderAvailabilityPolling");
     const checkedAt = Timestamp.now();
-    const statusSnapshot = await cinderWorkerStatusReference().get();
-    return readCinderAvailabilityReceipt(statusSnapshot, checkedAt.toMillis());
+    const [statusSnapshot, jobsSnapshot] = await Promise.all([
+      cinderWorkerStatusReference().get(),
+      firebaseAdminFirestore.collection("cinderResponseJobs")
+        .where("accountUid", "==", actorUid)
+        .limit(10)
+        .get(),
+    ]);
+    return readCinderAvailabilityReceipt(
+      statusSnapshot,
+      checkedAt.toMillis(),
+      resolveCinderWorkState(
+        jobsSnapshot.docs
+          .filter((job) => job.get("roomKind") === "ASSISTANT")
+          .map((job) => job.get("state")),
+      ),
+    );
   },
 );
 
@@ -183,7 +200,8 @@ export const submitCinderMessage = onCall(
         leaseId: null,
         participantActive: true,
         participantId: CINDER_PARTICIPANT_ID,
-        responsePolicy: CINDER_RESPONSE_POLICY,
+        participationMode: "AUTO",
+        responsePolicy: CINDER_LEGACY_RESPONSE_POLICY,
         roomId: CINDER_ASSISTANT_ROOM_ID,
         roomKind: "ASSISTANT",
         sourceBody: command.body,
@@ -238,6 +256,7 @@ export const syncCinderMessages = onCall(
 export function readCinderAvailabilityReceipt(
   statusSnapshot: DocumentSnapshot,
   checkedAtMillis: number,
+  workState: CinderWorkState = "IDLE",
 ): CinderAvailabilityReceipt {
   const availableUntil = statusSnapshot.get("availableUntil");
   const protocolVersion = statusSnapshot.get("protocolVersion");
@@ -253,6 +272,7 @@ export function readCinderAvailabilityReceipt(
     availableUntilMillis,
     checkedAtMillis,
     protocolVersion: CINDER_WORKER_PROTOCOL_VERSION,
+    workState,
   };
 }
 

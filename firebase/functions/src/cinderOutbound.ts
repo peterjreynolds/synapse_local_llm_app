@@ -2,15 +2,16 @@ import {DocumentSnapshot, Timestamp, Transaction} from "firebase-admin/firestore
 import {HttpsError} from "firebase-functions/v2/https";
 import {
   buildCinderOutboundMessageId,
+  cinderModeAllowsProactiveMessage,
   CINDER_AI_PROVENANCE,
   CINDER_AI_PROVIDER,
   CINDER_ASSISTANT_ID,
   CINDER_ASSISTANT_ROOM_ID,
   CINDER_PARTICIPANT_ID,
-  CINDER_RESPONSE_POLICY,
   cinderTimestampSequence,
   digestCinderOutboundMessage,
   digestCinderResponseBody,
+  resolveStoredCinderParticipationMode,
   SendCinderOutboundMessageCommand,
 } from "./cinderDomain.js";
 import {cinderConversationReference} from "./cinderJob.js";
@@ -195,6 +196,10 @@ function requireActiveHumanRoomTarget(
 ): void {
   const expectedRoomKind = command.roomId.startsWith("direct_") ? "DIRECT" : "GROUP";
   const activeMemberIds = roomSnapshot.get("activeMemberIds");
+  const participationMode = resolveStoredCinderParticipationMode({
+    mode: participantSnapshot.get("mode"),
+    responsePolicy: participantSnapshot.get("responsePolicy"),
+  });
   if (
     !roomSnapshot.exists ||
     roomSnapshot.get("deletedAt") !== null ||
@@ -210,7 +215,8 @@ function requireActiveHumanRoomTarget(
     participantSnapshot.get("participantId") !== CINDER_PARTICIPANT_ID ||
     participantSnapshot.get("provenance") !== CINDER_AI_PROVENANCE ||
     participantSnapshot.get("provider") !== CINDER_AI_PROVIDER ||
-    participantSnapshot.get("responsePolicy") !== CINDER_RESPONSE_POLICY
+    participationMode === null ||
+    !cinderModeAllowsProactiveMessage(participationMode)
   ) {
     outboundTargetUnavailable();
   }

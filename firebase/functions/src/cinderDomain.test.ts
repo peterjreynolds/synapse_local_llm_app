@@ -6,14 +6,16 @@ import {
   buildCinderOutboundMessageId,
   buildCinderResponseMessageId,
   canManageCinderParticipant,
+  cinderModeAllowsProactiveMessage,
+  cinderModeAllowsQueuedResponse,
   cinderRecordsAfterCursor,
   cinderTimestampSequence,
   CINDER_AI_PROVENANCE,
   CINDER_AI_PROVIDER,
   CINDER_ASSISTANT_ID,
   CINDER_ASSISTANT_ROOM_ID,
+  CINDER_LEGACY_RESPONSE_POLICY,
   CINDER_PARTICIPANT_ID,
-  CINDER_RESPONSE_POLICY,
   digestCinderLeaseToken,
   digestCinderOutboundMessage,
   digestCinderResponseBody,
@@ -23,10 +25,13 @@ import {
   isTrustedCinderRemoteAiMessage,
   MAXIMUM_CINDER_ATTEMPTS,
   parseFailCinderResponseCommand,
+  parseCinderWorkerClaimCommand,
   parseSendCinderOutboundMessageCommand,
   parseSetCinderParticipantCommand,
   parseSubmitCinderMessageCommand,
   parseSyncCinderMessagesCommand,
+  resolveStoredCinderParticipationMode,
+  resolveCinderWorkState,
   shouldRetryCinderFailure,
 } from "./cinderDomain.js";
 
@@ -123,6 +128,34 @@ test("worker outbound commands normalize text and derive stable idempotent messa
   );
 });
 
+test("worker claim capabilities default safely and opt into automatic response jobs", () => {
+  assert.deepEqual(parseCinderWorkerClaimCommand({workerId: "openclaw-cinder-legacy"}), {
+    supportedResponsePolicies: ["MENTION_ONLY"],
+    workerId: "openclaw-cinder-legacy",
+  });
+  assert.deepEqual(
+    parseCinderWorkerClaimCommand({
+      supportedResponsePolicies: ["MENTION_ONLY", "AUTOMATIC"],
+      workerId: "openclaw-cinder-modern",
+    }),
+    {
+      supportedResponsePolicies: ["MENTION_ONLY", "AUTOMATIC"],
+      workerId: "openclaw-cinder-modern",
+    },
+  );
+  assert.throws(
+    () => parseCinderWorkerClaimCommand({supportedResponsePolicies: ["UNKNOWN"], workerId: "worker"}),
+    {code: "invalid-argument"},
+  );
+  assert.throws(
+    () => parseCinderWorkerClaimCommand({
+      supportedResponsePolicies: ["MENTION_ONLY", "MENTION_ONLY"],
+      workerId: "worker",
+    }),
+    {code: "invalid-argument"},
+  );
+});
+
 test("explicit Cinder mention detection rejects substrings, email text, and lookalike spoofing", () => {
   assert.equal(hasExplicitCinderMention("@Cinder please answer"), true);
   assert.equal(hasExplicitCinderMention("Hi, @cinder: please answer"), true);
@@ -141,12 +174,17 @@ test("human room queue eligibility requires an active trusted participant and ex
     participantId: CINDER_PARTICIPANT_ID,
     participantKind: "REMOTE_AI",
     participantProvenance: CINDER_AI_PROVENANCE,
-    responsePolicy: CINDER_RESPONSE_POLICY,
+    participationMode: "MENTION",
     senderActive: true,
   };
 
   assert.equal(isCinderHumanRoomQueueEligible(eligibleInput), true);
   assert.equal(isCinderHumanRoomQueueEligible({...eligibleInput, body: "ordinary message"}), false);
+  assert.equal(
+    isCinderHumanRoomQueueEligible({...eligibleInput, body: "ordinary message", participationMode: "AUTO"}),
+    true,
+  );
+  assert.equal(isCinderHumanRoomQueueEligible({...eligibleInput, participationMode: "SILENT"}), false);
   assert.equal(isCinderHumanRoomQueueEligible({...eligibleInput, participantActive: false}), false);
   assert.equal(isCinderHumanRoomQueueEligible({...eligibleInput, senderActive: false}), false);
   assert.equal(isCinderHumanRoomQueueEligible({...eligibleInput, participantId: "forged"}), false);
@@ -160,9 +198,40 @@ test("participant management follows direct-member and group-administrator permi
   assert.equal(canManageCinderParticipant("ASSISTANT", "OWNER"), false);
 
   assert.deepEqual(
-    parseSetCinderParticipantCommand({active: true, roomId: `group_${"a".repeat(32)}`}),
-    {active: true, roomId: `group_${"a".repeat(32)}`},
+    parseSetCinderParticipantCommand({
+      active: true,
+      expectedRevision: 4,
+      mode: "AUTO",
+      roomId: `group_${"a".repeat(32)}`,
+    }),
+    {active: true, expectedRevision: 4, mode: "AUTO", roomId: `group_${"a".repeat(32)}`},
   );
+  assert.deepEqual(
+    parseSetCinderParticipantCommand({active: false, roomId: `group_${"a".repeat(32)}`}),
+    {active: false, expectedRevision: null, mode: null, roomId: `group_${"a".repeat(32)}`},
+  );
+  assert.throws(
+    () => parseSetCinderParticipantCommand({mode: "AUTO", roomId: `group_${"a".repeat(32)}`}),
+    {code: "invalid-argument"},
+  );
+});
+
+test("Cinder modes preserve legacy state and distinguish queued from proactive delivery", () => {
+  assert.equal(
+    resolveStoredCinderParticipationMode({mode: undefined, responsePolicy: CINDER_LEGACY_RESPONSE_POLICY}),
+    "MENTION",
+  );
+  assert.equal(resolveStoredCinderParticipationMode({mode: "SILENT", responsePolicy: "MENTION_ONLY"}), "SILENT");
+  assert.equal(resolveStoredCinderParticipationMode({mode: "UNKNOWN", responsePolicy: "MENTION_ONLY"}), null);
+  assert.equal(cinderModeAllowsQueuedResponse("SILENT", true), false);
+  assert.equal(cinderModeAllowsQueuedResponse("MENTION", true), true);
+  assert.equal(cinderModeAllowsQueuedResponse("MENTION", false), false);
+  assert.equal(cinderModeAllowsQueuedResponse("AUTO", false), true);
+  assert.equal(cinderModeAllowsProactiveMessage("MENTION"), false);
+  assert.equal(cinderModeAllowsProactiveMessage("AUTO"), true);
+  assert.equal(resolveCinderWorkState([]), "IDLE");
+  assert.equal(resolveCinderWorkState(["PENDING"]), "QUEUED");
+  assert.equal(resolveCinderWorkState(["PENDING", "CLAIMED"]), "THINKING");
 });
 
 test("claim eligibility recovers expired leases and bounds attempts and retry", () => {

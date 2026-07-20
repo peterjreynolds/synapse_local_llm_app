@@ -14,6 +14,10 @@ const FUNCTIONS_REGION = "northamerica-northeast1";
 const AUTH_EMULATOR_URL = "http://127.0.0.1:9099";
 const WORKER_ENDPOINT =
   `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/sendCinderOutboundMessage`;
+const CLAIM_ENDPOINT =
+  `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/claimCinderResponse`;
+const SKIP_ENDPOINT =
+  `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/skipCinderResponseJob`;
 const WORKER_TOKEN = "cinder-outbound-emulator-worker-token-1234567890";
 const WORKER_ID = "openclaw-cinder-emulator";
 const PASSWORD = "cinder outbound emulator password";
@@ -86,13 +90,17 @@ function call(client, name) {
 }
 
 async function sendOutbound(command, token = WORKER_TOKEN) {
-  const response = await fetch(WORKER_ENDPOINT, {
+  return workerRequest(WORKER_ENDPOINT, {workerId: WORKER_ID, ...command}, token);
+}
+
+async function workerRequest(endpoint, body, token = WORKER_TOKEN) {
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({workerId: WORKER_ID, ...command}),
+    body: JSON.stringify(body),
   });
   return {body: await response.json(), status: response.status};
 }
@@ -192,9 +200,20 @@ test("human-room outbound delivery follows one room-scoped participant revision 
   });
   const roomId = created.data.roomId;
 
-  const added = await call(peterClient, "setCinderParticipant")({active: true, roomId});
-  const duplicateAdd = await call(peterClient, "setCinderParticipant")({active: true, roomId});
+  const added = await call(peterClient, "setCinderParticipant")({
+    active: true,
+    expectedRevision: 0,
+    mode: "AUTO",
+    roomId,
+  });
+  const duplicateAdd = await call(peterClient, "setCinderParticipant")({
+    active: true,
+    expectedRevision: 0,
+    mode: "AUTO",
+    roomId,
+  });
   assert.equal(added.data.revision, 1);
+  assert.equal(added.data.mode, "AUTO");
   assert.deepEqual(duplicateAdd.data, added.data);
   assert.equal(await participantAuditCount(roomId), 1);
 
@@ -216,14 +235,48 @@ test("human-room outbound delivery follows one room-scoped participant revision 
   const trishClient = await signIn("trish", trish);
   const sharedState = await call(trishClient, "getCinderParticipant")({roomId});
   assert.equal(sharedState.data.active, true);
+  assert.equal(sharedState.data.mode, "AUTO");
   assert.equal(sharedState.data.revision, 1);
   assert.equal(sharedState.data.canManage, false);
 
-  const removed = await call(peterClient, "setCinderParticipant")({active: false, roomId});
-  const duplicateRemove = await call(peterClient, "setCinderParticipant")({active: false, roomId});
-  assert.equal(removed.data.revision, 2);
+  const mentionMode = await call(peterClient, "setCinderParticipant")({
+    active: true,
+    expectedRevision: 1,
+    mode: "MENTION",
+    roomId,
+  });
+  assert.equal(mentionMode.data.revision, 2);
+  const mentionRejected = await sendOutbound({
+    accountUid: peter.uid,
+    body: "Mention-only rooms reject proactive delivery.",
+    idempotencyKey: "c".repeat(64),
+    roomId,
+  });
+  assert.deepEqual(mentionRejected, {body: {error: "TARGET_UNAVAILABLE"}, status: 404});
+  await assert.rejects(
+    call(peterClient, "setCinderParticipant")({
+      active: true,
+      expectedRevision: 1,
+      mode: "SILENT",
+      roomId,
+    }),
+    (error) => error.code === "functions/aborted",
+  );
+  const removed = await call(peterClient, "setCinderParticipant")({
+    active: false,
+    expectedRevision: 2,
+    mode: "MENTION",
+    roomId,
+  });
+  const duplicateRemove = await call(peterClient, "setCinderParticipant")({
+    active: false,
+    expectedRevision: 2,
+    mode: "MENTION",
+    roomId,
+  });
+  assert.equal(removed.data.revision, 3);
   assert.deepEqual(duplicateRemove.data, removed.data);
-  assert.equal(await participantAuditCount(roomId), 2);
+  assert.equal(await participantAuditCount(roomId), 3);
   assert.deepEqual(
     await sendOutbound({
       accountUid: peter.uid,
@@ -236,12 +289,108 @@ test("human-room outbound delivery follows one room-scoped participant revision 
   const rejected = await sendOutbound({
     accountUid: peter.uid,
     body: "This must not be delivered.",
-    idempotencyKey: "c".repeat(64),
+    idempotencyKey: "d".repeat(64),
     roomId,
   });
   assert.deepEqual(rejected, {body: {error: "TARGET_UNAVAILABLE"}, status: 404});
   assert.equal(
-    (await adminFirestore.doc(`rooms/${roomId}/messages/cinder-${"c".repeat(64)}`).get()).exists,
+    (await adminFirestore.doc(`rooms/${roomId}/messages/cinder-${"d".repeat(64)}`).get()).exists,
     false,
   );
+});
+
+test("Silent, Mention, and Auto queue only eligible work and capability-gate automatic claims", async () => {
+  const peter = await seedActiveAccount("peter", "OWNER");
+  const trish = await seedActiveAccount("trish");
+  const peterClient = await signIn("peter", peter);
+  const created = await call(peterClient, "createGroupRoom")({
+    memberUids: [trish.uid],
+    title: "Cinder modes",
+  });
+  const roomId = created.data.roomId;
+  const silent = await call(peterClient, "setCinderParticipant")({
+    active: true,
+    expectedRevision: 0,
+    mode: "SILENT",
+    roomId,
+  });
+  assert.equal(silent.data.mode, "SILENT");
+
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "@Cinder this room is intentionally quiet.",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "silent-source",
+    replyToMessageId: null,
+    roomId,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  assert.equal(
+    (await adminFirestore.collection("cinderResponseJobs").where("roomId", "==", roomId).get()).size,
+    0,
+  );
+
+  const mention = await call(peterClient, "setCinderParticipant")({
+    active: true,
+    expectedRevision: silent.data.revision,
+    mode: "MENTION",
+    roomId,
+  });
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "Ordinary room context does not summon Cinder.",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "mention-ineligible-source",
+    replyToMessageId: null,
+    roomId,
+  });
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "@Cinder summarize the current room context.",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "mention-source",
+    replyToMessageId: null,
+    roomId,
+  });
+  await waitForCondition(async () => (
+    await adminFirestore.collection("cinderResponseJobs").where("roomId", "==", roomId).get()
+  ).size === 1);
+  const mentionClaim = await workerRequest(CLAIM_ENDPOINT, {workerId: `${WORKER_ID}-legacy`});
+  assert.equal(mentionClaim.status, 200);
+  assert.equal(mentionClaim.body.result.claim.explicitMention, true);
+  assert.equal(mentionClaim.body.result.claim.responsePolicy, "MENTION_ONLY");
+  await workerRequest(SKIP_ENDPOINT, {
+    jobId: mentionClaim.body.result.claim.jobId,
+    leaseId: mentionClaim.body.result.claim.leaseId,
+    leaseToken: mentionClaim.body.result.claim.leaseToken,
+    reason: "DISPATCH_SKIPPED",
+    workerId: `${WORKER_ID}-legacy`,
+  });
+
+  await call(peterClient, "setCinderParticipant")({
+    active: true,
+    expectedRevision: mention.data.revision,
+    mode: "AUTO",
+    roomId,
+  });
+  await call(peterClient, "sendRemoteMessage")({
+    attachmentIds: [],
+    body: "Automatic mode can respond without a mention.",
+    clientCreatedAtMillis: Date.now(),
+    messageId: "auto-source",
+    replyToMessageId: null,
+    roomId,
+  });
+  await waitForCondition(async () => (
+    await adminFirestore.collection("cinderResponseJobs").where("roomId", "==", roomId).get()
+  ).size === 1);
+  const legacyClaim = await workerRequest(CLAIM_ENDPOINT, {workerId: `${WORKER_ID}-legacy`});
+  assert.equal(legacyClaim.body.result.claim, null);
+  const automaticClaim = await workerRequest(CLAIM_ENDPOINT, {
+    supportedResponsePolicies: ["MENTION_ONLY", "AUTOMATIC"],
+    workerId: `${WORKER_ID}-modern`,
+  });
+  assert.equal(automaticClaim.status, 200);
+  assert.equal(automaticClaim.body.result.claim.explicitMention, false);
+  assert.equal(automaticClaim.body.result.claim.responsePolicy, "AUTOMATIC");
 });

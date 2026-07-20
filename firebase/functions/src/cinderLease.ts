@@ -3,13 +3,15 @@ import {DocumentSnapshot, Timestamp, Transaction} from "firebase-admin/firestore
 import {HttpsError} from "firebase-functions/v2/https";
 import {
   CinderFailureCode,
+  CinderResponsePolicy,
+  CinderWorkerClaimCommand,
   CinderWorkerSkipReason,
+  cinderModeAllowsQueuedResponse,
   CINDER_AI_PROVENANCE,
   CINDER_AI_PROVIDER,
   CINDER_ASSISTANT_ID,
   CINDER_LEASE_MILLIS,
   CINDER_PARTICIPANT_ID,
-  CINDER_RESPONSE_POLICY,
   CINDER_WORKER_AVAILABILITY_MILLIS,
   CINDER_WORKER_PROTOCOL_VERSION,
   digestCinderLeaseToken,
@@ -17,6 +19,7 @@ import {
   MAXIMUM_CINDER_ATTEMPTS,
   shouldRetryCinderFailure,
   SkipCinderResponseCommand,
+  resolveStoredCinderParticipationMode,
 } from "./cinderDomain.js";
 import {CinderClaimContextMessage, loadCinderJobContext} from "./cinderContext.js";
 import {
@@ -46,7 +49,7 @@ export interface CinderResponseClaim {
   provenance: typeof CINDER_AI_PROVENANCE;
   provider: typeof CINDER_AI_PROVIDER;
   recentMessages: CinderClaimContextMessage[];
-  responsePolicy: typeof CINDER_RESPONSE_POLICY;
+  responsePolicy: CinderResponsePolicy;
   roomId: string;
   roomKind: "ASSISTANT" | "DIRECT" | "GROUP";
   sourceMessage: CinderClaimContextMessage;
@@ -58,7 +61,7 @@ export interface CinderFailureReceipt {
 }
 
 export async function claimNextCinderResponse(
-  workerId: string,
+  command: CinderWorkerClaimCommand,
 ): Promise<{claim: CinderResponseClaim | null; protocolVersion: number}> {
   const heartbeatAt = Timestamp.now();
   await recordCinderWorkerHeartbeat(heartbeatAt);
@@ -66,7 +69,7 @@ export async function claimNextCinderResponse(
   for (const candidate of candidates) {
     const leaseId = randomUUID();
     const leaseToken = randomBytes(32).toString("base64url");
-    const claimedJob = await tryClaimCinderJob(candidate, workerId, leaseId, leaseToken);
+    const claimedJob = await tryClaimCinderJob(candidate, command, leaseId, leaseToken);
     if (claimedJob === null) continue;
     const context = await loadCinderJobContext(claimedJob);
     return {
@@ -84,7 +87,7 @@ export async function claimNextCinderResponse(
         provenance: CINDER_AI_PROVENANCE,
         provider: CINDER_AI_PROVIDER,
         recentMessages: context.recentMessages,
-        responsePolicy: CINDER_RESPONSE_POLICY,
+        responsePolicy: claimedJob.responsePolicy,
         roomId: claimedJob.roomId,
         roomKind: claimedJob.roomKind,
         sourceMessage: context.sourceMessage,
@@ -221,7 +224,7 @@ async function loadCinderClaimCandidates(now: Timestamp): Promise<DocumentSnapsh
 
 async function tryClaimCinderJob(
   candidate: DocumentSnapshot,
-  workerId: string,
+  command: CinderWorkerClaimCommand,
   leaseId: string,
   leaseToken: string,
 ): Promise<ReturnType<typeof requireClaimedCinderJob> | null> {
@@ -251,6 +254,7 @@ async function tryClaimCinderJob(
       transaction.delete(jobReference);
       return;
     }
+    if (!command.supportedResponsePolicies.includes(job.responsePolicy)) return;
     const claimedAt = Timestamp.now();
     if (job.attemptCount >= MAXIMUM_CINDER_ATTEMPTS) {
       if (
@@ -285,7 +289,7 @@ async function tryClaimCinderJob(
       leaseId,
       state: "CLAIMED",
       updatedAt: claimedAt,
-      workerId,
+      workerId: command.workerId,
     });
     claimedJob = {
       ...job,
@@ -294,7 +298,7 @@ async function tryClaimCinderJob(
       leaseExpiresAt,
       leaseId,
       state: "CLAIMED",
-      workerId,
+      workerId: command.workerId,
     };
   });
   return claimedJob;
@@ -327,6 +331,10 @@ async function readCinderJobSourceState(
   ) {
     return "SOURCE_UNAVAILABLE";
   }
+  const participationMode = resolveStoredCinderParticipationMode({
+    mode: participantSnapshot.get("mode"),
+    responsePolicy: participantSnapshot.get("responsePolicy"),
+  });
   if (
     !participantSnapshot.exists ||
     participantSnapshot.get("active") !== true ||
@@ -334,7 +342,8 @@ async function readCinderJobSourceState(
     participantSnapshot.get("assistantId") !== CINDER_ASSISTANT_ID ||
     participantSnapshot.get("provenance") !== CINDER_AI_PROVENANCE ||
     participantSnapshot.get("provider") !== CINDER_AI_PROVIDER ||
-    participantSnapshot.get("responsePolicy") !== CINDER_RESPONSE_POLICY
+    participationMode === null ||
+    !cinderModeAllowsQueuedResponse(participationMode, job.explicitMention)
   ) {
     return "PARTICIPANT_REMOVED";
   }

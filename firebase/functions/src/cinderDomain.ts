@@ -6,7 +6,8 @@ export const CINDER_ASSISTANT_ROOM_ID = "assistant_cinder";
 export const CINDER_PARTICIPANT_ID = "participant-cinder-remote-ai";
 export const CINDER_AI_PROVENANCE = "REMOTE_HOSTED";
 export const CINDER_AI_PROVIDER = "OPENCLAW_CINDER";
-export const CINDER_RESPONSE_POLICY = "MENTION_ONLY";
+export const CINDER_LEGACY_RESPONSE_POLICY = "MENTION_ONLY";
+export const DEFAULT_CINDER_PARTICIPATION_MODE = "MENTION";
 export const CINDER_WORKER_PROTOCOL_VERSION = 1;
 export const CINDER_LEASE_MILLIS = 2 * 60 * 1_000;
 export const CINDER_WORKER_AVAILABILITY_MILLIS = 2 * 60 * 1_000;
@@ -15,6 +16,9 @@ export const MAXIMUM_CINDER_CONTEXT_MESSAGES = 12;
 export const MAXIMUM_CINDER_MESSAGE_LENGTH = 4_000;
 
 export type CinderRoomKind = "ASSISTANT" | "DIRECT" | "GROUP";
+export type CinderParticipationMode = "SILENT" | "MENTION" | "AUTO";
+export type CinderResponsePolicy = "MENTION_ONLY" | "AUTOMATIC";
+export type CinderWorkState = "IDLE" | "QUEUED" | "THINKING";
 export type CinderJobState = "PENDING" | "CLAIMED";
 export type CinderFailureCode =
   "DISPATCH_FAILED" | "OPENCLAW_UNAVAILABLE" | "TIMEOUT" | "WORKER_SHUTDOWN";
@@ -32,13 +36,20 @@ export interface SubmitCinderMessageCommand {
 }
 
 export interface SetCinderParticipantCommand {
-  active: boolean;
+  active: boolean | null;
+  expectedRevision: number | null;
+  mode: CinderParticipationMode | null;
   roomId: string;
 }
 
 export interface SyncCinderMessagesCommand {
   afterSequence: number;
   limit: number;
+}
+
+export interface CinderWorkerClaimCommand {
+  supportedResponsePolicies: CinderResponsePolicy[];
+  workerId: string;
 }
 
 export interface CinderWorkerLeaseCommand {
@@ -105,9 +116,17 @@ export function parseSubmitCinderMessageCommand(input: unknown): SubmitCinderMes
 
 export function parseSetCinderParticipantCommand(input: unknown): SetCinderParticipantCommand {
   const command = requireRecord(input);
-  if (typeof command.active !== "boolean") invalidCinderCommand();
+  const hasMode = Object.prototype.hasOwnProperty.call(command, "mode");
+  const hasActive = Object.prototype.hasOwnProperty.call(command, "active");
+  if (!hasMode && !hasActive) invalidCinderCommand();
+  const mode = hasMode ? parseCinderParticipationMode(command.mode) : null;
+  const active = hasActive ? command.active : null;
+  if (active !== null && typeof active !== "boolean") invalidCinderCommand();
+  const expectedRevision = hasMode ? parseCinderExpectedRevision(command.expectedRevision) : null;
   return {
-    active: command.active,
+    active: active as boolean | null,
+    expectedRevision,
+    mode,
     roomId: parseHumanRoomId(command.roomId),
   };
 }
@@ -135,9 +154,23 @@ export function parseSyncCinderMessagesCommand(input: unknown): SyncCinderMessag
   return {afterSequence, limit};
 }
 
-export function parseCinderWorkerClaimCommand(input: unknown): {workerId: string} {
+export function parseCinderWorkerClaimCommand(input: unknown): CinderWorkerClaimCommand {
   const command = requireRecord(input);
-  return {workerId: parseWorkerId(command.workerId)};
+  const supportedResponsePolicies = command.supportedResponsePolicies ??
+    [CINDER_LEGACY_RESPONSE_POLICY];
+  if (
+    !Array.isArray(supportedResponsePolicies) ||
+    supportedResponsePolicies.length < 1 ||
+    supportedResponsePolicies.length > 2 ||
+    supportedResponsePolicies.some((policy) => policy !== "MENTION_ONLY" && policy !== "AUTOMATIC") ||
+    new Set(supportedResponsePolicies).size !== supportedResponsePolicies.length
+  ) {
+    invalidCinderCommand();
+  }
+  return {
+    supportedResponsePolicies: supportedResponsePolicies as CinderResponsePolicy[],
+    workerId: parseWorkerId(command.workerId),
+  };
 }
 
 export function parseCompleteCinderResponseCommand(input: unknown): CompleteCinderResponseCommand {
@@ -199,19 +232,67 @@ export function isCinderHumanRoomQueueEligible(input: {
   participantId: unknown;
   participantKind: unknown;
   participantProvenance: unknown;
-  responsePolicy: unknown;
+  participationMode: unknown;
   senderActive: boolean;
 }): boolean {
-  return input.authorKind === "HUMAN" &&
-    typeof input.body === "string" &&
-    input.body.length > 0 &&
-    input.participantActive &&
-    input.participantId === CINDER_PARTICIPANT_ID &&
-    input.participantKind === "REMOTE_AI" &&
-    input.participantProvenance === CINDER_AI_PROVENANCE &&
-    input.responsePolicy === CINDER_RESPONSE_POLICY &&
-    input.senderActive &&
-    hasExplicitCinderMention(input.body);
+  if (input.authorKind !== "HUMAN" ||
+    typeof input.body !== "string" ||
+    input.body.length === 0 ||
+    !input.participantActive ||
+    input.participantId !== CINDER_PARTICIPANT_ID ||
+    input.participantKind !== "REMOTE_AI" ||
+    input.participantProvenance !== CINDER_AI_PROVENANCE ||
+    !input.senderActive
+  ) {
+    return false;
+  }
+  return input.participationMode === "AUTO" ||
+    (input.participationMode === "MENTION" && hasExplicitCinderMention(input.body));
+}
+
+export function cinderResponsePolicyForMode(
+  mode: Exclude<CinderParticipationMode, "SILENT">,
+): CinderResponsePolicy {
+  return mode === "AUTO" ? "AUTOMATIC" : "MENTION_ONLY";
+}
+
+export function resolveStoredCinderParticipationMode(input: {
+  mode: unknown;
+  responsePolicy: unknown;
+}): CinderParticipationMode | null {
+  if (isCinderParticipationMode(input.mode)) return input.mode;
+  return input.mode === undefined && input.responsePolicy === CINDER_LEGACY_RESPONSE_POLICY ?
+    DEFAULT_CINDER_PARTICIPATION_MODE : null;
+}
+
+export function cinderModeAllowsQueuedResponse(
+  mode: CinderParticipationMode,
+  explicitMention: boolean,
+): boolean {
+  return mode === "AUTO" || (mode === "MENTION" && explicitMention);
+}
+
+export function cinderModeAllowsProactiveMessage(mode: CinderParticipationMode): boolean {
+  return mode === "AUTO";
+}
+
+export function resolveCinderWorkState(jobStates: readonly unknown[]): CinderWorkState {
+  if (jobStates.some((state) => state === "CLAIMED")) return "THINKING";
+  if (jobStates.some((state) => state === "PENDING")) return "QUEUED";
+  return "IDLE";
+}
+
+export function isCinderParticipationMode(value: unknown): value is CinderParticipationMode {
+  return value === "SILENT" || value === "MENTION" || value === "AUTO";
+}
+
+/*
+ * Participant documents retain responsePolicy=MENTION_ONLY so rolling clients older than the
+ * mode contract can continue to read participant state. `mode` is authoritative for all new
+ * queue, claim, completion, and outbound decisions.
+ */
+export function isLegacyCinderParticipantResponsePolicy(value: unknown): boolean {
+  return value === CINDER_LEGACY_RESPONSE_POLICY;
 }
 
 export function canManageCinderParticipant(
@@ -419,6 +500,22 @@ function parseWorkerLeaseCommand(command: Record<string, unknown>): CinderWorker
     leaseToken: parseLeaseToken(command.leaseToken),
     workerId: parseWorkerId(command.workerId),
   };
+}
+
+function parseCinderParticipationMode(value: unknown): CinderParticipationMode {
+  if (!isCinderParticipationMode(value)) invalidCinderCommand();
+  return value;
+}
+
+function parseCinderExpectedRevision(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0
+  ) {
+    invalidCinderCommand();
+  }
+  return value;
 }
 
 function parseHumanRoomId(value: unknown): string {

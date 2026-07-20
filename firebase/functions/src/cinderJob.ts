@@ -2,12 +2,16 @@ import {DocumentReference, DocumentSnapshot, Timestamp} from "firebase-admin/fir
 import {HttpsError} from "firebase-functions/v2/https";
 import {
   buildCinderJobId,
+  cinderResponsePolicyForMode,
+  CinderParticipationMode,
+  CinderResponsePolicy,
   CinderJobState,
   CinderRoomKind,
   CINDER_ASSISTANT_ID,
+  CINDER_LEGACY_RESPONSE_POLICY,
   CINDER_PARTICIPANT_ID,
-  CINDER_RESPONSE_POLICY,
   digestCinderLeaseToken,
+  isCinderParticipationMode,
   isCinderJobClaimable,
   MAXIMUM_CINDER_ATTEMPTS,
 } from "./cinderDomain.js";
@@ -24,6 +28,8 @@ export interface CinderJobDocument {
   leaseExpiresAt: Timestamp | null;
   leaseId: string | null;
   participantActive: true;
+  participationMode: Exclude<CinderParticipationMode, "SILENT">;
+  responsePolicy: CinderResponsePolicy;
   roomId: string;
   roomKind: CinderRoomKind;
   sourceBody: string;
@@ -57,6 +63,8 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
   const leaseExpiresAt = snapshot.get("leaseExpiresAt");
   const leaseId = snapshot.get("leaseId");
   const participantActive = snapshot.get("participantActive");
+  const persistedParticipationMode = snapshot.get("participationMode");
+  const responsePolicy = snapshot.get("responsePolicy");
   const roomId = snapshot.get("roomId");
   const roomKind = snapshot.get("roomKind");
   const sourceBody = snapshot.get("sourceBody");
@@ -68,6 +76,17 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
   const sourceServerCreatedAt = snapshot.get("sourceServerCreatedAt");
   const state = snapshot.get("state");
   const workerId = snapshot.get("workerId") ?? null;
+  const participationMode = persistedParticipationMode === undefined &&
+      responsePolicy === CINDER_LEGACY_RESPONSE_POLICY ?
+    roomKind === "ASSISTANT" ? "AUTO" : "MENTION" :
+    isCinderParticipationMode(persistedParticipationMode) && persistedParticipationMode !== "SILENT" ?
+      persistedParticipationMode : null;
+  const expectedResponsePolicy = participationMode === null ? null :
+    roomKind === "ASSISTANT" ? CINDER_LEGACY_RESPONSE_POLICY :
+      cinderResponsePolicyForMode(participationMode);
+  const legacyAssistantPolicy = persistedParticipationMode === undefined &&
+    roomKind === "ASSISTANT" &&
+    responsePolicy === CINDER_LEGACY_RESPONSE_POLICY;
   const leaseStateIsValid = state === "PENDING" ?
     leaseDigest === null && leaseExpiresAt === null && leaseId === null && workerId === null :
     state === "CLAIMED" &&
@@ -79,7 +98,8 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
   if (
     snapshot.get("assistantId") !== CINDER_ASSISTANT_ID ||
     snapshot.get("participantId") !== CINDER_PARTICIPANT_ID ||
-    snapshot.get("responsePolicy") !== CINDER_RESPONSE_POLICY ||
+    participationMode === null ||
+    (responsePolicy !== expectedResponsePolicy && !legacyAssistantPolicy) ||
     typeof accountUid !== "string" ||
     !/^[A-Za-z0-9_-]{1,128}$/.test(accountUid) ||
     typeof attemptCount !== "number" ||
@@ -90,7 +110,8 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
     !/^[a-f0-9]{64}$/.test(contentDigest) ||
     !(createdAt instanceof Timestamp) ||
     typeof explicitMention !== "boolean" ||
-    (roomKind !== "ASSISTANT" && explicitMention !== true) ||
+    (roomKind === "ASSISTANT" && explicitMention !== false) ||
+    (roomKind !== "ASSISTANT" && participationMode === "MENTION" && explicitMention !== true) ||
     typeof idempotencyKey !== "string" ||
     !/^[A-Za-z0-9_-]{1,128}$/.test(idempotencyKey) ||
     participantActive !== true ||
@@ -136,6 +157,8 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
     leaseExpiresAt: leaseExpiresAt as Timestamp | null,
     leaseId: leaseId as string | null,
     participantActive: true,
+    participationMode,
+    responsePolicy: responsePolicy as CinderResponsePolicy,
     roomId,
     roomKind,
     sourceBody,
@@ -236,6 +259,8 @@ export function terminalCinderAuditFields(
     leaseDigest: job.leaseDigest,
     leaseId: job.leaseId,
     participantId: CINDER_PARTICIPANT_ID,
+    participationMode: job.participationMode,
+    responsePolicy: job.responsePolicy,
     roomId: job.roomId,
     roomKind: job.roomKind,
     sourceMessageId: job.sourceMessageId,

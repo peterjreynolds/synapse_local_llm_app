@@ -96,7 +96,7 @@ function operationForName(operationName: CinderWorkerOperationName): CinderWorke
   case "claim":
     return async (body) => {
       const command = parseCinderWorkerClaimCommand(body);
-      return claimNextCinderResponse(command.workerId);
+      return claimNextCinderResponse(command);
     };
   case "complete":
     return async (body) => completeCinderResponse(parseCompleteCinderResponseCommand(body));

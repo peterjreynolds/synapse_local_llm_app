@@ -3,13 +3,15 @@ import {onDocumentCreated} from "firebase-functions/v2/firestore";
 import {
   buildCinderHumanRoomContentDigest,
   buildCinderJobId,
+  cinderResponsePolicyForMode,
   CINDER_AI_PROVIDER,
   CINDER_ASSISTANT_ID,
   CINDER_PARTICIPANT_ID,
-  CINDER_RESPONSE_POLICY,
   cinderTimestampSequence,
+  hasExplicitCinderMention,
   isCinderHumanRoomQueueEligible,
   normalizeCinderMessageBody,
+  resolveStoredCinderParticipationMode,
 } from "./cinderDomain.js";
 import {FIREBASE_FUNCTIONS_REGION, firebaseAdminFirestore} from "./firebaseAdmin.js";
 
@@ -97,6 +99,10 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
         profileSnapshot.get("allowed") === true &&
         profileSnapshot.get("accountState") === "ACTIVE" &&
         profileSnapshot.get("mustChangePassword") === false;
+      const participationMode = resolveStoredCinderParticipationMode({
+        mode: participantSnapshot.get("mode"),
+        responsePolicy: participantSnapshot.get("responsePolicy"),
+      });
       if (!isCinderHumanRoomQueueEligible({
         authorKind,
         body: normalizedBody,
@@ -104,11 +110,12 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
         participantId: participantSnapshot.get("participantId"),
         participantKind: participantSnapshot.get("kind"),
         participantProvenance: participantSnapshot.get("provenance"),
-        responsePolicy: participantSnapshot.get("responsePolicy"),
+        participationMode,
         senderActive,
       })) {
         return;
       }
+      if (participationMode !== "MENTION" && participationMode !== "AUTO") return;
       if (
         participantSnapshot.get("assistantId") !== CINDER_ASSISTANT_ID ||
         participantSnapshot.get("provider") !== CINDER_AI_PROVIDER
@@ -145,13 +152,14 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
         sourceServerCreatedAt.nanoseconds,
       );
       const queuedAt = Timestamp.now();
+      const explicitMention = hasExplicitCinderMention(normalizedBody);
       transaction.create(jobReference, {
         accountUid: sourceSenderUid,
         assistantId: CINDER_ASSISTANT_ID,
         attemptCount: 0,
         contentDigest,
         createdAt: queuedAt,
-        explicitMention: true,
+        explicitMention,
         idempotencyKey: jobId,
         leaseClaimedAt: null,
         leaseDigest: null,
@@ -159,7 +167,8 @@ export const queueCinderHumanRoomResponse = onDocumentCreated(
         leaseId: null,
         participantActive: true,
         participantId: CINDER_PARTICIPANT_ID,
-        responsePolicy: CINDER_RESPONSE_POLICY,
+        participationMode,
+        responsePolicy: cinderResponsePolicyForMode(participationMode),
         roomId,
         roomKind,
         sourceBody: normalizedBody,
