@@ -17,6 +17,7 @@ test("missing participant state is inactive without inventing remote membership"
   assert.equal(state.canManage, true);
   assert.equal(state.participantId, CINDER_PARTICIPANT_ID);
   assert.equal(state.responsePolicy, CINDER_RESPONSE_POLICY);
+  assert.equal(state.revision, 0);
 });
 
 test("active Cinder participant state requires the exact OpenClaw attribution", () => {
@@ -36,8 +37,25 @@ test("active Cinder participant state requires the exact OpenClaw attribution", 
   };
 
   assert.equal(buildCinderParticipantState(`group_${"b".repeat(32)}`, false, participant).active, true);
+  assert.equal(buildCinderParticipantState(`group_${"b".repeat(32)}`, false, participant).revision, 1);
+  assert.equal(
+    buildCinderParticipantState(
+      `group_${"b".repeat(32)}`,
+      false,
+      {...participant, revision: 7},
+    ).revision,
+    7,
+  );
   assert.throws(
     () => buildCinderParticipantState(`group_${"b".repeat(32)}`, false, {...participant, provider: "generic"}),
+    {code: "data-loss"},
+  );
+  assert.throws(
+    () => buildCinderParticipantState(
+      `group_${"b".repeat(32)}`,
+      false,
+      {...participant, revision: 0},
+    ),
     {code: "data-loss"},
   );
 });

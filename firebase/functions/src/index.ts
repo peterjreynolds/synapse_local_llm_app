@@ -123,6 +123,7 @@ export {
   claimCinderResponse,
   completeCinderResponseJob,
   failCinderResponseJob,
+  sendCinderOutboundMessage,
   skipCinderResponseJob,
 } from "./cinderWorker.js";
 export {

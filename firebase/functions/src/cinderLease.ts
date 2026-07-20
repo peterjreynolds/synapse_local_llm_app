@@ -35,7 +35,7 @@ import {firebaseAdminFirestore} from "./firebaseAdmin.js";
 export interface CinderResponseClaim {
   accountUid: string;
   assistantId: typeof CINDER_ASSISTANT_ID;
-  explicitMention: true;
+  explicitMention: boolean;
   idempotencyKey: string;
   jobId: string;
   leaseExpiresAtMillis: number;
@@ -73,7 +73,7 @@ export async function claimNextCinderResponse(
       claim: {
         accountUid: claimedJob.accountUid,
         assistantId: CINDER_ASSISTANT_ID,
-        explicitMention: true,
+        explicitMention: claimedJob.explicitMention,
         idempotencyKey: claimedJob.idempotencyKey,
         jobId: candidate.id,
         leaseExpiresAtMillis: claimedJob.leaseExpiresAt.toMillis(),

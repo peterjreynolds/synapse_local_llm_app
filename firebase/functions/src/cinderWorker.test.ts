@@ -53,3 +53,16 @@ test("worker boundary maps validation and lease conflicts without returning exce
   assert.deepEqual(conflict, {body: {error: "LEASE_UNAVAILABLE"}, status: 409});
   assert.equal(JSON.stringify([invalid, conflict]).includes("detail"), false);
 });
+
+test("worker boundary exposes an unavailable outbound target without implementation detail", async () => {
+  const response = await handleCinderWorkerBoundaryRequest(
+    {authorizationHeader: "Bearer secret", body: {}, method: "POST"},
+    () => true,
+    async () => {
+      throw new HttpsError("not-found", "private room state");
+    },
+  );
+
+  assert.deepEqual(response, {body: {error: "TARGET_UNAVAILABLE"}, status: 404});
+  assert.equal(JSON.stringify(response).includes("private room state"), false);
+});

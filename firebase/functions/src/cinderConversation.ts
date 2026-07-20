@@ -175,7 +175,7 @@ export const submitCinderMessage = onCall(
         attemptCount: 0,
         contentDigest,
         createdAt: acceptedAt,
-        explicitMention: true,
+        explicitMention: false,
         idempotencyKey: command.idempotencyKey,
         leaseClaimedAt: null,
         leaseDigest: null,

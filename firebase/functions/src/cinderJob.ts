@@ -18,7 +18,7 @@ export interface CinderJobDocument {
   attemptCount: number;
   contentDigest: string;
   createdAt: Timestamp;
-  explicitMention: true;
+  explicitMention: boolean;
   idempotencyKey: string;
   leaseDigest: string | null;
   leaseExpiresAt: Timestamp | null;
@@ -89,7 +89,8 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
     typeof contentDigest !== "string" ||
     !/^[a-f0-9]{64}$/.test(contentDigest) ||
     !(createdAt instanceof Timestamp) ||
-    explicitMention !== true ||
+    typeof explicitMention !== "boolean" ||
+    (roomKind !== "ASSISTANT" && explicitMention !== true) ||
     typeof idempotencyKey !== "string" ||
     !/^[A-Za-z0-9_-]{1,128}$/.test(idempotencyKey) ||
     participantActive !== true ||
@@ -129,7 +130,7 @@ export function readCinderJob(snapshot: DocumentSnapshot): CinderJobDocument {
     attemptCount,
     contentDigest,
     createdAt,
-    explicitMention: true,
+    explicitMention,
     idempotencyKey,
     leaseDigest: leaseDigest as string | null,
     leaseExpiresAt: leaseExpiresAt as Timestamp | null,

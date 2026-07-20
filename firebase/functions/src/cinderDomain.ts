@@ -61,6 +61,14 @@ export interface SkipCinderResponseCommand extends CinderWorkerLeaseCommand {
   reason: CinderWorkerSkipReason;
 }
 
+export interface SendCinderOutboundMessageCommand {
+  accountUid: string;
+  body: string;
+  idempotencyKey: string;
+  roomId: string;
+  workerId: string;
+}
+
 export interface CinderSequenceRecord {
   sequence: number;
 }
@@ -163,6 +171,22 @@ export function parseSkipCinderResponseCommand(input: unknown): SkipCinderRespon
   };
 }
 
+export function parseSendCinderOutboundMessageCommand(
+  input: unknown,
+): SendCinderOutboundMessageCommand {
+  const command = requireRecord(input);
+  const roomId = command.roomId === CINDER_ASSISTANT_ROOM_ID ?
+    CINDER_ASSISTANT_ROOM_ID :
+    parseHumanRoomId(command.roomId);
+  return {
+    accountUid: parseOpaqueIdentifier(command.accountUid),
+    body: normalizeCinderMessageBody(command.body),
+    idempotencyKey: parseJobId(command.idempotencyKey),
+    roomId,
+    workerId: parseWorkerId(command.workerId),
+  };
+}
+
 export function hasExplicitCinderMention(body: string): boolean {
   const normalizedBody = body.normalize("NFKC").toLocaleLowerCase("en-US");
   return /(^|[^\p{L}\p{N}_])@cinder(?=$|[^\p{L}\p{N}_])/u.test(normalizedBody);
@@ -217,6 +241,11 @@ export function buildCinderResponseMessageId(jobId: string): string {
   return `cinder-${jobId}`;
 }
 
+export function buildCinderOutboundMessageId(idempotencyKey: string): string {
+  if (!CINDER_JOB_ID_PATTERN.test(idempotencyKey)) invalidCinderCommand();
+  return `cinder-${idempotencyKey}`;
+}
+
 export function buildCinderDirectContentDigest(
   accountUid: string,
   command: SubmitCinderMessageCommand,
@@ -264,6 +293,23 @@ export function digestCinderLeaseToken(leaseToken: string): string {
 
 export function digestCinderResponseBody(body: string): string {
   return createHash("sha256").update(normalizeCinderMessageBody(body), "utf8").digest("hex");
+}
+
+export function digestCinderOutboundMessage(
+  command: SendCinderOutboundMessageCommand,
+): string {
+  return createHash("sha256")
+    .update(
+      [
+        command.workerId,
+        command.accountUid,
+        command.roomId,
+        command.idempotencyKey,
+        normalizeCinderMessageBody(command.body),
+      ].join("\u0000"),
+      "utf8",
+    )
+    .digest("hex");
 }
 
 export function cinderTimestampSequence(seconds: number, nanoseconds: number): number {

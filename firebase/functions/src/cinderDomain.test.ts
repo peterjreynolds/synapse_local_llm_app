@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildCinderDirectContentDigest,
   buildCinderJobId,
+  buildCinderOutboundMessageId,
   buildCinderResponseMessageId,
   canManageCinderParticipant,
   cinderRecordsAfterCursor,
@@ -14,6 +15,7 @@ import {
   CINDER_PARTICIPANT_ID,
   CINDER_RESPONSE_POLICY,
   digestCinderLeaseToken,
+  digestCinderOutboundMessage,
   digestCinderResponseBody,
   hasExplicitCinderMention,
   isCinderHumanRoomQueueEligible,
@@ -21,6 +23,7 @@ import {
   isTrustedCinderRemoteAiMessage,
   MAXIMUM_CINDER_ATTEMPTS,
   parseFailCinderResponseCommand,
+  parseSendCinderOutboundMessageCommand,
   parseSetCinderParticipantCommand,
   parseSubmitCinderMessageCommand,
   parseSyncCinderMessagesCommand,
@@ -86,6 +89,36 @@ test("direct Cinder submissions explicitly reject attachments, replies, and malf
   );
   assert.throws(
     () => parseSubmitCinderMessageCommand({...baseCommand, clientCreatedAtMillis: Number.MAX_SAFE_INTEGER}),
+    {code: "invalid-argument"},
+  );
+});
+
+test("worker outbound commands normalize text and derive stable idempotent messages", () => {
+  const command = parseSendCinderOutboundMessageCommand({
+    accountUid: "peter-uid",
+    body: "  A proactive follow-up  ",
+    idempotencyKey: "e".repeat(64),
+    roomId: CINDER_ASSISTANT_ROOM_ID,
+    workerId: "openclaw-cinder-primary",
+  });
+
+  assert.equal(command.body, "A proactive follow-up");
+  assert.equal(buildCinderOutboundMessageId(command.idempotencyKey), `cinder-${"e".repeat(64)}`);
+  assert.equal(digestCinderOutboundMessage(command).length, 64);
+  assert.equal(
+    digestCinderOutboundMessage(command),
+    digestCinderOutboundMessage({...command}),
+  );
+  assert.notEqual(
+    digestCinderOutboundMessage(command),
+    digestCinderOutboundMessage({...command, body: "Different follow-up"}),
+  );
+  assert.throws(
+    () => parseSendCinderOutboundMessageCommand({...command, idempotencyKey: "short"}),
+    {code: "invalid-argument"},
+  );
+  assert.throws(
+    () => parseSendCinderOutboundMessageCommand({...command, roomId: "unknown-room"}),
     {code: "invalid-argument"},
   );
 });

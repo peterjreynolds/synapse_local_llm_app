@@ -24,6 +24,7 @@ export interface CinderParticipantState {
   provenance: typeof CINDER_AI_PROVENANCE;
   provider: typeof CINDER_AI_PROVIDER;
   responsePolicy: typeof CINDER_RESPONSE_POLICY;
+  revision: number;
   roomId: string;
 }
 
@@ -56,7 +57,7 @@ export const setCinderParticipant = onCall(
     const roomReference = firebaseAdminFirestore.doc(`rooms/${command.roomId}`);
     const participantReference = roomReference.collection("participants").doc(CINDER_PARTICIPANT_ID);
     const changedAt = Timestamp.now();
-    await firebaseAdminFirestore.runTransaction(async (transaction) => {
+    return firebaseAdminFirestore.runTransaction(async (transaction) => {
       const authorization = await requireActiveRoomActor(transaction, roomReference, actorUid);
       if (!canManageCinderParticipant(authorization.kind, authorization.role)) {
         throw new HttpsError(
@@ -65,9 +66,13 @@ export const setCinderParticipant = onCall(
         );
       }
       const existingParticipant = await transaction.get(participantReference);
-      if (existingParticipant.exists) {
-        buildCinderParticipantState(command.roomId, true, existingParticipant.data());
-      }
+      const existingState = buildCinderParticipantState(
+        command.roomId,
+        true,
+        existingParticipant.exists ? existingParticipant.data() : undefined,
+      );
+      if (existingState.active === command.active) return existingState;
+      const revision = existingState.revision + 1;
       transaction.set(participantReference, {
         active: command.active,
         assistantId: CINDER_ASSISTANT_ID,
@@ -79,6 +84,7 @@ export const setCinderParticipant = onCall(
         provider: CINDER_AI_PROVIDER,
         removedAt: command.active ? null : changedAt,
         responsePolicy: CINDER_RESPONSE_POLICY,
+        revision,
         updatedAt: changedAt,
       });
       transaction.update(roomReference, {
@@ -92,19 +98,16 @@ export const setCinderParticipant = onCall(
         createdAt: changedAt,
         eventType: command.active ? "CINDER_PARTICIPANT_ADDED" : "CINDER_PARTICIPANT_REMOVED",
         participantId: CINDER_PARTICIPANT_ID,
+        responsePolicy: CINDER_RESPONSE_POLICY,
+        revision,
         roomId: command.roomId,
       });
+      return {
+        ...existingState,
+        active: command.active,
+        revision,
+      };
     });
-    return {
-      active: command.active,
-      canManage: true,
-      displayName: "Cinder",
-      participantId: CINDER_PARTICIPANT_ID,
-      provenance: CINDER_AI_PROVENANCE,
-      provider: CINDER_AI_PROVIDER,
-      responsePolicy: CINDER_RESPONSE_POLICY,
-      roomId: command.roomId,
-    };
   },
 );
 
@@ -122,6 +125,7 @@ export function buildCinderParticipantState(
       provenance: CINDER_AI_PROVENANCE,
       provider: CINDER_AI_PROVIDER,
       responsePolicy: CINDER_RESPONSE_POLICY,
+      revision: 0,
       roomId,
     };
   }
@@ -129,6 +133,7 @@ export function buildCinderParticipantState(
   const participant = input as Record<string, unknown>;
   const active = participant.active;
   const removedAt = participant.removedAt;
+  const revision = participant.revision ?? 1;
   if (
     typeof active !== "boolean" ||
     participant.assistantId !== CINDER_ASSISTANT_ID ||
@@ -138,6 +143,9 @@ export function buildCinderParticipantState(
     participant.provenance !== CINDER_AI_PROVENANCE ||
     participant.provider !== CINDER_AI_PROVIDER ||
     participant.responsePolicy !== CINDER_RESPONSE_POLICY ||
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
     !(participant.createdAt instanceof Timestamp) ||
     !(participant.updatedAt instanceof Timestamp) ||
     (active && removedAt !== null) ||
@@ -153,6 +161,7 @@ export function buildCinderParticipantState(
     provenance: CINDER_AI_PROVENANCE,
     provider: CINDER_AI_PROVIDER,
     responsePolicy: CINDER_RESPONSE_POLICY,
+    revision,
     roomId,
   };
 }

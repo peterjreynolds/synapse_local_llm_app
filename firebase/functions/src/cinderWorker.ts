@@ -1,11 +1,13 @@
 import {HttpsError, onRequest} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
 import {completeCinderResponse} from "./cinderCompletion.js";
+import {sendCinderOutbound} from "./cinderOutbound.js";
 import {
   CINDER_WORKER_PROTOCOL_VERSION,
   parseCinderWorkerClaimCommand,
   parseCompleteCinderResponseCommand,
   parseFailCinderResponseCommand,
+  parseSendCinderOutboundMessageCommand,
   parseSkipCinderResponseCommand,
 } from "./cinderDomain.js";
 import {
@@ -19,7 +21,7 @@ import {
 } from "./cinderWorkerAuthentication.js";
 import {FIREBASE_FUNCTIONS_REGION} from "./firebaseAdmin.js";
 
-type CinderWorkerOperationName = "claim" | "complete" | "fail" | "skip";
+type CinderWorkerOperationName = "claim" | "complete" | "fail" | "send" | "skip";
 
 interface CinderWorkerBoundaryRequest {
   authorizationHeader: string | undefined;
@@ -39,6 +41,7 @@ const CINDER_WORKER_TOKEN = defineSecret("CINDER_WORKER_TOKEN");
 export const claimCinderResponse = cinderWorkerEndpoint("claim");
 export const completeCinderResponseJob = cinderWorkerEndpoint("complete");
 export const failCinderResponseJob = cinderWorkerEndpoint("fail");
+export const sendCinderOutboundMessage = cinderWorkerEndpoint("send");
 export const skipCinderResponseJob = cinderWorkerEndpoint("skip");
 
 export async function handleCinderWorkerBoundaryRequest(
@@ -99,6 +102,8 @@ function operationForName(operationName: CinderWorkerOperationName): CinderWorke
     return async (body) => completeCinderResponse(parseCompleteCinderResponseCommand(body));
   case "fail":
     return async (body) => failCinderResponse(parseFailCinderResponseCommand(body));
+  case "send":
+    return async (body) => sendCinderOutbound(parseSendCinderOutboundMessageCommand(body));
   case "skip":
     return async (body) => skipCinderResponse(parseSkipCinderResponseCommand(body));
   }
@@ -112,6 +117,7 @@ function workerErrorStatus(error: unknown): number {
   case "aborted":
   case "failed-precondition": return 409;
   case "permission-denied": return 403;
+  case "not-found": return 404;
   case "resource-exhausted": return 429;
   default: return 500;
   }
@@ -125,6 +131,7 @@ function publicWorkerErrorCode(error: unknown): string {
   case "aborted": return "CONFLICT";
   case "failed-precondition": return "LEASE_UNAVAILABLE";
   case "permission-denied": return "FORBIDDEN";
+  case "not-found": return "TARGET_UNAVAILABLE";
   case "resource-exhausted": return "RATE_LIMITED";
   default: return "INTERNAL";
   }
