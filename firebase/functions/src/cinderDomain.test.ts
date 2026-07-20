@@ -25,6 +25,7 @@ import {
   isTrustedCinderRemoteAiMessage,
   MAXIMUM_CINDER_ATTEMPTS,
   parseFailCinderResponseCommand,
+  parseCinderParticipantListQuery,
   parseCinderWorkerClaimCommand,
   parseSendCinderOutboundMessageCommand,
   parseSetCinderParticipantCommand,
@@ -217,6 +218,20 @@ test("participant management follows direct-member and group-administrator permi
   );
   assert.throws(
     () => parseSetCinderParticipantCommand({mode: "AUTO", roomId: `group_${"a".repeat(32)}`}),
+    {code: "invalid-argument"},
+  );
+});
+
+test("participant list queries are distinct and bounded", () => {
+  const directRoomId = `direct_${"a".repeat(64)}`;
+  const groupRoomId = `group_${"b".repeat(32)}`;
+  assert.deepEqual(
+    parseCinderParticipantListQuery({roomIds: [directRoomId, groupRoomId]}),
+    {roomIds: [directRoomId, groupRoomId]},
+  );
+  assert.throws(() => parseCinderParticipantListQuery({roomIds: []}), {code: "invalid-argument"});
+  assert.throws(
+    () => parseCinderParticipantListQuery({roomIds: [directRoomId, directRoomId]}),
     {code: "invalid-argument"},
   );
 });

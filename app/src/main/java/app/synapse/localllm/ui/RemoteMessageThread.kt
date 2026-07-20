@@ -840,7 +840,7 @@ private fun RemoteAiParticipantControls(
     }
 }
 
-private fun RemoteCinderParticipationMode.cinderModeLabel(): String = when (this) {
+internal fun RemoteCinderParticipationMode.cinderModeLabel(): String = when (this) {
     RemoteCinderParticipationMode.SILENT -> "Silent"
     RemoteCinderParticipationMode.MENTION -> "Mention"
     RemoteCinderParticipationMode.AUTO -> "Auto"

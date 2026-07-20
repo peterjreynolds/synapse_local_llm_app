@@ -48,6 +48,7 @@ data class RemoteChatUiState(
     val currentDeviceId: RemoteDeviceId? = null,
     val roomAiConfiguration: RemoteRoomAiConfiguration? = null,
     val cinderParticipant: RemoteCinderParticipantState? = null,
+    val cinderParticipantsByRoomId: Map<RemoteRoomId, RemoteCinderParticipantState> = emptyMap(),
     val localAiHostStatus: RemoteLocalAiHostStatus = RemoteLocalAiHostStatus.Idle,
     val isActionRunning: Boolean = false,
     val notice: String? = null,

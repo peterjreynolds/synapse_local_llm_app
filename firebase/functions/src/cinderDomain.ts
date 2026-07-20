@@ -136,6 +136,16 @@ export function parseCinderParticipantQuery(input: unknown): {roomId: string} {
   return {roomId: parseHumanRoomId(command.roomId)};
 }
 
+export function parseCinderParticipantListQuery(input: unknown): {roomIds: string[]} {
+  const command = requireRecord(input);
+  if (!Array.isArray(command.roomIds) || command.roomIds.length < 1 || command.roomIds.length > 30) {
+    invalidCinderCommand();
+  }
+  const roomIds = command.roomIds.map(parseHumanRoomId);
+  if (new Set(roomIds).size !== roomIds.length) invalidCinderCommand();
+  return {roomIds};
+}
+
 export function parseSyncCinderMessagesCommand(input: unknown): SyncCinderMessagesCommand {
   const command = requireRecord(input);
   const afterSequence = command.afterSequence ?? 0;

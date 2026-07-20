@@ -34,9 +34,34 @@ class FirebaseRemoteCinderParticipantGatewayTest {
         assertTrue(failure is app.synapse.localllm.domain.remote.RemoteChatException)
     }
 
+    @Test
+    fun participantSummaryBatchRequiresExactDistinctAuthorizedRooms() {
+        val roomIds = listOf(ROOM_ID, SECOND_ROOM_ID)
+        val summaries = mapOf(
+            "participants" to listOf(
+                validParticipantReceipt(active = true, canManage = true, roomId = ROOM_ID),
+                validParticipantReceipt(active = false, canManage = false, roomId = SECOND_ROOM_ID),
+            ),
+        ).toCinderParticipantStates(roomIds)
+
+        assertEquals(roomIds.toSet(), summaries.keys)
+        assertTrue(summaries.getValue(ROOM_ID).active)
+        assertEquals(false, summaries.getValue(SECOND_ROOM_ID).active)
+        val duplicateFailure = runCatching {
+            mapOf(
+                "participants" to listOf(
+                    validParticipantReceipt(active = true, canManage = true, roomId = ROOM_ID),
+                    validParticipantReceipt(active = true, canManage = true, roomId = ROOM_ID),
+                ),
+            ).toCinderParticipantStates(roomIds)
+        }.exceptionOrNull()
+        assertTrue(duplicateFailure is app.synapse.localllm.domain.remote.RemoteChatException)
+    }
+
     private fun validParticipantReceipt(
         active: Boolean,
         canManage: Boolean,
+        roomId: RemoteRoomId = ROOM_ID,
     ): Map<String, Any> = mapOf(
         "active" to active,
         "canManage" to canManage,
@@ -47,11 +72,12 @@ class FirebaseRemoteCinderParticipantGatewayTest {
         "provider" to "OPENCLAW_CINDER",
         "responsePolicy" to "MENTION_ONLY",
         "revision" to 7L,
-        "roomId" to ROOM_ID.raw,
+        "roomId" to roomId.raw,
         "workState" to "THINKING",
     )
 
     private companion object {
         val ROOM_ID = RemoteRoomId("group_${"a".repeat(32)}")
+        val SECOND_ROOM_ID = RemoteRoomId("group_${"b".repeat(32)}")
     }
 }

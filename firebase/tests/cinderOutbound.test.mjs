@@ -218,6 +218,11 @@ test("human-room outbound delivery follows one room-scoped participant revision 
   assert.equal(added.data.mode, "AUTO");
   assert.deepEqual(duplicateAdd.data, added.data);
   assert.equal(await participantAuditCount(roomId), 1);
+  const ownerSummaries = await call(peterClient, "listCinderParticipants")({roomIds: [roomId]});
+  assert.equal(ownerSummaries.data.participants.length, 1);
+  assert.equal(ownerSummaries.data.participants[0].active, true);
+  assert.equal(ownerSummaries.data.participants[0].mode, "AUTO");
+  assert.equal(ownerSummaries.data.participants[0].canManage, true);
 
   const first = await sendOutbound({
     accountUid: peter.uid,
@@ -240,6 +245,8 @@ test("human-room outbound delivery follows one room-scoped participant revision 
   assert.equal(sharedState.data.mode, "AUTO");
   assert.equal(sharedState.data.revision, 1);
   assert.equal(sharedState.data.canManage, false);
+  const memberSummaries = await call(trishClient, "listCinderParticipants")({roomIds: [roomId]});
+  assert.equal(memberSummaries.data.participants[0].canManage, false);
 
   const mentionMode = await call(peterClient, "setCinderParticipant")({
     active: true,

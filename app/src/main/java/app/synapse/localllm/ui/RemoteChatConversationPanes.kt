@@ -344,6 +344,15 @@ private fun RemoteRoomList(
                     trailingContent = {
                         Box {
                             Column(horizontalAlignment = Alignment.End) {
+                                state.cinderParticipantsByRoomId[room.roomId]
+                                    ?.takeIf { participant -> participant.active }
+                                    ?.let { participant ->
+                                        Text(
+                                            "Cinder · ${participant.mode.cinderModeLabel()}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
                                 if (room.isPinned) Text("Pinned", style = MaterialTheme.typography.labelSmall)
                                 if (room.isArchived) Text("Archived", style = MaterialTheme.typography.labelSmall)
                                 if (room.isMuted) Text("Muted", style = MaterialTheme.typography.labelSmall)
