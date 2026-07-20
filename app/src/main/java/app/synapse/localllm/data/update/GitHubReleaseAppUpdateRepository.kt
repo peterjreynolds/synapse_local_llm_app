@@ -12,6 +12,8 @@ import okhttp3.Request
 class GitHubReleaseAppUpdateRepository(
     private val httpClient: OkHttpClient,
     private val currentVersionCode: Int,
+    private val deviceAndroidApiLevel: Int,
+    private val deviceSupportedAbis: Set<String>,
     private val releaseApiUrl: String = RELEASE_API_URL,
 ) : AppUpdateRepository {
     override suspend fun checkForAppUpdate(): AppUpdateCheckResult {
@@ -37,6 +39,25 @@ class GitHubReleaseAppUpdateRepository(
                 if (releaseVersionCode <= currentVersionCode) {
                     return AppUpdateCheckResult.UpToDate
                 }
+                val minimumAndroidApi = parseMinimumAndroidApi(release.body)
+                    ?: return AppUpdateCheckResult.Unavailable(
+                        "Release notes do not include the minimum Android API.",
+                    )
+                if (deviceAndroidApiLevel < minimumAndroidApi) {
+                    return AppUpdateCheckResult.Unavailable(
+                        "This update requires Android API $minimumAndroidApi or newer.",
+                    )
+                }
+                val releaseSupportedAbis = parseSupportedAbis(release.body)
+                    ?: return AppUpdateCheckResult.Unavailable(
+                        "Release notes do not include the supported APK ABIs.",
+                    )
+                if (releaseSupportedAbis.none(deviceSupportedAbis::contains)) {
+                    return AppUpdateCheckResult.Unavailable(
+                        "This update does not support this device's ABIs: " +
+                            deviceSupportedAbis.sorted().joinToString(", ") + ".",
+                    )
+                }
 
                 AppUpdateCheckResult.Available(
                     AvailableAppUpdate(
@@ -46,6 +67,8 @@ class GitHubReleaseAppUpdateRepository(
                         apkUrl = apkAsset.browserDownloadUrl,
                         apkSha256 = parseAssetSha256(apkAsset.digest) ?: parseReleaseSha256(release.body),
                         byteCount = apkAsset.size.takeIf { size -> size > 0L },
+                        minimumAndroidApi = minimumAndroidApi,
+                        supportedAbis = releaseSupportedAbis,
                     ),
                 )
             }
@@ -67,6 +90,21 @@ class GitHubReleaseAppUpdateRepository(
             ?.groupValues
             ?.get(1)
             ?.takeIf { candidate -> sha256Pattern.matches(candidate) }
+
+    private fun parseMinimumAndroidApi(body: String): Int? =
+        minimumAndroidApiPattern.find(body)?.groupValues?.get(1)?.toIntOrNull()
+
+    private fun parseSupportedAbis(body: String): List<String>? =
+        apkAbisPattern.find(body)
+            ?.groupValues
+            ?.get(1)
+            ?.trim()
+            ?.trimEnd('.')
+            ?.split(',')
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            ?.distinct()
+            ?.takeIf(List<String>::isNotEmpty)
 
     @Serializable
     private data class GitHubRelease(
@@ -90,6 +128,8 @@ class GitHubReleaseAppUpdateRepository(
         const val APK_ASSET_NAME = "Synapse-AI.apk"
         val json = Json { ignoreUnknownKeys = true }
         val versionCodePattern = Regex("Version code:\\s*(\\d+)")
+        val minimumAndroidApiPattern = Regex("Minimum Android API:\\s*(\\d+)")
+        val apkAbisPattern = Regex("^APK ABIs:\\s*([^\\r\\n]+)$", RegexOption.MULTILINE)
         val releaseSha256Pattern = Regex("SHA-256:\\s*([a-fA-F0-9]{64})")
         val sha256Pattern = Regex("^[a-fA-F0-9]{64}$")
     }

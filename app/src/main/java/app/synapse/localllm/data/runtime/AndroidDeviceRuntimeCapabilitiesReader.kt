@@ -5,8 +5,13 @@ import android.content.Context
 import android.os.Build
 import app.synapse.localllm.domain.runtime.DeviceRuntimeCapabilities
 import app.synapse.localllm.domain.runtime.DeviceRuntimeCapabilitiesReader
+import app.synapse.localllm.domain.runtime.EmbeddedInferenceCompatibilityPolicy
 
-class AndroidDeviceRuntimeCapabilitiesReader(context: Context) : DeviceRuntimeCapabilitiesReader {
+class AndroidDeviceRuntimeCapabilitiesReader(
+    context: Context,
+    private val embeddedInferenceCompatibilityPolicy: EmbeddedInferenceCompatibilityPolicy =
+        EmbeddedInferenceCompatibilityPolicy(),
+) : DeviceRuntimeCapabilitiesReader {
     private val activityManager = context.applicationContext.getSystemService(ActivityManager::class.java)
 
     override fun readDeviceRuntimeCapabilities(): DeviceRuntimeCapabilities {
@@ -22,6 +27,8 @@ class AndroidDeviceRuntimeCapabilitiesReader(context: Context) : DeviceRuntimeCa
             appMemoryClassBytes = appMemoryClassBytes,
             isLowMemory = memoryInfo.lowMemory,
             supportedAbis = Build.SUPPORTED_ABIS.toList(),
+            embeddedInferenceAvailability = embeddedInferenceCompatibilityPolicy
+                .assessSupportedAbis(Build.SUPPORTED_ABIS.toList()),
         )
     }
 

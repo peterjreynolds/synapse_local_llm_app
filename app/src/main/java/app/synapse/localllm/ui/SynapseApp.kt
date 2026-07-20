@@ -108,6 +108,7 @@ import app.synapse.localllm.domain.memory.MemoryReviewFilter
 import app.synapse.localllm.domain.memory.MemoryStatus
 import app.synapse.localllm.domain.memory.RetrievedMemoryRef
 import app.synapse.localllm.domain.runtime.ImportEmbeddedModelCommand
+import app.synapse.localllm.domain.runtime.EmbeddedInferenceAvailability
 import app.synapse.localllm.domain.runtime.ModelCatalogEntry
 import app.synapse.localllm.domain.runtime.ModelDeviceCompatibilityAssessment
 import app.synapse.localllm.domain.runtime.ModelPromptProfile
@@ -1422,26 +1423,40 @@ private fun SettingsPanel(
         item {
             RuntimeBackendSelector(
                 selectedBackend = state.settingsDraft.runtimeBackend,
+                embeddedInferenceAvailability = state.deviceRuntimeCapabilities
+                    ?.embeddedInferenceAvailability,
                 onBackendSelected = { backend ->
                     onSettingsDraftChanged(state.settingsDraft.copy(runtimeBackend = backend))
                 },
             )
         }
         if (state.settingsDraft.runtimeBackend == InferenceRuntimeBackend.EMBEDDED_LLAMA) {
-            item {
-                EmbeddedModelSettingsCard(
-                    state = state,
-                    onImportEmbeddedModel = onImportEmbeddedModel,
-                    onDownloadCatalogModel = onDownloadCatalogModel,
-                )
-            }
-            item {
-                ModelPromptProfileSelector(
-                    selectedProfile = state.settingsDraft.modelPromptProfile,
-                    onProfileSelected = { profile ->
-                        onSettingsDraftChanged(state.settingsDraft.copy(modelPromptProfile = profile))
-                    },
-                )
+            when (val availability = state.deviceRuntimeCapabilities?.embeddedInferenceAvailability) {
+                is EmbeddedInferenceAvailability.Unavailable -> {
+                    item {
+                        EmbeddedInferenceUnavailableCard(availability.reason)
+                    }
+                }
+
+                EmbeddedInferenceAvailability.Available,
+                null,
+                -> {
+                    item {
+                        EmbeddedModelSettingsCard(
+                            state = state,
+                            onImportEmbeddedModel = onImportEmbeddedModel,
+                            onDownloadCatalogModel = onDownloadCatalogModel,
+                        )
+                    }
+                    item {
+                        ModelPromptProfileSelector(
+                            selectedProfile = state.settingsDraft.modelPromptProfile,
+                            onProfileSelected = { profile ->
+                                onSettingsDraftChanged(state.settingsDraft.copy(modelPromptProfile = profile))
+                            },
+                        )
+                    }
+                }
             }
         }
         if (state.settingsDraft.runtimeBackend == InferenceRuntimeBackend.LLAMA_SERVER) {
@@ -1596,6 +1611,7 @@ private fun DebugArchiveCard(onExportDebugArchive: () -> Unit) {
 @Composable
 private fun RuntimeBackendSelector(
     selectedBackend: InferenceRuntimeBackend,
+    embeddedInferenceAvailability: EmbeddedInferenceAvailability?,
     onBackendSelected: (InferenceRuntimeBackend) -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
@@ -1607,13 +1623,16 @@ private fun RuntimeBackendSelector(
         ) {
             TextButton(
                 onClick = { onBackendSelected(InferenceRuntimeBackend.EMBEDDED_LLAMA) },
+                enabled = embeddedInferenceAvailability !is EmbeddedInferenceAvailability.Unavailable,
                 modifier = Modifier.weight(1f),
             ) {
                 Text(
-                    text = if (selectedBackend == InferenceRuntimeBackend.EMBEDDED_LLAMA) {
-                        "Embedded"
-                    } else {
-                        "Use embedded"
+                    text = when {
+                        embeddedInferenceAvailability is EmbeddedInferenceAvailability.Unavailable ->
+                            "Embedded unavailable"
+
+                        selectedBackend == InferenceRuntimeBackend.EMBEDDED_LLAMA -> "Embedded"
+                        else -> "Use embedded"
                     },
                 )
             }
@@ -1629,6 +1648,34 @@ private fun RuntimeBackendSelector(
                     },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun EmbeddedInferenceUnavailableCard(reason: String) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Embedded model unavailable",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = reason,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                text = "Choose Server for phone-local inference on this device.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

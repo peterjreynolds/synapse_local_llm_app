@@ -7,6 +7,7 @@ data class DeviceRuntimeCapabilities(
     val appMemoryClassBytes: Long,
     val isLowMemory: Boolean,
     val supportedAbis: List<String>,
+    val embeddedInferenceAvailability: EmbeddedInferenceAvailability,
 ) {
     init {
         require(androidApiLevel > 0) { "Android API level must be positive." }

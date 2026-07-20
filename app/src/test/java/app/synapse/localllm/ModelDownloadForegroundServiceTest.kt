@@ -22,6 +22,15 @@ import org.robolectric.annotation.Config
 @Config(sdk = [29])
 class ModelDownloadForegroundServiceTest {
     @Test
+    @Config(sdk = [28])
+    fun api28ForegroundServicesDoNotUseNewerTypeConstants() {
+        assertEquals(0, modelDownloadForegroundServiceType())
+        assertEquals(0, smsAutoReplyForegroundServiceType())
+        assertEquals(0, directCallForegroundServiceTypes(RemoteDirectCallMediaKind.AUDIO))
+        assertEquals(0, directCallForegroundServiceTypes(RemoteDirectCallMediaKind.VIDEO))
+    }
+
+    @Test
     fun api29ForegroundServiceTypesMatchDeclaredCompatibilityPaths() {
         assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, modelDownloadForegroundServiceType())
         assertEquals(0, smsAutoReplyForegroundServiceType())

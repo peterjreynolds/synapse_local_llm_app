@@ -23,7 +23,8 @@ governance runtime, or an external sidecar.
 - Room-aware AI routing: automatic in AI chats; mention-only or explicitly
   automatic in direct/group rooms; never in human-only rooms.
 - Attributed multi-participant message bubbles and `@Synapse` composer support.
-- Embedded ARM64 `llama.cpp` runtime with Termux server fallback.
+- Embedded ARM64 `llama.cpp` runtime with Termux server fallback, plus an
+  Android 9/API 28 compatibility APK path for non-ARM64 chat and calling.
 - Named APK output at `app/build/outputs/apk/synapse/Synapse-AI.apk`.
 - Rolling GitHub APK delivery through the `synapse-ai` release and `apk-latest`
   branch, plus in-app update checks that download the newest `Synapse-AI.apk`

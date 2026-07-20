@@ -116,6 +116,8 @@ class AndroidAppUpdateDownloaderTest {
             apkUrl = apkUrl,
             apkSha256 = sha256,
             byteCount = byteCount,
+            minimumAndroidApi = 28,
+            supportedAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64"),
         )
 
     private fun updateCacheDirectory(): File =

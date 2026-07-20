@@ -41,7 +41,7 @@ android {
 
     defaultConfig {
         applicationId = "app.synapse.localllm"
-        minSdk = 29
+        minSdk = 28
         targetSdk = 36
         versionCode = synapseVersionCode
         versionName = synapseVersionName
@@ -51,7 +51,7 @@ android {
         buildConfigField("String", "SYNAPSE_APK_CHANNEL", quoteBuildConfigString("apk-latest"))
 
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
 
         externalNativeBuild {
@@ -136,10 +136,6 @@ android {
         disable +=
             setOf(
                 "AndroidGradlePluginVersion",
-                // Exception scope: Synapse phone APK builds only for the primary ARM64 Android target.
-                // Reason: bundling x86_64 llama.cpp doubles native build/output cost for no target device.
-                // Owner: Synapse Local LLM app. Removal: add x86_64 when ChromeOS/emulator distribution is required.
-                "ChromeOsAbiSupport",
                 "GradleDependency",
                 "KaptUsageInsteadOfKsp",
                 "NewerVersionAvailable",

@@ -489,6 +489,7 @@ internal fun RuntimeStatus.toActionableRuntimeLabel(): String? =
         is RuntimeStatus.Starting ->
             when (receipt.status) {
                 RuntimeStartStatus.EMBEDDED_MODEL_MISSING,
+                RuntimeStartStatus.EMBEDDED_RUNTIME_UNAVAILABLE,
                 RuntimeStartStatus.TERMUX_UNAVAILABLE,
                 RuntimeStartStatus.TERMUX_PERMISSION_MISSING,
                 RuntimeStartStatus.FAILED,

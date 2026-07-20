@@ -55,6 +55,7 @@ class ModelDeviceCompatibilityPolicyTest {
             appMemoryClassBytes = 512L * MIB,
             isLowMemory = isLowMemory,
             supportedAbis = listOf("arm64-v8a"),
+            embeddedInferenceAvailability = EmbeddedInferenceAvailability.Available,
         )
 
     private fun testCatalog(): List<ModelCatalogEntry> =

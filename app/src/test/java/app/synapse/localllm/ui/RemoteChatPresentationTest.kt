@@ -40,6 +40,8 @@ class RemoteChatPresentationTest {
             apkUrl = "https://example.invalid/Synapse-AI.apk",
             apkSha256 = null,
             byteCount = null,
+            minimumAndroidApi = 28,
+            supportedAbis = listOf("armeabi-v7a"),
         )
 
         assertEquals(

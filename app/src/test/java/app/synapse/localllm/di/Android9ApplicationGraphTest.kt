@@ -11,10 +11,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [29])
-class Android10ApplicationGraphTest {
+@Config(sdk = [28])
+class Android9ApplicationGraphTest {
     @Test
-    fun api29CreatesCompleteApplicationGraph() {
+    fun api28CreatesCompleteApplicationGraph() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val graph = SynapseApplicationGraph.create(context)
 
@@ -24,7 +24,7 @@ class Android10ApplicationGraphTest {
             assertNotNull(graph.remoteDeviceRegistrationCoordinator)
             assertNotNull(graph.smsAutoReplyCoordinator)
             val capabilities = graph.deviceRuntimeCapabilitiesReader.readDeviceRuntimeCapabilities()
-            assertEquals(29, capabilities.androidApiLevel)
+            assertEquals(28, capabilities.androidApiLevel)
             assertTrue(capabilities.totalMemoryBytes > 0L)
         } finally {
             graph.database.close()

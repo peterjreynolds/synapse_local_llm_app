@@ -24,6 +24,8 @@ jobs:
       APK_BRANCH: apk-latest
       RELEASE_TAG: synapse-ai
       EXPECTED_APPLICATION_ID: app.synapse.localllm.debug
+      EXPECTED_MINIMUM_ANDROID_API: "28"
+      EXPECTED_APK_ABIS: arm64-v8a armeabi-v7a x86_64
       EXPECTED_SIGNING_CERTIFICATE_SHA256: 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b
 
     steps:
@@ -146,6 +148,29 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$actual_version_code" | tee apk-version-code.txt
+          actual_minimum_android_api="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" | sed -n "s/^sdkVersion:'\([^']*\)'.*/\1/p")"
+          if [ "$actual_minimum_android_api" != "$EXPECTED_MINIMUM_ANDROID_API" ]; then
+            echo "Expected minimum Android API $EXPECTED_MINIMUM_ANDROID_API, got $actual_minimum_android_api." >&2
+            exit 1
+          fi
+          printf '%s\n' "$actual_minimum_android_api" | tee apk-minimum-android-api.txt
+          actual_apk_abis="$(
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" \
+              | sed -n "s/^native-code: //p" \
+              | tr -d "'" \
+              | xargs
+          )"
+          for expected_abi in $EXPECTED_APK_ABIS; do
+            if ! printf '%s\n' "$actual_apk_abis" | grep -Fw "$expected_abi" >/dev/null; then
+              echo "Expected APK ABI $expected_abi, got: $actual_apk_abis." >&2
+              exit 1
+            fi
+          done
+          if [ "$(printf '%s\n' "$actual_apk_abis" | wc -w)" -ne "$(printf '%s\n' "$EXPECTED_APK_ABIS" | wc -w)" ]; then
+            echo "Expected only APK ABIs $EXPECTED_APK_ABIS, got: $actual_apk_abis." >&2
+            exit 1
+          fi
+          printf '%s\n' "$actual_apk_abis" | tee apk-abis.txt
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK_PATH" \
             | sed -n "s/^Signer #1 certificate SHA-256 digest: //p" \
             | tee apk-signer-sha256.txt
@@ -176,6 +201,9 @@ jobs:
           release_notes="$(printf '%s\n\n' \
             "Latest automated Synapse AI APK from commit $GITHUB_SHA." \
             "Version code: $version_code. Package: $application_id." \
+            "Minimum Android API: $EXPECTED_MINIMUM_ANDROID_API." \
+            "APK ABIs: arm64-v8a, armeabi-v7a, x86_64." \
+            "Embedded llama.cpp ABI: arm64-v8a. Other packaged ABIs preserve chat, Cinder, notifications, calling, and server-backed inference." \
             "SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256." \
             "The synapse-ai release and apk-latest branch are updated together after every successful main build or explicit manual workflow dispatch.")"
 
@@ -217,6 +245,9 @@ jobs:
             printf '%s\n\n' '`Synapse-AI.apk` is the latest APK produced by the approved rolling release workflow.'
             printf -- '- Source commit: `%s`\n' "$GITHUB_SHA"
             printf -- '- Version code: `%s`\n' "$SYNAPSE_VERSION_CODE"
+            printf -- '- Minimum Android API: `%s`\n' "$EXPECTED_MINIMUM_ANDROID_API"
+            printf -- '- APK ABIs: `%s`\n' 'arm64-v8a, armeabi-v7a, x86_64'
+            printf -- '- Embedded llama.cpp ABI: `%s`\n' 'arm64-v8a'
             printf -- '- SHA-256: `%s`\n\n' "$apk_sha256"
             printf '%s\n' 'This branch is force-replaced so it exposes one canonical APK without retaining old APK commits.'
           } > "$publish_root/APK/README.md"
@@ -244,9 +275,10 @@ jobs:
           release_receipt_json="$(
             SYNAPSE_RELEASE_OPERATION="read rolling release receipt" \
               bash scripts/ci/run-idempotent-release-command-with-retry.sh \
-              gh release view "$RELEASE_TAG" --json targetCommitish,assets
+              gh release view "$RELEASE_TAG" --json targetCommitish,assets,body
           )"
           release_target="$(printf '%s' "$release_receipt_json" | jq -r '.targetCommitish')"
+          release_body="$(printf '%s' "$release_receipt_json" | jq -r '.body')"
           release_asset_count="$(
             printf '%s' "$release_receipt_json" \
               | jq -r '[.assets[] | select(.name == "Synapse-AI.apk")] | length'
@@ -286,11 +318,17 @@ jobs:
             echo "Expected apk-latest SHA-256 $expected_apk_sha256, got $branch_apk_sha256." >&2
             exit 1
           fi
+          printf '%s\n' "$release_body" | grep -F "Minimum Android API: $EXPECTED_MINIMUM_ANDROID_API." >/dev/null
+          printf '%s\n' "$release_body" | grep -F 'APK ABIs: arm64-v8a, armeabi-v7a, x86_64.' >/dev/null
           git show FETCH_HEAD:APK/README.md | grep -F "$GITHUB_SHA" >/dev/null
+          git show FETCH_HEAD:APK/README.md | grep -F 'Minimum Android API: `28`' >/dev/null
+          git show FETCH_HEAD:APK/README.md | grep -F 'APK ABIs: `arm64-v8a, armeabi-v7a, x86_64`' >/dev/null
           {
             printf '\n### Rolling distribution receipt\n\n'
             printf -- '- Source commit: `%s`\n' "$GITHUB_SHA"
             printf -- '- APK SHA-256: `%s`\n' "$expected_apk_sha256"
+            printf -- '- Minimum Android API: `%s`\n' "$EXPECTED_MINIMUM_ANDROID_API"
+            printf -- '- APK ABIs: `%s`\n' 'arm64-v8a, armeabi-v7a, x86_64'
             printf -- '- Release tag: `%s`\n' "$RELEASE_TAG"
             printf -- '- APK branch: `%s`\n' "$APK_BRANCH"
           } >> "$GITHUB_STEP_SUMMARY"

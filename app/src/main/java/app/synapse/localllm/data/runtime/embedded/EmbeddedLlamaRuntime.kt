@@ -5,6 +5,7 @@ import app.synapse.localllm.domain.chat.ConversationRole
 import app.synapse.localllm.domain.ids.SynapseIdFactory
 import app.synapse.localllm.domain.runtime.ChatCompletionRequest
 import app.synapse.localllm.domain.runtime.ChatStreamEvent
+import app.synapse.localllm.domain.runtime.EmbeddedInferenceAvailability
 import app.synapse.localllm.domain.runtime.ModelChatMessage
 import app.synapse.localllm.domain.runtime.RuntimeStartReceipt
 import app.synapse.localllm.domain.runtime.RuntimeStartStatus
@@ -22,6 +23,7 @@ class EmbeddedLlamaRuntime(
     context: Context,
     private val idFactory: SynapseIdFactory,
     private val clock: SynapseClock,
+    private val availability: EmbeddedInferenceAvailability,
 ) {
     private val applicationContext = context.applicationContext
     private val engine: EmbeddedLlamaEngine by lazy {
@@ -50,6 +52,13 @@ class EmbeddedLlamaRuntime(
     }
 
     suspend fun checkStatus(settings: SynapseSettings): RuntimeStatus {
+        unavailableReason()?.let { reason ->
+            return RuntimeStatus.Unreachable(
+                baseUrl = EMBEDDED_BASE_URL,
+                checkedAt = clock.now(),
+                reason = reason,
+            )
+        }
         val modelPath = settings.embeddedModelPath
             ?: return RuntimeStatus.Unreachable(
                 baseUrl = EMBEDDED_BASE_URL,
@@ -98,6 +107,14 @@ class EmbeddedLlamaRuntime(
 
     suspend fun start(settings: SynapseSettings): RuntimeStartReceipt {
         val requestedAt = clock.now()
+        unavailableReason()?.let { reason ->
+            return RuntimeStartReceipt(
+                id = idFactory.createReceiptId(),
+                status = RuntimeStartStatus.EMBEDDED_RUNTIME_UNAVAILABLE,
+                requestedAt = requestedAt,
+                message = reason,
+            )
+        }
         val modelPath = settings.embeddedModelPath
             ?: return RuntimeStartReceipt(
                 id = idFactory.createReceiptId(),
@@ -126,6 +143,10 @@ class EmbeddedLlamaRuntime(
 
     fun streamChatCompletion(request: ChatCompletionRequest): Flow<ChatStreamEvent> =
         flow {
+            unavailableReason()?.let { reason ->
+                emit(ChatStreamEvent.Failed(reason))
+                return@flow
+            }
             val modelPath = request.embeddedModelPath
             if (modelPath == null) {
                 emit(ChatStreamEvent.Failed("No embedded GGUF model is selected."))
@@ -157,8 +178,16 @@ class EmbeddedLlamaRuntime(
         }
 
     fun cancelGeneration() {
-        engine.cancelGeneration()
+        if (availability is EmbeddedInferenceAvailability.Available) {
+            engine.cancelGeneration()
+        }
     }
+
+    private fun unavailableReason(): String? =
+        when (availability) {
+            EmbeddedInferenceAvailability.Available -> null
+            is EmbeddedInferenceAvailability.Unavailable -> availability.reason
+        }
 
     private fun ConversationRole.toTemplateRole(): String =
         when (this) {

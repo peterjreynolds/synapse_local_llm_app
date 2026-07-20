@@ -241,10 +241,14 @@ Phase 1 changes visible product copy, not install identity:
 - release tag: `synapse-ai`
 - APK asset: `Synapse-AI.apk`
 - distribution branch: `apk-latest`
+- minimum Android API: `28`
+- APK ABIs: `arm64-v8a`, `armeabi-v7a`, `x86_64`
 
 Signing lineage and monotonic `versionCode` requirements remain unchanged. The
 v8→v9 Room migration is what preserves installed app data after an in-place APK
-upgrade.
+upgrade. Embedded llama.cpp stays ARM64-only; compatibility ABIs retain chat,
+Cinder, notification, calling, and server-runtime behavior without loading the
+unsupported native inference engine.
 
 ## Phase 2 Entry Blockers
 

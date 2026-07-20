@@ -4,9 +4,9 @@ Synapse has two runtime backends behind `LocalInferenceRuntime`.
 
 ## Embedded llama.cpp
 
-The default backend is embedded `llama.cpp`. The APK builds ARM64 native
-libraries from the pinned `third_party/llama.cpp` submodule and loads them
-through `EmbeddedLlamaRuntime`.
+The default backend is embedded `llama.cpp` on ARM64 devices. The APK builds
+ARM64 native libraries from the pinned `third_party/llama.cpp` submodule and
+loads them through `EmbeddedLlamaRuntime`.
 
 The APK does not package GGUF weights. A model can be installed through manual
 Android document-picker import or through Synapse's vetted in-app model catalog.
@@ -39,9 +39,16 @@ The embedded adapter resets prompt state for each Synapse turn, decodes the
 system prompt plus assembled chat/memory prompt, and streams generated tokens
 back through `ChatStreamEvent.Token`.
 
+The rolling APK also packages `armeabi-v7a` for Android 9 compatibility devices
+and `x86_64` for executable API-28 emulator validation. Those ABIs include an
+explicit non-inference compatibility library, and the Kotlin runtime checks the
+device ABI before the native engine can be loaded. Settings disables embedded
+model controls with a clear reason. Chat, Cinder, Firebase notifications,
+WebRTC calling, and the Termux/server inference path remain available.
+
 Current embedded limits:
 
-- `arm64-v8a` only. This is intentional for the Samsung S25 Ultra target.
+- Native model inference is `arm64-v8a` only.
 - Text-only generation. Vision `mmproj` wiring is not implemented yet.
 - Context is fixed at 4096 tokens in the native wrapper.
 - Default chat responses use a smaller token budget for phone responsiveness;

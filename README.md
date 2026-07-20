@@ -159,6 +159,13 @@ On launch, Synapse checks the public `synapse-ai` release for a newer
 provides one, then opens Android's installer. Android still requires user
 approval; the app cannot silently self-update.
 
+The rolling APK supports Android 9/API 28 and packages `arm64-v8a`,
+`armeabi-v7a`, and `x86_64`. The update check reads the minimum API and ABI list
+from release metadata and will not offer an incompatible APK. Embedded
+llama.cpp remains an `arm64-v8a` feature; on compatibility ABIs the Settings UI
+gates that backend while Synapse Chat, Cinder, notifications, calling, and the
+server runtime remain available.
+
 Installed data is preserved when all Android package rules match:
 
 - the package name stays the same;

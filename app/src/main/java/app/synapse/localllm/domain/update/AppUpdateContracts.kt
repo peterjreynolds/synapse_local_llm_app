@@ -9,6 +9,8 @@ data class AvailableAppUpdate(
     val apkUrl: String,
     val apkSha256: String?,
     val byteCount: Long?,
+    val minimumAndroidApi: Int,
+    val supportedAbis: List<String>,
 )
 
 sealed interface AppUpdateCheckResult {

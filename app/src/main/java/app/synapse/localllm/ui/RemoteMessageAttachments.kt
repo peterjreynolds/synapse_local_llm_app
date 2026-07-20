@@ -1,9 +1,14 @@
 package app.synapse.localllm.ui
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.MediaPlayer
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -47,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.content.FileProvider
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
@@ -176,6 +182,9 @@ internal fun RemoteMessageAttachmentCard(
     var openImageAfterDownload by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf(false) }
     var saveImageAfterDownload by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf(false) }
     var isSavingImage by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf(false) }
+    var pendingLegacyImageSaveUri by rememberSaveable(attachment.attachmentId.raw) {
+        mutableStateOf<String?>(null)
+    }
 
     fun saveImageToPictures(localUri: String) {
         if (isSavingImage) return
@@ -196,13 +205,42 @@ internal fun RemoteMessageAttachmentCard(
         }
     }
 
+    val legacyImageExportPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val localUri = pendingLegacyImageSaveUri
+        pendingLegacyImageSaveUri = null
+        if (granted && localUri != null) {
+            saveImageToPictures(localUri)
+        } else if (!granted) {
+            Toast.makeText(
+                context,
+                "Android 9 storage permission is required to save images.",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    fun saveImageWithPermission(localUri: String) {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            saveImageToPictures(localUri)
+        } else {
+            pendingLegacyImageSaveUri = localUri
+            legacyImageExportPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+
     fun requestImageSave() {
         val localUri = contentDownload?.localUri
         if (localUri == null) {
             saveImageAfterDownload = true
             onDownload(attachment.attachmentId, false)
         } else {
-            saveImageToPictures(localUri)
+            saveImageWithPermission(localUri)
         }
     }
 
@@ -222,7 +260,7 @@ internal fun RemoteMessageAttachmentCard(
             val localUri = contentDownload?.localUri
             if (saveImageAfterDownload && localUri != null) {
                 saveImageAfterDownload = false
-                saveImageToPictures(localUri)
+                saveImageWithPermission(localUri)
             }
         }
     }

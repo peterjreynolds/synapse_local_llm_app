@@ -1,6 +1,7 @@
 package app.synapse.localllm.di
 
 import android.content.Context
+import android.os.Build
 import androidx.room.Room
 import app.synapse.localllm.BuildConfig
 import app.synapse.localllm.application.RemoteDeviceRegistrationCoordinator
@@ -273,6 +274,8 @@ class SynapseApplicationGraph private constructor(context: Context) {
         GitHubReleaseAppUpdateRepository(
             httpClient = createHttpClient(),
             currentVersionCode = BuildConfig.VERSION_CODE,
+            deviceAndroidApiLevel = Build.VERSION.SDK_INT,
+            deviceSupportedAbis = Build.SUPPORTED_ABIS.toSet(),
         )
     val appUpdateDownloader: AppUpdateDownloader = AndroidAppUpdateDownloader(applicationContext, createHttpClient())
     val debugArchiveExporter = AndroidDebugArchiveExporter(applicationContext, clock)
@@ -354,6 +357,9 @@ class SynapseApplicationGraph private constructor(context: Context) {
                 context = applicationContext,
                 idFactory = idFactory,
                 clock = clock,
+                availability = deviceRuntimeCapabilitiesReader
+                    .readDeviceRuntimeCapabilities()
+                    .embeddedInferenceAvailability,
             ),
         )
 
