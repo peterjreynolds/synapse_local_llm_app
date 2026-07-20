@@ -43,18 +43,29 @@ data class RemoteCachedAttachment(
         require(contentObjectPath.endsWith("/${attachmentId.raw}/content")) {
             "Remote attachment content path is inconsistent."
         }
-        require((kind == RemoteAttachmentKind.IMAGE) == (thumbnailObjectPath != null)) {
-            "Only image attachments require a thumbnail path."
+        require(kind != RemoteAttachmentKind.IMAGE || thumbnailObjectPath != null) {
+            "Image attachments require a thumbnail path."
+        }
+        require(thumbnailObjectPath == null || kind == RemoteAttachmentKind.IMAGE || kind == RemoteAttachmentKind.VIDEO) {
+            "Only image and video attachments can include a thumbnail path."
         }
         thumbnailObjectPath?.let { path ->
             require(path.endsWith("/${attachmentId.raw}/thumbnail")) {
                 "Remote attachment thumbnail path is inconsistent."
             }
         }
-        require(
-            (kind == RemoteAttachmentKind.AUDIO || kind == RemoteAttachmentKind.VOICE_NOTE) ==
-                (durationMillis != null),
-        ) { "Audio attachments require a duration." }
+        when (kind) {
+            RemoteAttachmentKind.AUDIO,
+            RemoteAttachmentKind.VOICE_NOTE,
+            -> require(durationMillis != null) { "Audio attachments require a duration." }
+            RemoteAttachmentKind.IMAGE,
+            RemoteAttachmentKind.DOCUMENT,
+            -> require(durationMillis == null) { "Images and documents cannot include a duration." }
+            RemoteAttachmentKind.VIDEO -> Unit // Legacy video records may predate duration measurement.
+        }
+        require(durationMillis == null || durationMillis > 0L) {
+            "Remote attachment duration must be positive."
+        }
     }
 }
 

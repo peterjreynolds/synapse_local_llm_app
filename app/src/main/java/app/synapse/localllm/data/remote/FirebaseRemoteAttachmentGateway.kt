@@ -41,7 +41,7 @@ class FirebaseRemoteAttachmentGateway(
     private val applicationContext = context.applicationContext
     private val cacheRoot = File(applicationContext.cacheDir, CACHE_DIRECTORY_NAME)
     private val selectionStager = AndroidRemoteAttachmentSelectionStager(applicationContext)
-    private val thumbnailEncoder = AndroidRemoteImageThumbnailEncoder()
+    private val thumbnailEncoder = AndroidRemoteVisualThumbnailEncoder()
 
     override suspend fun inspectSelection(
         attachmentId: RemoteAttachmentId,
@@ -90,8 +90,8 @@ class FirebaseRemoteAttachmentGateway(
             var activeUpload: UploadTask? = null
             try {
                 val sourceUri = selectionStager.requireUploadSource(selection)
-                val thumbnailBytes = if (selection.kind == RemoteAttachmentKind.IMAGE) {
-                    thumbnailEncoder.encode(File(requireNotNull(sourceUri.path)))
+                val thumbnailBytes = if (selection.kind.hasVisualThumbnail()) {
+                    thumbnailEncoder.encode(File(requireNotNull(sourceUri.path)), selection.kind)
                 } else {
                     null
                 }
@@ -113,7 +113,7 @@ class FirebaseRemoteAttachmentGateway(
                 contentTask.await()
                 if (thumbnailBytes != null) {
                     val thumbnailReference = storage.reference.child(
-                        requireNotNull(receipt.thumbnailObjectPath) { "Image upload receipt has no thumbnail path." },
+                        requireNotNull(receipt.thumbnailObjectPath) { "Visual upload receipt has no thumbnail path." },
                     )
                     val thumbnailTask = thumbnailReference.putBytes(
                         thumbnailBytes,
@@ -363,7 +363,7 @@ private fun Any?.requireAttachmentReceipt(command: UploadRemoteAttachmentCommand
         "roomAttachments/${command.roomId.raw}/${command.messageId.raw}/${command.selection.attachmentId.raw}"
     if (
         contentObjectPath != "$expectedBasePath/content" ||
-        thumbnailObjectPath != if (command.selection.kind == RemoteAttachmentKind.IMAGE) {
+        thumbnailObjectPath != if (command.selection.kind.hasVisualThumbnail()) {
             "$expectedBasePath/thumbnail"
         } else {
             null
@@ -376,3 +376,6 @@ private fun Any?.requireAttachmentReceipt(command: UploadRemoteAttachmentCommand
 
 private fun String.sha256Hex(): String =
     MessageDigest.getInstance("SHA-256").digest(toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
+
+private fun RemoteAttachmentKind.hasVisualThumbnail(): Boolean =
+    this == RemoteAttachmentKind.IMAGE || this == RemoteAttachmentKind.VIDEO

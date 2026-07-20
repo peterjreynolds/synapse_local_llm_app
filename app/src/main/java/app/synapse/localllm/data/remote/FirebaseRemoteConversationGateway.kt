@@ -896,7 +896,16 @@ private fun readAttachments(
         if (
             contentObjectPath != "$prefix/content" ||
             (kind == RemoteAttachmentKind.IMAGE && thumbnailObjectPath != "$prefix/thumbnail") ||
-            (kind != RemoteAttachmentKind.IMAGE && thumbnailObjectPath != null)
+            (
+                kind == RemoteAttachmentKind.VIDEO &&
+                    thumbnailObjectPath != null &&
+                    thumbnailObjectPath != "$prefix/thumbnail"
+                ) ||
+            (
+                kind != RemoteAttachmentKind.IMAGE &&
+                    kind != RemoteAttachmentKind.VIDEO &&
+                    thumbnailObjectPath != null
+                )
         ) return null
         RemoteCachedAttachment(
             attachmentId = attachmentId,

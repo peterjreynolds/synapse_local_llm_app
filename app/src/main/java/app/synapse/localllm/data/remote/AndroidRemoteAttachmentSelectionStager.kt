@@ -93,17 +93,23 @@ internal class AndroidRemoteAttachmentSelectionStager(
                 }
                 StagedAttachmentMetadata(metadata.displayName, resolvedMimeType, copiedBytes)
             }
-            val measuredAudioDuration = if (stagedMetadata.mimeType.startsWith("audio/")) {
-                audioDurationMillis ?: measureAudioDuration(Uri.fromFile(stagedFile))
-            } else {
-                require(audioDurationMillis == null) { "Only audio can include a duration." }
-                null
+            val measuredMediaDuration = when {
+                stagedMetadata.mimeType.startsWith("audio/") ->
+                    audioDurationMillis ?: measureMediaDuration(Uri.fromFile(stagedFile))
+                stagedMetadata.mimeType.startsWith("video/") -> {
+                    require(audioDurationMillis == null) { "A selected video duration is measured by Android." }
+                    measureMediaDuration(Uri.fromFile(stagedFile))
+                }
+                else -> {
+                    require(audioDurationMillis == null) { "Only audio can include a supplied duration." }
+                    null
+                }
             }
             val decision = RemoteAttachmentPolicy.validate(
                 displayName = stagedMetadata.displayName,
                 mimeType = stagedMetadata.mimeType,
                 byteCount = stagedMetadata.byteCount,
-                audioDurationMillis = measuredAudioDuration,
+                mediaDurationMillis = measuredMediaDuration,
                 isVoiceNote = false,
             )
             RemoteAttachmentSelection(
@@ -169,7 +175,7 @@ internal class AndroidRemoteAttachmentSelectionStager(
             displayName = sourceFile.name,
             mimeType = VOICE_NOTE_MIME_TYPE,
             byteCount = sourceFile.length(),
-            audioDurationMillis = audioDurationMillis ?: measureAudioDuration(uri),
+            mediaDurationMillis = audioDurationMillis ?: measureMediaDuration(uri),
             isVoiceNote = true,
         )
         return RemoteAttachmentSelection(
@@ -183,12 +189,12 @@ internal class AndroidRemoteAttachmentSelectionStager(
         )
     }
 
-    private fun measureAudioDuration(uri: Uri): Long {
+    private fun measureMediaDuration(uri: Uri): Long {
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(applicationContext, uri)
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-                ?: throw IllegalArgumentException("Android could not measure the selected audio file.")
+                ?: throw IllegalArgumentException("Android could not measure the selected audio or video file.")
         } finally {
             retriever.release()
         }
@@ -260,10 +266,19 @@ internal class AndroidRemoteJpegNormalizer {
     }
 }
 
-internal class AndroidRemoteImageThumbnailEncoder {
-    fun encode(sourceFile: File): ByteArray {
-        require(sourceFile.isFile) { "The private image copy is unavailable." }
-        val bitmap = decodeRemoteImageBitmap(sourceFile, THUMBNAIL_EDGE)
+internal class AndroidRemoteVisualThumbnailEncoder(
+    private val videoFrameDecoder: (File) -> Bitmap = ::decodeRemoteVideoFrame,
+) {
+    fun encode(
+        sourceFile: File,
+        kind: RemoteAttachmentKind,
+    ): ByteArray {
+        require(sourceFile.isFile) { "The private visual attachment copy is unavailable." }
+        val bitmap = when (kind) {
+            RemoteAttachmentKind.IMAGE -> decodeRemoteImageBitmap(sourceFile, THUMBNAIL_EDGE)
+            RemoteAttachmentKind.VIDEO -> videoFrameDecoder(sourceFile).scaleToMaximumEdge(THUMBNAIL_EDGE)
+            else -> throw IllegalArgumentException("Only image and video attachments have visual thumbnails.")
+        }
         return bitmap.useAsThumbnailBytes()
     }
 
@@ -274,12 +289,12 @@ internal class AndroidRemoteImageThumbnailEncoder {
             do {
                 output.reset()
                 check(compress(Bitmap.CompressFormat.JPEG, quality, output)) {
-                    "Android could not encode the image thumbnail."
+                    "Android could not encode the visual thumbnail."
                 }
                 quality -= 10
             } while (output.size() > MAXIMUM_THUMBNAIL_BYTES && quality >= 32)
             require(output.size() in 1..MAXIMUM_THUMBNAIL_BYTES) {
-                "The image thumbnail is too large."
+                "The visual thumbnail is too large."
             }
             output.toByteArray()
         } finally {
@@ -291,6 +306,37 @@ internal class AndroidRemoteImageThumbnailEncoder {
         const val MAXIMUM_THUMBNAIL_BYTES = 256 * 1024
         const val THUMBNAIL_EDGE = 512
     }
+}
+
+private fun decodeRemoteVideoFrame(sourceFile: File): Bitmap {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(sourceFile.path)
+        retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            ?: retriever.getFrameAtTime(-1L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            ?: throw RemoteChatException("Android could not create a preview for the selected video.")
+    } catch (exception: RemoteChatException) {
+        throw exception
+    } catch (exception: Exception) {
+        throw RemoteChatException("Android could not create a preview for the selected video.", exception)
+    } finally {
+        retriever.release()
+    }
+}
+
+private fun Bitmap.scaleToMaximumEdge(maximumEdge: Int): Bitmap {
+    val largestEdge = maxOf(width, height)
+    require(largestEdge > 0) { "The selected video frame has invalid dimensions." }
+    if (largestEdge <= maximumEdge) return this
+    val scale = maximumEdge.toFloat() / largestEdge.toFloat()
+    val scaled = Bitmap.createScaledBitmap(
+        this,
+        maxOf(1, (width * scale).toInt()),
+        maxOf(1, (height * scale).toInt()),
+        true,
+    )
+    if (scaled !== this) recycle()
+    return scaled
 }
 
 private fun decodeRemoteImageBitmap(

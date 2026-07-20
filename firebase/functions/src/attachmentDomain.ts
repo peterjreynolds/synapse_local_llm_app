@@ -90,12 +90,15 @@ export function parsePrepareRemoteAttachmentCommand(input: unknown): PrepareRemo
       typeof durationMillis !== "number" ||
       !Number.isSafeInteger(durationMillis) ||
       durationMillis < 1 ||
-      durationMillis > MAXIMUM_AUDIO_DURATION_MILLIS
+      durationMillis > MAXIMUM_MEDIA_DURATION_MILLIS
     )
   ) {
     invalidAttachmentCommand();
   }
-  if ((kind === "AUDIO" || kind === "VOICE_NOTE") !== (durationMillis !== null)) {
+  if (
+    ((kind === "AUDIO" || kind === "VOICE_NOTE") && durationMillis === null) ||
+    ((kind === "IMAGE" || kind === "DOCUMENT") && durationMillis !== null)
+  ) {
     invalidAttachmentCommand();
   }
   return {
@@ -181,5 +184,5 @@ function invalidAttachmentCommand(): never {
   throw new HttpsError("invalid-argument", "Attachment command is invalid.");
 }
 
-const MAXIMUM_AUDIO_DURATION_MILLIS = 60 * 60 * 1_000;
+const MAXIMUM_MEDIA_DURATION_MILLIS = 60 * 60 * 1_000;
 const MAXIMUM_DISPLAY_NAME_STEM_LENGTH = 100;
