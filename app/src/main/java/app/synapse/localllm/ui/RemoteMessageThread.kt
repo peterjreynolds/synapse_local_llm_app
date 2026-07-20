@@ -850,7 +850,7 @@ private fun RemoteCinderParticipationMode.cinderModeExplanation(): String = when
     RemoteCinderParticipationMode.SILENT ->
         "Cinder stays present and receives authorized room context, but does not reply."
     RemoteCinderParticipationMode.MENTION ->
-        "Cinder replies only when a message includes a normalized @Cinder mention."
+        "Cinder replies to a normalized @Cinder mention or a direct reply to one of Cinder's messages."
     RemoteCinderParticipationMode.AUTO ->
         "Cinder may join naturally and can send authorized proactive room messages."
 }

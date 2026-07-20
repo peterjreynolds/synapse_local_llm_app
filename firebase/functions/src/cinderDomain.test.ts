@@ -166,10 +166,11 @@ test("explicit Cinder mention detection rejects substrings, email text, and look
   assert.equal(hasExplicitCinderMention("Cinder without an at sign"), false);
 });
 
-test("human room queue eligibility requires an active trusted participant and explicit mention", () => {
+test("human room queue eligibility requires a trusted participant plus mention or direct reply", () => {
   const eligibleInput = {
     authorKind: "HUMAN",
     body: "@Cinder summarize this",
+    directReply: false,
     participantActive: true,
     participantId: CINDER_PARTICIPANT_ID,
     participantKind: "REMOTE_AI",
@@ -180,6 +181,10 @@ test("human room queue eligibility requires an active trusted participant and ex
 
   assert.equal(isCinderHumanRoomQueueEligible(eligibleInput), true);
   assert.equal(isCinderHumanRoomQueueEligible({...eligibleInput, body: "ordinary message"}), false);
+  assert.equal(
+    isCinderHumanRoomQueueEligible({...eligibleInput, body: "ordinary message", directReply: true}),
+    true,
+  );
   assert.equal(
     isCinderHumanRoomQueueEligible({...eligibleInput, body: "ordinary message", participationMode: "AUTO"}),
     true,
@@ -226,6 +231,8 @@ test("Cinder modes preserve legacy state and distinguish queued from proactive d
   assert.equal(cinderModeAllowsQueuedResponse("SILENT", true), false);
   assert.equal(cinderModeAllowsQueuedResponse("MENTION", true), true);
   assert.equal(cinderModeAllowsQueuedResponse("MENTION", false), false);
+  assert.equal(cinderModeAllowsQueuedResponse("MENTION", false, true), true);
+  assert.equal(cinderModeAllowsQueuedResponse("SILENT", true, true), false);
   assert.equal(cinderModeAllowsQueuedResponse("AUTO", false), true);
   assert.equal(cinderModeAllowsProactiveMessage("MENTION"), false);
   assert.equal(cinderModeAllowsProactiveMessage("AUTO"), true);

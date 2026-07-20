@@ -16,6 +16,7 @@ import {
   CINDER_WORKER_PROTOCOL_VERSION,
   digestCinderLeaseToken,
   FailCinderResponseCommand,
+  isTrustedCinderRemoteAiMessage,
   MAXIMUM_CINDER_ATTEMPTS,
   shouldRetryCinderFailure,
   SkipCinderResponseCommand,
@@ -38,6 +39,7 @@ import {firebaseAdminFirestore} from "./firebaseAdmin.js";
 export interface CinderResponseClaim {
   accountUid: string;
   assistantId: typeof CINDER_ASSISTANT_ID;
+  directReply: boolean;
   explicitMention: boolean;
   idempotencyKey: string;
   jobId: string;
@@ -76,6 +78,7 @@ export async function claimNextCinderResponse(
       claim: {
         accountUid: claimedJob.accountUid,
         assistantId: CINDER_ASSISTANT_ID,
+        directReply: claimedJob.directReply,
         explicitMention: claimedJob.explicitMention,
         idempotencyKey: claimedJob.idempotencyKey,
         jobId: candidate.id,
@@ -319,10 +322,12 @@ async function readCinderJobSourceState(
       sourceSnapshot.get("deletedAt") === null ? "ACTIVE" : "SOURCE_UNAVAILABLE";
   }
   const roomReference = firebaseAdminFirestore.doc(`rooms/${job.roomId}`);
-  const [roomSnapshot, participantSnapshot, sourceSnapshot] = await Promise.all([
+  const [roomSnapshot, participantSnapshot, sourceSnapshot, directReplySnapshot] = await Promise.all([
     transaction.get(roomReference),
     transaction.get(roomReference.collection("participants").doc(CINDER_PARTICIPANT_ID)),
     transaction.get(roomReference.collection("messages").doc(job.sourceMessageId)),
+    job.directReplyToMessageId === null ? Promise.resolve(null) :
+      transaction.get(roomReference.collection("messages").doc(job.directReplyToMessageId)),
   ]);
   if (
     !roomSnapshot.exists ||
@@ -343,9 +348,27 @@ async function readCinderJobSourceState(
     participantSnapshot.get("provenance") !== CINDER_AI_PROVENANCE ||
     participantSnapshot.get("provider") !== CINDER_AI_PROVIDER ||
     participationMode === null ||
-    !cinderModeAllowsQueuedResponse(participationMode, job.explicitMention)
+    !cinderModeAllowsQueuedResponse(participationMode, job.explicitMention, job.directReply)
   ) {
     return "PARTICIPANT_REMOVED";
+  }
+  if (
+    job.directReply &&
+    (
+      directReplySnapshot === null ||
+      !directReplySnapshot.exists ||
+      directReplySnapshot.get("deletedAt") !== null ||
+      !isTrustedCinderRemoteAiMessage({
+        aiParticipantId: directReplySnapshot.get("aiParticipantId"),
+        aiProvenance: directReplySnapshot.get("aiProvenance"),
+        aiProvider: directReplySnapshot.get("aiProvider"),
+        assistantId: directReplySnapshot.get("assistantId"),
+        authorKind: directReplySnapshot.get("authorKind"),
+        senderUid: directReplySnapshot.get("senderUid"),
+      })
+    )
+  ) {
+    return "SOURCE_UNAVAILABLE";
   }
   return sourceSnapshot.exists &&
     sourceSnapshot.get("authorKind") === "HUMAN" &&

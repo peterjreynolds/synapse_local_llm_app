@@ -228,6 +228,7 @@ export function hasExplicitCinderMention(body: string): boolean {
 export function isCinderHumanRoomQueueEligible(input: {
   authorKind: unknown;
   body: unknown;
+  directReply: boolean;
   participantActive: boolean;
   participantId: unknown;
   participantKind: unknown;
@@ -247,7 +248,10 @@ export function isCinderHumanRoomQueueEligible(input: {
     return false;
   }
   return input.participationMode === "AUTO" ||
-    (input.participationMode === "MENTION" && hasExplicitCinderMention(input.body));
+    (
+      input.participationMode === "MENTION" &&
+      (hasExplicitCinderMention(input.body) || input.directReply)
+    );
 }
 
 export function cinderResponsePolicyForMode(
@@ -268,8 +272,9 @@ export function resolveStoredCinderParticipationMode(input: {
 export function cinderModeAllowsQueuedResponse(
   mode: CinderParticipationMode,
   explicitMention: boolean,
+  directReply = false,
 ): boolean {
-  return mode === "AUTO" || (mode === "MENTION" && explicitMention);
+  return mode === "AUTO" || (mode === "MENTION" && (explicitMention || directReply));
 }
 
 export function cinderModeAllowsProactiveMessage(mode: CinderParticipationMode): boolean {
