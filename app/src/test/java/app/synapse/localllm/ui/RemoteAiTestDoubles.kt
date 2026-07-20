@@ -6,9 +6,10 @@ import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAiMessageReceipt
 import app.synapse.localllm.domain.remote.RemoteAiParticipantGateway
 import app.synapse.localllm.domain.remote.RemoteAiProvenance
-import app.synapse.localllm.domain.remote.RemoteAiResponsePolicy
 import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteCinderParticipantState
+import app.synapse.localllm.domain.remote.RemoteCinderParticipationMode
+import app.synapse.localllm.domain.remote.RemoteCinderWorkState
 import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteHostedAiExecutionPolicy
 import app.synapse.localllm.domain.remote.RemoteHostedAiStatus
@@ -30,6 +31,7 @@ internal object NoOpRemoteAiParticipantGateway : RemoteAiParticipantGateway {
         command: UpdateRemoteCinderParticipantCommand,
     ): RemoteCinderParticipantState = inactiveCinderParticipant(command.roomId).copy(
         active = command.active,
+        mode = command.mode,
         revision = 1,
     )
 
@@ -78,10 +80,11 @@ private fun inactiveCinderParticipant(roomId: RemoteRoomId): RemoteCinderPartici
         displayName = "Cinder",
         active = false,
         canManage = true,
+        mode = RemoteCinderParticipationMode.MENTION,
         provenance = RemoteAiProvenance.REMOTE_HOSTED,
         provider = "OPENCLAW_CINDER",
-        responsePolicy = RemoteAiResponsePolicy.MENTION_ONLY,
         revision = 0,
+        workState = RemoteCinderWorkState.IDLE,
     )
 
 internal object IdleRemoteLocalAiResponseHost : RemoteLocalAiResponseHost {

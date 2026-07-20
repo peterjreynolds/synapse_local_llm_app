@@ -18,7 +18,7 @@ object RemoteAttachmentPolicy {
     ): RemoteAttachmentPolicyDecision {
         val normalizedMimeType = canonicalMimeType(mimeType)
         val policy = policies[normalizedMimeType]
-            ?: throw IllegalArgumentException("Choose a supported image, document, or audio file.")
+            ?: throw IllegalArgumentException("Choose a supported image, video, document, or audio file.")
         require(byteCount in 1..policy.maximumBytes) {
             "${policy.kind.displayLabel()} attachments must be smaller than ${policy.maximumBytes / MEBIBYTE} MB."
         }
@@ -98,6 +98,9 @@ object RemoteAttachmentPolicy {
         "image/jpeg" to Policy("jpg", RemoteAttachmentKind.IMAGE, 15 * MEBIBYTE),
         "image/png" to Policy("png", RemoteAttachmentKind.IMAGE, 15 * MEBIBYTE),
         "image/webp" to Policy("webp", RemoteAttachmentKind.IMAGE, 15 * MEBIBYTE),
+        "video/mp4" to Policy("mp4", RemoteAttachmentKind.VIDEO, 50 * MEBIBYTE),
+        "video/quicktime" to Policy("mov", RemoteAttachmentKind.VIDEO, 50 * MEBIBYTE),
+        "video/webm" to Policy("webm", RemoteAttachmentKind.VIDEO, 50 * MEBIBYTE),
         "text/csv" to Policy("csv", RemoteAttachmentKind.DOCUMENT, 10 * MEBIBYTE),
         "text/markdown" to Policy("md", RemoteAttachmentKind.DOCUMENT, 10 * MEBIBYTE),
         "text/plain" to Policy("txt", RemoteAttachmentKind.DOCUMENT, 10 * MEBIBYTE),

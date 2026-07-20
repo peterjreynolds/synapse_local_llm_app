@@ -10,6 +10,8 @@ import app.synapse.localllm.domain.remote.RemoteAiResponsePolicy
 import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteCinderParticipantState
+import app.synapse.localllm.domain.remote.RemoteCinderParticipationMode
+import app.synapse.localllm.domain.remote.RemoteCinderWorkState
 import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteHostedAiExecutionPolicy
 import app.synapse.localllm.domain.remote.RemoteHostedAiStatus
@@ -48,6 +50,8 @@ class FirebaseRemoteAiParticipantGateway(
             "setCinderParticipant",
             mapOf(
                 "active" to command.active,
+                "expectedRevision" to command.expectedRevision,
+                "mode" to command.mode.name,
                 "roomId" to command.roomId.raw,
             ),
         ).toCinderParticipantState(command.roomId)
@@ -181,6 +185,14 @@ internal fun Map<*, *>.toCinderParticipantState(expectedRoomId: RemoteRoomId): R
     val provenance = requireAiString("provenance")
     val provider = requireAiString("provider")
     val responsePolicy = requireAiString("responsePolicy")
+    val mode = optionalAiString("mode")?.let { persistedMode ->
+        RemoteCinderParticipationMode.entries.firstOrNull { candidate -> candidate.name == persistedMode }
+            ?: malformedAiResponse()
+    } ?: RemoteCinderParticipationMode.MENTION
+    val workState = optionalAiString("workState")?.let { persistedState ->
+        RemoteCinderWorkState.entries.firstOrNull { candidate -> candidate.name == persistedState }
+            ?: malformedAiResponse()
+    } ?: RemoteCinderWorkState.IDLE
     if (
         participantId != endpoint.participantId.raw ||
         displayName != endpoint.displayName ||
@@ -197,10 +209,11 @@ internal fun Map<*, *>.toCinderParticipantState(expectedRoomId: RemoteRoomId): R
         displayName = displayName,
         active = requireAiBoolean("active"),
         canManage = requireAiBoolean("canManage"),
+        mode = mode,
         provenance = RemoteAiProvenance.REMOTE_HOSTED,
         provider = provider,
-        responsePolicy = RemoteAiResponsePolicy.MENTION_ONLY,
         revision = requireAiLong("revision"),
+        workState = workState,
     )
 }
 

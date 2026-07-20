@@ -12,10 +12,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -28,8 +32,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -41,6 +47,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -84,16 +91,46 @@ internal fun RemotePendingAttachmentList(
                     modifier = Modifier.padding(start = 10.dp, top = 7.dp, bottom = 7.dp, end = 2.dp),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = when (pending.selection.kind) {
-                            RemoteAttachmentKind.IMAGE -> Icons.Default.Image
-                            RemoteAttachmentKind.DOCUMENT -> Icons.Default.Description
-                            RemoteAttachmentKind.AUDIO -> Icons.Default.AudioFile
-                            RemoteAttachmentKind.VOICE_NOTE -> Icons.Default.Mic
-                        },
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp),
-                    )
+                    if (pending.selection.kind == RemoteAttachmentKind.IMAGE) {
+                        Box(modifier = Modifier.size(64.dp)) {
+                            AsyncImage(
+                                model = pending.selection.sourceUri,
+                                contentDescription = pending.selection.displayName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.matchParentSize(),
+                            )
+                            if (pending.state == RemoteAttachmentTransferState.UPLOADING) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
+                                    modifier = Modifier.matchParentSize(),
+                                ) {
+                                    Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                        CircularProgressIndicator(
+                                            progress = {
+                                                (pending.transferredBytes.toFloat() /
+                                                    pending.selection.byteCount.coerceAtLeast(1L).toFloat())
+                                                    .coerceIn(0f, 1f)
+                                            },
+                                            modifier = Modifier.size(30.dp),
+                                            strokeWidth = 3.dp,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Icon(
+                            imageVector = when (pending.selection.kind) {
+                                RemoteAttachmentKind.IMAGE -> Icons.Default.Image
+                                RemoteAttachmentKind.VIDEO -> Icons.Default.Movie
+                                RemoteAttachmentKind.DOCUMENT -> Icons.Default.Description
+                                RemoteAttachmentKind.AUDIO -> Icons.Default.AudioFile
+                                RemoteAttachmentKind.VOICE_NOTE -> Icons.Default.Mic
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                     Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
                         Text(
                             remotePendingAttachmentTitle(pending),
@@ -158,11 +195,65 @@ internal fun remotePendingAttachmentTitle(pending: RemotePendingAttachmentUi): S
     if (pending.selection.kind == RemoteAttachmentKind.VOICE_NOTE) "Voice message" else pending.selection.displayName
 
 @Composable
+internal fun RemoteMessageAttachmentGallery(
+    attachments: List<RemoteCachedAttachment>,
+    downloads: Map<String, RemoteAttachmentDownloadUi>,
+    onDownload: (RemoteAttachmentId, Boolean) -> Unit,
+    onCancelDownload: (RemoteAttachmentId, Boolean) -> Unit,
+) {
+    if (attachments.isEmpty()) return
+    val images = attachments.filter { attachment -> attachment.kind == RemoteAttachmentKind.IMAGE }
+    if (images.size == 1) {
+        RemoteMessageAttachmentCard(
+            attachment = images.single(),
+            downloads = downloads,
+            onDownload = onDownload,
+            onCancelDownload = onCancelDownload,
+            imageGallery = images,
+            imageGalleryIndex = 0,
+        )
+    } else {
+        images.chunked(2).forEach { rowImages ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                rowImages.forEach { image ->
+                    RemoteMessageAttachmentCard(
+                        attachment = image,
+                        downloads = downloads,
+                        onDownload = onDownload,
+                        onCancelDownload = onCancelDownload,
+                        imageGallery = images,
+                        imageGalleryIndex = images.indexOf(image),
+                        squareImageCell = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (rowImages.size == 1) Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+    }
+    attachments.filterNot { attachment -> attachment.kind == RemoteAttachmentKind.IMAGE }.forEach { attachment ->
+        RemoteMessageAttachmentCard(
+            attachment = attachment,
+            downloads = downloads,
+            onDownload = onDownload,
+            onCancelDownload = onCancelDownload,
+        )
+    }
+}
+
+@Composable
 internal fun RemoteMessageAttachmentCard(
     attachment: RemoteCachedAttachment,
     downloads: Map<String, RemoteAttachmentDownloadUi>,
     onDownload: (RemoteAttachmentId, Boolean) -> Unit,
     onCancelDownload: (RemoteAttachmentId, Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    imageGallery: List<RemoteCachedAttachment> = listOf(attachment),
+    imageGalleryIndex: Int = 0,
+    squareImageCell: Boolean = false,
 ) {
     if (attachment.kind == RemoteAttachmentKind.VOICE_NOTE) {
         RemoteVoiceNoteAttachment(
@@ -179,22 +270,27 @@ internal fun RemoteMessageAttachmentCard(
     val imageExporter = remember(context) { AndroidDownloadedImageExporter(context) }
     val coroutineScope = rememberCoroutineScope()
     var showImage by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf(false) }
+    var imageAspectRatio by remember(attachment.attachmentId.raw) { mutableFloatStateOf(4f / 3f) }
     var openImageAfterDownload by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf(false) }
-    var saveImageAfterDownload by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf(false) }
+    var saveImageAfterDownloadId by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf<String?>(null) }
+    var shareImageAfterDownloadId by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf<String?>(null) }
     var isSavingImage by rememberSaveable(attachment.attachmentId.raw) { mutableStateOf(false) }
     var pendingLegacyImageSaveUri by rememberSaveable(attachment.attachmentId.raw) {
         mutableStateOf<String?>(null)
     }
+    var pendingLegacyImageSaveAttachmentId by rememberSaveable(attachment.attachmentId.raw) {
+        mutableStateOf<String?>(null)
+    }
 
-    fun saveImageToPictures(localUri: String) {
+    fun saveImageToPictures(targetAttachment: RemoteCachedAttachment, localUri: String) {
         if (isSavingImage) return
         coroutineScope.launch {
             isSavingImage = true
             val notice = runCatching {
                 imageExporter.exportToPictures(
                     localUri = localUri,
-                    displayName = attachment.displayName,
-                    mimeType = attachment.mimeType,
+                    displayName = targetAttachment.displayName,
+                    mimeType = targetAttachment.mimeType,
                 )
             }.fold(
                 onSuccess = { receipt -> "Saved ${receipt.displayName} to Pictures/Synapse." },
@@ -209,9 +305,13 @@ internal fun RemoteMessageAttachmentCard(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         val localUri = pendingLegacyImageSaveUri
+        val targetAttachment = imageGallery.firstOrNull { image ->
+            image.attachmentId.raw == pendingLegacyImageSaveAttachmentId
+        }
         pendingLegacyImageSaveUri = null
-        if (granted && localUri != null) {
-            saveImageToPictures(localUri)
+        pendingLegacyImageSaveAttachmentId = null
+        if (granted && localUri != null && targetAttachment != null) {
+            saveImageToPictures(targetAttachment, localUri)
         } else if (!granted) {
             Toast.makeText(
                 context,
@@ -221,26 +321,41 @@ internal fun RemoteMessageAttachmentCard(
         }
     }
 
-    fun saveImageWithPermission(localUri: String) {
+    fun saveImageWithPermission(targetAttachment: RemoteCachedAttachment, localUri: String) {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
             PackageManager.PERMISSION_GRANTED
         ) {
-            saveImageToPictures(localUri)
+            saveImageToPictures(targetAttachment, localUri)
         } else {
             pendingLegacyImageSaveUri = localUri
+            pendingLegacyImageSaveAttachmentId = targetAttachment.attachmentId.raw
             legacyImageExportPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
     }
 
-    fun requestImageSave() {
-        val localUri = contentDownload?.localUri
+    fun requestImageSave(targetAttachment: RemoteCachedAttachment = attachment) {
+        val localUri = downloads[
+            remoteAttachmentDownloadKey(targetAttachment.attachmentId, thumbnail = false)
+        ]?.localUri
         if (localUri == null) {
-            saveImageAfterDownload = true
-            onDownload(attachment.attachmentId, false)
+            saveImageAfterDownloadId = targetAttachment.attachmentId.raw
+            onDownload(targetAttachment.attachmentId, false)
         } else {
-            saveImageWithPermission(localUri)
+            saveImageWithPermission(targetAttachment, localUri)
+        }
+    }
+
+    fun requestImageShare(targetAttachment: RemoteCachedAttachment) {
+        val localUri = downloads[
+            remoteAttachmentDownloadKey(targetAttachment.attachmentId, thumbnail = false)
+        ]?.localUri
+        if (localUri == null) {
+            shareImageAfterDownloadId = targetAttachment.attachmentId.raw
+            onDownload(targetAttachment.attachmentId, false)
+        } else {
+            shareDownloadedAttachment(context, localUri, targetAttachment.mimeType)
         }
     }
 
@@ -256,18 +371,35 @@ internal fun RemoteMessageAttachmentCard(
                 showImage = true
             }
         }
-        LaunchedEffect(contentDownload?.localUri, saveImageAfterDownload) {
-            val localUri = contentDownload?.localUri
-            if (saveImageAfterDownload && localUri != null) {
-                saveImageAfterDownload = false
-                saveImageWithPermission(localUri)
+        LaunchedEffect(downloads, saveImageAfterDownloadId) {
+            val targetAttachment = imageGallery.firstOrNull { image ->
+                image.attachmentId.raw == saveImageAfterDownloadId
+            }
+            val localUri = targetAttachment?.let { image ->
+                downloads[remoteAttachmentDownloadKey(image.attachmentId, thumbnail = false)]?.localUri
+            }
+            if (targetAttachment != null && localUri != null) {
+                saveImageAfterDownloadId = null
+                saveImageWithPermission(targetAttachment, localUri)
+            }
+        }
+        LaunchedEffect(downloads, shareImageAfterDownloadId) {
+            val targetAttachment = imageGallery.firstOrNull { image ->
+                image.attachmentId.raw == shareImageAfterDownloadId
+            }
+            val localUri = targetAttachment?.let { image ->
+                downloads[remoteAttachmentDownloadKey(image.attachmentId, thumbnail = false)]?.localUri
+            }
+            if (targetAttachment != null && localUri != null) {
+                shareImageAfterDownloadId = null
+                shareDownloadedAttachment(context, localUri, targetAttachment.mimeType)
             }
         }
     }
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(top = 6.dp)
             .then(
@@ -287,26 +419,63 @@ internal fun RemoteMessageAttachmentCard(
     ) {
         Column(modifier = Modifier.padding(if (attachment.kind == RemoteAttachmentKind.IMAGE) 0.dp else 8.dp)) {
             if (attachment.kind == RemoteAttachmentKind.IMAGE && thumbnailDownload?.localUri != null) {
-                AsyncImage(
-                    model = thumbnailDownload.localUri,
-                    contentDescription = attachment.displayName,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp)
-                        .combinedClickable(
-                            onClick = {
-                                if (contentDownload?.localUri == null) {
-                                    openImageAfterDownload = true
-                                    onDownload(attachment.attachmentId, false)
+                Box {
+                    AsyncImage(
+                        model = thumbnailDownload.localUri,
+                        contentDescription = attachment.displayName,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (squareImageCell) {
+                                    Modifier.aspectRatio(1f)
                                 } else {
-                                    showImage = true
+                                    Modifier
+                                        .aspectRatio(imageAspectRatio.coerceIn(0.55f, 2.2f))
+                                        .heightIn(max = 420.dp)
+                                },
+                            )
+                            .combinedClickable(
+                                onClick = {
+                                    if (contentDownload?.localUri == null) {
+                                        openImageAfterDownload = true
+                                        onDownload(attachment.attachmentId, false)
+                                    } else {
+                                        showImage = true
+                                    }
+                                },
+                                onLongClickLabel = "Save image to Pictures",
+                                onLongClick = { requestImageSave() },
+                            ),
+                        contentScale = if (squareImageCell) ContentScale.Crop else ContentScale.Fit,
+                        onSuccess = { success ->
+                            val intrinsicSize = success.painter.intrinsicSize
+                            if (
+                                intrinsicSize.width.isFinite() &&
+                                intrinsicSize.height.isFinite() &&
+                                intrinsicSize.height > 0f
+                            ) {
+                                imageAspectRatio = intrinsicSize.width / intrinsicSize.height
+                            }
+                        },
+                    )
+                    if (
+                        contentDownload != null &&
+                        contentDownload.localUri == null &&
+                        contentDownload.failureReason == null
+                    ) {
+                        LinearProgressIndicator(
+                            progress = {
+                                if (contentDownload.totalBytes <= 0L) {
+                                    0f
+                                } else {
+                                    (contentDownload.transferredBytes.toFloat() / contentDownload.totalBytes.toFloat())
+                                        .coerceIn(0f, 1f)
                                 }
                             },
-                            onLongClickLabel = "Save image to Pictures",
-                            onLongClick = ::requestImageSave,
-                        ),
-                    contentScale = ContentScale.Crop,
-                )
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+                        )
+                    }
+                }
             } else if (attachment.kind == RemoteAttachmentKind.IMAGE) {
                 Text(
                     text = if (thumbnailDownload?.failureReason == null) {
@@ -327,18 +496,6 @@ internal fun RemoteMessageAttachmentCard(
             }
             val download = contentDownload
             if (attachment.kind == RemoteAttachmentKind.IMAGE) {
-                if (download != null && download.localUri == null && download.failureReason == null) {
-                    LinearProgressIndicator(
-                        progress = {
-                            if (download.totalBytes <= 0L) {
-                                0f
-                            } else {
-                                (download.transferredBytes.toFloat() / download.totalBytes.toFloat()).coerceIn(0f, 1f)
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
                 download?.failureReason?.let { failure ->
                     Text(
                         text = failure,
@@ -401,25 +558,15 @@ internal fun RemoteMessageAttachmentCard(
             }
         }
     }
-    if (showImage && contentDownload?.localUri != null) {
-        AlertDialog(
-            onDismissRequest = { showImage = false },
-            title = { Text(attachment.displayName) },
-            text = {
-                AsyncImage(
-                    model = contentDownload.localUri,
-                    contentDescription = attachment.displayName,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .combinedClickable(
-                            onClick = {},
-                            onLongClickLabel = "Save image to Pictures",
-                            onLongClick = ::requestImageSave,
-                        ),
-                    contentScale = ContentScale.Fit,
-                )
-            },
-            confirmButton = { TextButton(onClick = { showImage = false }) { Text("Close") } },
+    if (showImage) {
+        RemoteFullscreenImageViewer(
+            images = imageGallery,
+            initialPage = imageGalleryIndex,
+            downloads = downloads,
+            onDownload = onDownload,
+            onSave = ::requestImageSave,
+            onShare = ::requestImageShare,
+            onDismiss = { showImage = false },
         )
     }
 }
@@ -446,6 +593,32 @@ private fun openDownloadedAttachment(
         context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(context, "No app on this phone can open this file type.", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun shareDownloadedAttachment(
+    context: android.content.Context,
+    localUri: String,
+    mimeType: String,
+) {
+    val sourceUri = localUri.toUri()
+    val shareableUri = when (sourceUri.scheme) {
+        ContentResolverScheme.FILE -> FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            File(requireNotNull(sourceUri.path)),
+        )
+        ContentResolverScheme.CONTENT -> sourceUri
+        else -> return
+    }
+    val shareIntent = Intent(Intent.ACTION_SEND)
+        .setType(mimeType)
+        .putExtra(Intent.EXTRA_STREAM, shareableUri)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    runCatching {
+        context.startActivity(Intent.createChooser(shareIntent, "Share image"))
+    }.onFailure {
+        Toast.makeText(context, "No app on this phone can share this image.", Toast.LENGTH_LONG).show()
     }
 }
 
@@ -514,4 +687,10 @@ internal val REMOTE_FILE_AND_AUDIO_MIME_TYPES = arrayOf(
     "text/csv",
     "text/markdown",
     "text/plain",
+)
+
+internal val REMOTE_VIDEO_MIME_TYPES = arrayOf(
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
 )

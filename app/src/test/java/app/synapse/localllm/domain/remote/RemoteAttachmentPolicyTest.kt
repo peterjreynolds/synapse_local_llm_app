@@ -54,6 +54,19 @@ class RemoteAttachmentPolicyTest {
     }
 
     @Test
+    fun `accepts bounded videos with canonical presentation`() {
+        val decision = RemoteAttachmentPolicy.validate(
+            displayName = "launch.clip",
+            mimeType = "video/mp4",
+            byteCount = 8L * 1024 * 1024,
+        )
+
+        assertEquals("launch.mp4", decision.displayName)
+        assertEquals(RemoteAttachmentKind.VIDEO, decision.kind)
+        assertEquals(null, decision.durationMillis)
+    }
+
+    @Test
     fun `canonicalizes Android JPEG aliases`() {
         val decision = RemoteAttachmentPolicy.validate(
             displayName = "phone screenshot.jpeg",
@@ -64,6 +77,6 @@ class RemoteAttachmentPolicyTest {
         assertEquals("image/jpeg", decision.mimeType)
         assertEquals("phone screenshot.jpg", decision.displayName)
         assertEquals(15L * 1024L * 1024L, RemoteAttachmentPolicy.maximumBytesFor("image/pjpeg"))
-        assertEquals(25L * 1024L * 1024L, RemoteAttachmentPolicy.maximumSupportedBytes())
+        assertEquals(50L * 1024L * 1024L, RemoteAttachmentPolicy.maximumSupportedBytes())
     }
 }

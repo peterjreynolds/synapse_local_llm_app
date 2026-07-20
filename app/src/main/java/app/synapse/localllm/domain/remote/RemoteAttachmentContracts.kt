@@ -11,6 +11,7 @@ value class RemoteAttachmentId(val raw: String) {
 
 enum class RemoteAttachmentKind {
     IMAGE,
+    VIDEO,
     DOCUMENT,
     AUDIO,
     VOICE_NOTE,
@@ -42,9 +43,9 @@ data class RemoteCachedAttachment(
         require(contentObjectPath.endsWith("/${attachmentId.raw}/content")) {
             "Remote attachment content path is inconsistent."
         }
-        require(
-            (kind == RemoteAttachmentKind.IMAGE) == (thumbnailObjectPath != null),
-        ) { "Only image attachments require a thumbnail path." }
+        require((kind == RemoteAttachmentKind.IMAGE) == (thumbnailObjectPath != null)) {
+            "Only image attachments require a thumbnail path."
+        }
         thumbnailObjectPath?.let { path ->
             require(path.endsWith("/${attachmentId.raw}/thumbnail")) {
                 "Remote attachment thumbnail path is inconsistent."

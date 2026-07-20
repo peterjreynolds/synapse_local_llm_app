@@ -6,6 +6,7 @@ import app.synapse.localllm.domain.remote.RemoteAccountUid
 import app.synapse.localllm.domain.remote.RemoteAiProvenance
 import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
+import app.synapse.localllm.domain.remote.RemoteCinderWorkState
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteProfileUid
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
@@ -29,6 +30,28 @@ class RemoteChatPresentationTest {
         assertEquals("Online", remotePresenceLabel(profile(isOnline = true, lastSeenAt = NOW)))
         assertTrue(remotePresenceLabel(profile(isOnline = false, lastSeenAt = NOW)).startsWith("Last seen "))
         assertEquals("Offline", remotePresenceLabel(profile(isOnline = false, lastSeenAt = null)))
+    }
+
+    @Test
+    fun conversationActivityCombinesMultipleTypersWithRealCinderWork() {
+        assertEquals(
+            "Richard is typing…",
+            remoteConversationActivityLabel(listOf("Richard"), RemoteCinderWorkState.IDLE),
+        )
+        assertEquals(
+            "Richard and Trish are typing… · Cinder is thinking…",
+            remoteConversationActivityLabel(
+                listOf("Richard", "Trish"),
+                RemoteCinderWorkState.THINKING,
+            ),
+        )
+        assertEquals(
+            "Richard, Trish +1 are typing…",
+            remoteConversationActivityLabel(
+                listOf("Richard", "Trish", "Josh"),
+                null,
+            ),
+        )
     }
 
     @Test
@@ -281,6 +304,7 @@ class RemoteChatPresentationTest {
         assertTrue("image/gif" in REMOTE_PHOTO_AND_GIF_MIME_TYPES)
         assertFalse(REMOTE_FILE_AND_AUDIO_MIME_TYPES.any { mimeType -> mimeType.startsWith("image/") })
         assertTrue(REMOTE_FILE_AND_AUDIO_MIME_TYPES.any { mimeType -> mimeType.startsWith("audio/") })
+        assertTrue(REMOTE_VIDEO_MIME_TYPES.all { mimeType -> mimeType.startsWith("video/") })
     }
 
     @Test

@@ -107,6 +107,9 @@ class AndroidDebugArchiveExporter(
             appendLine("memoryWritesEnabled=${settings.memoryWritesEnabled}")
             appendLine("speechPlaybackEnabled=${settings.speechPlaybackEnabled}")
             appendLine("smsAutoReplyEnabled=${settings.smsAutoReplyEnabled}")
+            appendLine("chatSoundsEnabled=${settings.chatSoundsEnabled}")
+            appendLine("chatHapticsEnabled=${settings.chatHapticsEnabled}")
+            appendLine("reducedMotionEnabled=${settings.reducedMotionEnabled}")
             appendLine("runtimeStatus=${runtimeStatus.toRedactedStatus()}")
             if (storageHealthSnapshot == null) {
                 appendLine("storageHealthAvailable=false")

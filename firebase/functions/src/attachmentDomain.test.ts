@@ -59,6 +59,22 @@ test("accepts GIF images and normalizes their extension", () => {
   assert.equal(command.kind, "IMAGE");
 });
 
+test("accepts bounded videos without inventing audio duration", () => {
+  const command = parsePrepareRemoteAttachmentCommand({
+    attachmentId,
+    byteCount: 8 * 1024 * 1024,
+    displayName: "launch.clip",
+    durationMillis: null,
+    kind: "VIDEO",
+    messageId,
+    mimeType: "video/mp4",
+    roomId,
+  });
+  assert.equal(command.displayName, "launch.mp4");
+  assert.equal(command.kind, "VIDEO");
+  assert.equal(command.durationMillis, null);
+});
+
 test("rejects executables, MIME-kind mismatches, oversize files, and non-random identifiers", () => {
   const base = {
     attachmentId,

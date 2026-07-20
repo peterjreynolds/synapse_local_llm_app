@@ -81,6 +81,9 @@ class AndroidDebugArchiveExporterTest {
                 customInstructions = "instruction-secret-canary",
                 systemPrompt = "system-$promptCanary",
                 smsAutoReplyInstructions = "sms-instruction-canary",
+                chatSoundsEnabled = false,
+                chatHapticsEnabled = false,
+                reducedMotionEnabled = true,
             ),
             runtimeStatus = RuntimeStatus.Unreachable(
                 baseUrl = "https://runtime-host-canary.example",
@@ -137,6 +140,9 @@ class AndroidDebugArchiveExporterTest {
         assertTrue(archiveText.contains("endpointClass=REMOTE_NETWORK"))
         assertTrue(archiveText.contains("runtimeStatus=UNREACHABLE"))
         assertTrue(archiveText.contains("storageHealthState=WARNING"))
+        assertTrue(archiveText.contains("chatSoundsEnabled=false"))
+        assertTrue(archiveText.contains("chatHapticsEnabled=false"))
+        assertTrue(archiveText.contains("reducedMotionEnabled=true"))
         assertTrue(archiveText.contains("rawAppStateIncluded=false"))
         assertTrue(archiveText.contains("databaseSummaryAvailable=false"))
         assertEquals("content", receipt.uri.scheme)

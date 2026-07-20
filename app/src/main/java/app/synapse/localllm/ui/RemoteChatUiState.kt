@@ -30,6 +30,7 @@ data class RemoteChatUiState(
     val selectedAssistantEndpoint: RemoteAssistantConversationEndpoint? = null,
     val selectedAssistantAvailability: RemoteAssistantAvailability? = null,
     val messages: List<RemoteCachedMessage> = emptyList(),
+    val confirmedLocalDeletionEffects: List<RemoteCachedMessage> = emptyList(),
     val composerText: String = "",
     val pendingAttachments: List<RemotePendingAttachmentUi> = emptyList(),
     val attachmentDownloads: Map<String, RemoteAttachmentDownloadUi> = emptyMap(),

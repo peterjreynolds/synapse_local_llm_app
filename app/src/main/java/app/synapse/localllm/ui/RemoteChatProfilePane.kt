@@ -54,6 +54,7 @@ import app.synapse.localllm.POST_NOTIFICATIONS_PERMISSION
 import app.synapse.localllm.domain.appearance.ChatBubblePalette
 import app.synapse.localllm.domain.calling.DirectCallRingtoneSource
 import app.synapse.localllm.domain.notifications.NotificationPermissionState
+import app.synapse.localllm.domain.settings.SynapseSettings
 import app.synapse.localllm.resolveNotificationPermissionState
 import java.time.Instant
 
@@ -69,8 +70,10 @@ internal fun RemoteProfilePane(
     appearanceState: ChatAppearanceUiState,
     directCallRingtoneState: DirectCallRingtoneUiState,
     directCallRingtoneViewModel: DirectCallRingtoneViewModel,
+    settings: SynapseSettings,
     onBubblePaletteSelected: (ChatBubblePalette) -> Unit,
     onCheckAppUpdate: () -> Unit,
+    onChatFeedbackChanged: (Boolean, Boolean, Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val accountUid = state.account?.accountUid
@@ -349,6 +352,37 @@ internal fun RemoteProfilePane(
                 viewModel.updateNotificationPreferences(
                     state.notificationPreferences.copy(mutedRooms = enabled),
                 )
+            },
+        )
+
+        HorizontalDivider()
+        Text("Chat feedback", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            "Restrained in-app cues respect Android sound, haptic, Do Not Disturb, and accessibility settings.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        NotificationPreferenceRow(
+            label = "Message and reaction sounds",
+            checked = settings.chatSoundsEnabled,
+            enabled = true,
+            onCheckedChange = { enabled ->
+                onChatFeedbackChanged(enabled, settings.chatHapticsEnabled, settings.reducedMotionEnabled)
+            },
+        )
+        NotificationPreferenceRow(
+            label = "Send and reaction haptics",
+            checked = settings.chatHapticsEnabled,
+            enabled = true,
+            onCheckedChange = { enabled ->
+                onChatFeedbackChanged(settings.chatSoundsEnabled, enabled, settings.reducedMotionEnabled)
+            },
+        )
+        NotificationPreferenceRow(
+            label = "Reduce motion",
+            checked = settings.reducedMotionEnabled,
+            enabled = true,
+            onCheckedChange = { enabled ->
+                onChatFeedbackChanged(settings.chatSoundsEnabled, settings.chatHapticsEnabled, enabled)
             },
         )
 

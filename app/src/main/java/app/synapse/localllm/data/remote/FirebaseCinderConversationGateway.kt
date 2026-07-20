@@ -8,6 +8,7 @@ import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteAssistantConversationEndpoint
 import app.synapse.localllm.domain.remote.RemoteAssistantConversationGateway
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
+import app.synapse.localllm.domain.remote.RemoteCinderWorkState
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteIdempotencyKey
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
@@ -64,11 +65,11 @@ class FirebaseCinderConversationGateway internal constructor(
         requireCinderEndpoint(endpoint)
         val availability = lastAvailability
         return if (
-            availability == RemoteAssistantAvailability.Available &&
+            availability.isConnectedCinderAvailability() &&
             availableUntilMillis.get() > currentTimeMillis()
         ) {
             availability
-        } else if (availability == RemoteAssistantAvailability.Available) {
+        } else if (availability.isConnectedCinderAvailability()) {
             CINDER_OFFLINE_AVAILABILITY.also { lastAvailability = it }
         } else {
             availability
@@ -88,7 +89,11 @@ class FirebaseCinderConversationGateway internal constructor(
                     .toCinderAvailabilityReceipt()
                 availableUntilMillis.set(receipt.availableUntilMillis ?: 0L)
                 if (receipt.available) {
-                    RemoteAssistantAvailability.Available
+                    if (receipt.workState == RemoteCinderWorkState.IDLE) {
+                        RemoteAssistantAvailability.Available
+                    } else {
+                        RemoteAssistantAvailability.Working
+                    }
                 } else {
                     CINDER_OFFLINE_AVAILABILITY
                 }
@@ -230,6 +235,7 @@ private class FirebaseCinderCallableTransport(
 internal data class CinderAvailabilityReceipt(
     val available: Boolean,
     val availableUntilMillis: Long?,
+    val workState: RemoteCinderWorkState,
 )
 
 internal data class CinderMessageSyncPage(
@@ -242,6 +248,10 @@ internal fun Map<*, *>.toCinderAvailabilityReceipt(): CinderAvailabilityReceipt 
     val available = requireCinderBoolean("available")
     val availableUntilMillis = optionalCinderLong("availableUntilMillis")
     val checkedAtMillis = requireCinderLong("checkedAtMillis")
+    val workState = optionalCinderString("workState")?.let { persistedState ->
+        RemoteCinderWorkState.entries.firstOrNull { candidate -> candidate.name == persistedState }
+            ?: malformedCinderResponse()
+    } ?: RemoteCinderWorkState.IDLE
     if (
         requireCinderLong("protocolVersion") != CINDER_PROTOCOL_VERSION ||
         (available && (availableUntilMillis == null || availableUntilMillis <= checkedAtMillis)) ||
@@ -249,8 +259,11 @@ internal fun Map<*, *>.toCinderAvailabilityReceipt(): CinderAvailabilityReceipt 
     ) {
         malformedCinderResponse()
     }
-    return CinderAvailabilityReceipt(available, availableUntilMillis)
+    return CinderAvailabilityReceipt(available, availableUntilMillis, workState)
 }
+
+private fun RemoteAssistantAvailability.isConnectedCinderAvailability(): Boolean =
+    this == RemoteAssistantAvailability.Available || this == RemoteAssistantAvailability.Working
 
 internal fun Map<*, *>.toCinderMessageSyncPage(
     accountUid: RemoteAccountUid,

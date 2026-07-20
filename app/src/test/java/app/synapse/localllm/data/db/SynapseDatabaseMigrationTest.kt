@@ -252,6 +252,11 @@ class SynapseDatabaseMigrationTest {
         val settingsStore = SynapseSettingsStore(context)
         settingsStore.updateMemoryWritesEnabled(false)
         settingsStore.updateSmsAutoReplyEnabled(true)
+        settingsStore.updateChatFeedback(
+            soundsEnabled = false,
+            hapticsEnabled = false,
+            reducedMotionEnabled = true,
+        )
         val settingsBeforeMigration = settingsStore.settingsFlow.first()
 
         val helper = FrameworkSQLiteOpenHelperFactory().create(

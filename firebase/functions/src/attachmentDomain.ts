@@ -1,7 +1,7 @@
 import {createHash} from "node:crypto";
 import {HttpsError} from "firebase-functions/v2/https";
 
-export type RemoteAttachmentKind = "AUDIO" | "DOCUMENT" | "IMAGE" | "VOICE_NOTE";
+export type RemoteAttachmentKind = "AUDIO" | "DOCUMENT" | "IMAGE" | "VIDEO" | "VOICE_NOTE";
 
 export interface PrepareRemoteAttachmentCommand {
   attachmentId: string;
@@ -44,6 +44,9 @@ const attachmentPolicies: Readonly<Record<string, AttachmentPolicy>> = {
   "image/jpeg": {canonicalExtension: "jpg", kind: "IMAGE", maximumBytes: 15 * 1024 * 1024},
   "image/png": {canonicalExtension: "png", kind: "IMAGE", maximumBytes: 15 * 1024 * 1024},
   "image/webp": {canonicalExtension: "webp", kind: "IMAGE", maximumBytes: 15 * 1024 * 1024},
+  "video/mp4": {canonicalExtension: "mp4", kind: "VIDEO", maximumBytes: 50 * 1024 * 1024},
+  "video/quicktime": {canonicalExtension: "mov", kind: "VIDEO", maximumBytes: 50 * 1024 * 1024},
+  "video/webm": {canonicalExtension: "webm", kind: "VIDEO", maximumBytes: 50 * 1024 * 1024},
   "text/csv": {canonicalExtension: "csv", kind: "DOCUMENT", maximumBytes: 10 * 1024 * 1024},
   "text/markdown": {canonicalExtension: "md", kind: "DOCUMENT", maximumBytes: 10 * 1024 * 1024},
   "text/plain": {canonicalExtension: "txt", kind: "DOCUMENT", maximumBytes: 10 * 1024 * 1024},
@@ -59,6 +62,7 @@ export function parsePrepareRemoteAttachmentCommand(input: unknown): PrepareRemo
     requestedKind !== "AUDIO" &&
     requestedKind !== "DOCUMENT" &&
     requestedKind !== "IMAGE" &&
+    requestedKind !== "VIDEO" &&
     requestedKind !== "VOICE_NOTE"
   ) {
     invalidAttachmentCommand();

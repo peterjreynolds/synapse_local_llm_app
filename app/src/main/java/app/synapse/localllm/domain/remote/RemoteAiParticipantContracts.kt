@@ -7,6 +7,18 @@ enum class RemoteAiResponsePolicy {
     AUTOMATIC,
 }
 
+enum class RemoteCinderParticipationMode {
+    SILENT,
+    MENTION,
+    AUTO,
+}
+
+enum class RemoteCinderWorkState {
+    IDLE,
+    QUEUED,
+    THINKING,
+}
+
 enum class RemoteHostedAiStatus {
     DISABLED_NO_PROVIDER,
 }
@@ -60,10 +72,11 @@ data class RemoteCinderParticipantState(
     val displayName: String,
     val active: Boolean,
     val canManage: Boolean,
+    val mode: RemoteCinderParticipationMode,
     val provenance: RemoteAiProvenance,
     val provider: String,
-    val responsePolicy: RemoteAiResponsePolicy,
     val revision: Long,
+    val workState: RemoteCinderWorkState,
 ) {
     init {
         require(revision >= 0L) { "Cinder participant revision must not be negative." }
@@ -77,9 +90,6 @@ data class RemoteCinderParticipantState(
             "Cinder participant state must use remote-hosted provenance."
         }
         require(provider == "OPENCLAW_CINDER") { "Cinder participant provider is invalid." }
-        require(responsePolicy == RemoteAiResponsePolicy.MENTION_ONLY) {
-            "Cinder human-room responses must remain mention-only."
-        }
     }
 }
 
@@ -87,7 +97,13 @@ data class UpdateRemoteCinderParticipantCommand(
     val accountUid: RemoteAccountUid,
     val roomId: RemoteRoomId,
     val active: Boolean,
-)
+    val mode: RemoteCinderParticipationMode,
+    val expectedRevision: Long,
+) {
+    init {
+        require(expectedRevision >= 0L) { "Expected Cinder participant revision must not be negative." }
+    }
+}
 
 data class RemoteAiContextMessage(
     val messageId: RemoteMessageId,

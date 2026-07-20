@@ -973,6 +973,20 @@ class SynapseViewModel(
         }
     }
 
+    fun updateChatFeedback(
+        soundsEnabled: Boolean,
+        hapticsEnabled: Boolean,
+        reducedMotionEnabled: Boolean,
+    ) {
+        viewModelScope.launch {
+            graph.settingsStore.updateChatFeedback(
+                soundsEnabled = soundsEnabled,
+                hapticsEnabled = hapticsEnabled,
+                reducedMotionEnabled = reducedMotionEnabled,
+            )
+        }
+    }
+
     fun inspectStorageHealth() {
         viewModelScope.launch {
             val settings = mutableUiState.value.settings

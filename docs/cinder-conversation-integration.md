@@ -1,8 +1,10 @@
 # Cinder Conversation Integration
 
 Status: protocol-v1 Android/Firebase implementation and emulator coverage are
-complete. Treat live operation as a separate receipt boundary and verify the
-currently deployed Functions, worker heartbeat, and artifact before claiming it.
+complete, including room-scoped participation modes and rolling-worker
+capability negotiation. Treat live operation as a separate receipt boundary and
+verify the currently deployed Functions, worker heartbeat, and artifact before
+claiming it.
 
 Cinder is Peter's existing OpenClaw agent. OpenClaw owns Cinder's identity,
 sessions, transcript continuity, workspace, tools, memory/Wingman context, and
@@ -17,8 +19,13 @@ inference.
 - Dedicated conversation room ID: `assistant_cinder`.
 - Human-room participant ID: `participant-cinder-remote-ai`.
 - Trusted attribution: `REMOTE_AI`, `REMOTE_HOSTED`, and `OPENCLAW_CINDER`.
-- Human-room response policy: `MENTION_ONLY` with an explicit, normalized
-  `@Cinder` mention.
+- Human-room participation is one authoritative room-scoped state:
+  - `SILENT`: Cinder stays present but no human message queues a response.
+  - `MENTION`: only an explicit, normalized `@Cinder` mention queues a response.
+  - `AUTO`: every active human message may queue a response and proactive sends
+    are authorized.
+- Legacy participant documents without a mode resolve to `MENTION`; legacy
+  workers without a capability list may claim only `MENTION_ONLY` work.
 - Dedicated `assistant_cinder` turns are automatic and do not require a mention.
   New jobs carry `explicitMention: false`; the room kind remains authoritative
   so legacy protocol-v1 jobs with `true` stay compatible.
@@ -82,12 +89,15 @@ existing remote message table.
 
 Both accept a human direct or group `roomId`. An active direct-room member may
 change participation. A group requires owner or administrator role.
-`setCinderParticipant` also accepts `active`, updates the canonical participant
-document and `aiParticipantIds`, and writes a bounded audit event only for an
-actual add/remove transition. Receipts include a monotonic room-scoped
-`revision`; repeating the current state is an idempotent no-op with the same
-revision. Android ignores a lower revision so a delayed refresh cannot replace a
-newer participant state or leak state from another selected room.
+`setCinderParticipant` accepts `active`, `mode`, and `expectedRevision`, updates
+the canonical participant document and `aiParticipantIds`, and writes a bounded
+audit event only for an actual state transition. Receipts include a monotonic
+room-scoped `revision`; repeating the current state is an idempotent no-op even
+when its expected revision is stale, while a stale conflicting mutation fails.
+Android ignores a lower revision so a delayed refresh cannot replace a newer
+participant state or leak state from another selected room. The read receipt
+also reports server-derived `IDLE`, `QUEUED`, or `THINKING` work state; Android
+never synthesizes a typing indicator from participant presence.
 
 ## OpenClaw Worker Contract
 
@@ -111,11 +121,16 @@ Successful responses use:
 }
 ```
 
-Claim accepts `workerId`. A claim contains the job and lease IDs, one-time lease
-token, lease expiry, account UID, room ID and kind, stable idempotency key,
-participant/mention state, source author and body, server sequence/revision, and
-up to 12 normalized context messages. The worker must dispatch that context
-through the normal OpenClaw Cinder channel/runtime, not a new assistant stack.
+Claim accepts `workerId` plus an optional `supportedResponsePolicies` list. An
+omitted list means legacy `MENTION_ONLY`; an updated worker advertises exactly
+`MENTION_ONLY` and `AUTOMATIC`. Firebase skips unsupported work without leasing
+it. A claim contains the job and lease IDs, one-time lease token, lease expiry,
+account UID, room ID and kind, stable idempotency key, authoritative response
+policy, factual participant/mention state, source author and body, server
+sequence/revision, and up to 12 normalized context messages. The worker must
+dispatch that context through the normal OpenClaw Cinder channel/runtime, not a
+new assistant stack. It may strip a mention only when `explicitMention` is
+factually true.
 
 Dedicated conversations map the connector account plus Firebase account UID to
 one direct OpenClaw peer. Human direct and group rooms map the connector account
@@ -131,10 +146,11 @@ and terminal outcomes replace the live job with an auditable receipt. Replaying
 the same terminal command is idempotent; conflicting response content fails.
 
 For human rooms, the message-created trigger queues only an active human
-sender's message with the exact active Cinder participant metadata and an
-explicit `@Cinder` mention. Claim and completion both re-check the source and
-participant state. Completion creates one deterministic remote-AI room message;
-removal or unavailable source state records a skip instead.
+sender's message allowed by the exact current participant mode: factual mention
+in `MENTION`, every human message in `AUTO`, and none in `SILENT`. Claim and
+completion both re-check the source, revision, and mode. Completion creates one
+deterministic remote-AI room message; removal, a disallowed mode transition, or
+unavailable source state records a skip instead.
 
 ### Proactive outbound send
 
@@ -148,10 +164,10 @@ For `assistant_cinder`, the account must still be active. The first proactive
 message may create the dedicated Firebase conversation, after which Android
 receives it through the normal cursor sync and private metadata-only push. For a
 human direct or group room, the account must be an active room member and the
-exact Cinder participant must still be active. The message enters the existing
-room stream and metadata-only notification path. Removed participants, deleted
-rooms, inactive members, and unavailable accounts fail closed with
-`TARGET_UNAVAILABLE`; no message is written.
+exact Cinder participant must still be active in `AUTO`. The message enters the
+existing room stream and metadata-only notification path. `SILENT`, `MENTION`,
+removed participants, deleted rooms, inactive members, and unavailable accounts
+fail closed with `TARGET_UNAVAILABLE`; no message is written.
 
 ## Persistence, Rules, And Retention
 
@@ -236,7 +252,8 @@ still requires all of the following:
    configuration substitution `"${CINDER_WORKER_TOKEN}"`. Keep this
    configuration and runtime in the OpenClaw-owned lane.
 
-5. Start the normal Cinder/OpenClaw runtime. Its claim poll is the heartbeat;
+5. Deploy Firebase's capability parsing and claim gating before restarting the
+   updated worker. Then start the normal Cinder/OpenClaw runtime. Its claim poll is the heartbeat;
    there is no separate heartbeat endpoint. Confirm the channel is running with
    no current error, then use an authenticated active Synapse account to obtain
    two `getCinderAvailability` receipts after separate claim polls. Both must be
@@ -251,24 +268,28 @@ still requires all of the following:
    the app to prove cache and synchronization stability. Store only redacted
    identifiers, digests, counts, and timestamps in the receipt.
 
-7. In an authorized direct or group test room, add Cinder and send a unique
-   ordinary message without `@Cinder`; prove no Cinder job, audit, or reply is
-   created. Send one unique normalized `@Cinder` message and prove exactly one
-   claim, terminal audit, trusted remote-AI reply, synchronization event, and
-   metadata-only notification.
+7. In an authorized direct or group test room, prove each mode independently.
+   `SILENT` must queue nothing for ordinary or mentioned messages. `MENTION`
+   must ignore an ordinary message and produce exactly one response for a unique
+   normalized `@Cinder` message. `AUTO` must produce exactly one response for an
+   ordinary message. Prove that a legacy claim cannot lease the `AUTO` job and
+   an updated claim advertising `AUTOMATIC` can. For each eligible path, prove
+   one claim, terminal audit, trusted remote-AI reply, synchronization event,
+   and metadata-only notification.
 
 8. Remove Cinder and prove the participant becomes inactive while prior history
    remains. A later unique `@Cinder` message must create no job or reply. Also
    exercise the removal race by removing Cinder after a claim but before
    completion; completion must return `SKIPPED` with `PARTICIPANT_REMOVED` and
-   persist no room reply.
+   persist no room reply. Also switch a claimed job to a disallowed mode and
+   prove `MODE_DISALLOWS_RESPONSE` with no room reply.
 
 9. From the same OpenClaw Cinder session, send one unique proactive text to the
    canonical dedicated target and one to an authorized active human room. Prove
    idempotent replay, trusted remote-AI persistence, Android synchronization,
    the metadata-only notification route, and no duplicate message. Remove
-   Cinder, retry a new proactive human-room send, and prove
-   `TARGET_UNAVAILABLE` with no durable message.
+   Cinder or switch the room to `MENTION`, retry a new proactive human-room send,
+   and prove `TARGET_UNAVAILABLE` with no durable message.
 
 10. Execute the release ledger's complete physical-device checklist on both the
    Galaxy S9/API 29 class and a physical API 33+ device. In addition to the

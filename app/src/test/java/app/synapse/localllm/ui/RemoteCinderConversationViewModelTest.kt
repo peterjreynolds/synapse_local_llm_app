@@ -18,6 +18,8 @@ import app.synapse.localllm.domain.remote.RemoteAuthenticationState
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteCinderParticipantState
+import app.synapse.localllm.domain.remote.RemoteCinderParticipationMode
+import app.synapse.localllm.domain.remote.RemoteCinderWorkState
 import app.synapse.localllm.domain.remote.RemoteConversationGateway
 import app.synapse.localllm.domain.remote.RemoteDeviceId
 import app.synapse.localllm.domain.remote.RemoteDeviceMutation
@@ -253,6 +255,7 @@ class RemoteCinderConversationViewModelTest {
                 participantRevision += 1
                 cinderParticipant(
                     active = firstArg<UpdateRemoteCinderParticipantCommand>().active,
+                    mode = firstArg<UpdateRemoteCinderParticipantCommand>().mode,
                     revision = participantRevision,
                 )
             }
@@ -299,6 +302,14 @@ class RemoteCinderConversationViewModelTest {
             runCurrent()
             assertEquals("@Cinder ", viewModel.uiState.value.composerText)
 
+            viewModel.updateCinderMode(RemoteCinderParticipationMode.AUTO)
+            runCurrent()
+
+            assertEquals(
+                RemoteCinderParticipationMode.AUTO,
+                requireNotNull(viewModel.uiState.value.cinderParticipant).mode,
+            )
+
             viewModel.updateCinderParticipation(active = false)
             runCurrent()
 
@@ -306,12 +317,32 @@ class RemoteCinderConversationViewModelTest {
             assertEquals("Cinder removed from this conversation.", viewModel.uiState.value.notice)
             coVerify(exactly = 1) {
                 remoteAiParticipantGateway.updateCinderParticipant(
-                    match { command -> command.roomId == HUMAN_ROOM_ID && command.active },
+                    match { command ->
+                        command.roomId == HUMAN_ROOM_ID &&
+                            command.active &&
+                            command.mode == RemoteCinderParticipationMode.MENTION &&
+                            command.expectedRevision == 0L
+                    },
                 )
             }
             coVerify(exactly = 1) {
                 remoteAiParticipantGateway.updateCinderParticipant(
-                    match { command -> command.roomId == HUMAN_ROOM_ID && !command.active },
+                    match { command ->
+                        command.roomId == HUMAN_ROOM_ID &&
+                            command.active &&
+                            command.mode == RemoteCinderParticipationMode.AUTO &&
+                            command.expectedRevision == 1L
+                    },
+                )
+            }
+            coVerify(exactly = 1) {
+                remoteAiParticipantGateway.updateCinderParticipant(
+                    match { command ->
+                        command.roomId == HUMAN_ROOM_ID &&
+                            !command.active &&
+                            command.mode == RemoteCinderParticipationMode.AUTO &&
+                            command.expectedRevision == 2L
+                    },
                 )
             }
         } finally {
@@ -329,6 +360,7 @@ class RemoteCinderConversationViewModelTest {
 
         assertFalse(remoteComposerSubmissionEnabled(unavailable))
         assertTrue(remoteComposerSubmissionEnabled(RemoteAssistantAvailability.Available))
+        assertTrue(remoteComposerSubmissionEnabled(RemoteAssistantAvailability.Working))
         assertTrue(remoteComposerSubmissionEnabled(null))
         assertFalse(
             remoteComposerCanSend(
@@ -385,6 +417,7 @@ class RemoteCinderConversationViewModelTest {
 
     private fun cinderParticipant(
         active: Boolean,
+        mode: RemoteCinderParticipationMode = RemoteCinderParticipationMode.MENTION,
         revision: Long = if (active) 1 else 0,
         roomId: RemoteRoomId = HUMAN_ROOM_ID,
     ) = RemoteCinderParticipantState(
@@ -393,10 +426,11 @@ class RemoteCinderConversationViewModelTest {
         displayName = "Cinder",
         active = active,
         canManage = true,
+        mode = mode,
         provenance = RemoteAiProvenance.REMOTE_HOSTED,
         provider = "OPENCLAW_CINDER",
-        responsePolicy = RemoteAiResponsePolicy.MENTION_ONLY,
         revision = revision,
+        workState = RemoteCinderWorkState.IDLE,
     )
 
     private fun humanRoom() = RemoteCachedRoom(

@@ -75,6 +75,7 @@ internal fun RemoteChatsPane(
     appearanceViewModel: ChatAppearanceViewModel,
     directCallState: DirectCallUiState,
     directCallViewModel: DirectCallViewModel,
+    feedbackPreferences: ChatFeedbackPreferences,
 ) {
     var showGroupCreation by rememberSaveable { mutableStateOf(false) }
     val selectedRoomId = state.selectedRoomId
@@ -118,6 +119,7 @@ internal fun RemoteChatsPane(
             onCallPermissionDenied = directCallViewModel::reportCallPermissionDenied,
             directCallActionEnabled = directCallState.phase == DirectCallUiPhase.IDLE &&
                 !directCallState.isActionRunning,
+            feedbackPreferences = feedbackPreferences,
             onReply = viewModel::replyToMessage,
             onToggleReaction = viewModel::toggleReaction,
             onCancelReply = viewModel::cancelReply,
@@ -129,6 +131,7 @@ internal fun RemoteChatsPane(
             onMessageRevealed = viewModel::consumeMessageReveal,
             onLocalAiConfigurationChanged = viewModel::updateRoomAiConfiguration,
             onCinderParticipationChanged = viewModel::updateCinderParticipation,
+            onCinderModeChanged = viewModel::updateCinderMode,
             onMentionSynapse = viewModel::insertRemoteSynapseMention,
             onMentionCinder = viewModel::insertCinderMention,
             appearanceState = appearanceState,
@@ -410,6 +413,7 @@ internal fun remoteChatPaneRoute(state: RemoteChatUiState): RemoteChatPaneRoute 
 internal fun remoteAssistantAvailabilityLabel(availability: RemoteAssistantAvailability?): String =
     when (availability) {
         RemoteAssistantAvailability.Available -> "Connected"
+        RemoteAssistantAvailability.Working -> "Cinder is thinking…"
         is RemoteAssistantAvailability.Unavailable -> "Not connected"
         null -> "Remote assistant"
     }

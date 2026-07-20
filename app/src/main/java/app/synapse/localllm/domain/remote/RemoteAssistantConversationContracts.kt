@@ -39,6 +39,8 @@ data class RemoteAssistantConversationEndpoint(
 sealed interface RemoteAssistantAvailability {
     data object Available : RemoteAssistantAvailability
 
+    data object Working : RemoteAssistantAvailability
+
     data class Unavailable(
         val userMessage: String,
     ) : RemoteAssistantAvailability {

@@ -31,6 +31,7 @@ import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteChatException
 import app.synapse.localllm.domain.remote.RemoteCinderParticipantState
+import app.synapse.localllm.domain.remote.RemoteCinderParticipationMode
 import app.synapse.localllm.domain.remote.RemoteConversationGateway
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
 import app.synapse.localllm.domain.remote.RemoteDirectoryGateway
@@ -258,6 +259,7 @@ class RemoteChatViewModel(
                 attachmentDownloads = emptyMap(),
                 isRecordingVoiceNote = false,
                 replyToMessageId = null,
+                confirmedLocalDeletionEffects = emptyList(),
                 ownReactionSelections = emptyMap(),
                 typingParticipantUids = emptyList(),
                 hasReachedMessageStart = false,
@@ -398,15 +400,51 @@ class RemoteChatViewModel(
         if (RemoteAssistantConversationCatalog.findByRoomId(roomId) != null) {
             throw RemoteChatException("The dedicated Cinder conversation does not use room participant controls.")
         }
+        val currentParticipant = mutableUiState.value.cinderParticipant
+            ?.takeIf { participant -> participant.roomId == roomId }
+            ?: throw RemoteChatException("Cinder participant state is still loading.")
         val participant = remoteAiParticipantGateway.updateCinderParticipant(
-            UpdateRemoteCinderParticipantCommand(accountUid, roomId, active),
+            UpdateRemoteCinderParticipantCommand(
+                accountUid = accountUid,
+                roomId = roomId,
+                active = active,
+                mode = currentParticipant.mode,
+                expectedRevision = currentParticipant.revision,
+            ),
+        )
+        publishCinderParticipantIfCurrent(roomId, participant)
+    }
+
+    fun updateCinderMode(mode: RemoteCinderParticipationMode) = launchAction(
+        successNotice = "Cinder mode changed to ${mode.name.lowercase()}.",
+    ) {
+        val accountUid = requireSignedInAccount().accountUid
+        val roomId = selectedRoomId.value ?: throw RemoteChatException("Select a conversation first.")
+        if (RemoteAssistantConversationCatalog.findByRoomId(roomId) != null) {
+            throw RemoteChatException("The dedicated Cinder conversation is always automatic.")
+        }
+        val currentParticipant = mutableUiState.value.cinderParticipant
+            ?.takeIf { participant -> participant.roomId == roomId }
+            ?: throw RemoteChatException("Cinder participant state is still loading.")
+        if (!currentParticipant.active) {
+            throw RemoteChatException("Add Cinder to this conversation before changing its mode.")
+        }
+        val participant = remoteAiParticipantGateway.updateCinderParticipant(
+            UpdateRemoteCinderParticipantCommand(
+                accountUid = accountUid,
+                roomId = roomId,
+                active = true,
+                mode = mode,
+                expectedRevision = currentParticipant.revision,
+            ),
         )
         publishCinderParticipantIfCurrent(roomId, participant)
     }
 
     fun insertCinderMention() {
-        if (mutableUiState.value.cinderParticipant?.active != true) {
-            publishFailureMessage("Add Cinder to this conversation before mentioning it.")
+        val cinderParticipant = mutableUiState.value.cinderParticipant
+        if (cinderParticipant?.active != true || cinderParticipant.mode == RemoteCinderParticipationMode.SILENT) {
+            publishFailureMessage("Set Cinder to Mention or Auto before mentioning it.")
             return
         }
         updateComposerText(
@@ -669,6 +707,22 @@ class RemoteChatViewModel(
                 roomId = message.roomId,
                 messageId = message.messageId,
             )
+            mutableUiState.update { state ->
+                state.copy(
+                    confirmedLocalDeletionEffects = state.confirmedLocalDeletionEffects
+                        .filterNot { effect -> effect.messageId == message.messageId } + message,
+                )
+            }
+            viewModelScope.launch {
+                delay(CONFIRMED_DELETION_EFFECT_MILLIS)
+                mutableUiState.update { state ->
+                    state.copy(
+                        confirmedLocalDeletionEffects = state.confirmedLocalDeletionEffects.filterNot { effect ->
+                            effect.messageId == message.messageId
+                        },
+                    )
+                }
+            }
         }
 
     fun deleteConversationForMe(room: RemoteCachedRoom) =
@@ -976,6 +1030,7 @@ class RemoteChatViewModel(
                     selectedAssistantEndpoint = null,
                     selectedAssistantAvailability = null,
                     messages = emptyList(),
+                    confirmedLocalDeletionEffects = emptyList(),
                     composerText = "",
                     pendingAttachments = emptyList(),
                     attachmentDownloads = emptyMap(),
@@ -1087,7 +1142,7 @@ class RemoteChatViewModel(
                         reportedUnavailable = true
                     }
                 }
-                delay(ROOM_AI_CONFIGURATION_REFRESH_MILLIS)
+                delay(CINDER_PARTICIPANT_REFRESH_MILLIS)
             }
         }
     }
@@ -1304,6 +1359,8 @@ class RemoteChatViewModel(
         const val MAXIMUM_ACKNOWLEDGEMENT_SIZE = 50
         const val DRAFT_SAVE_DEBOUNCE_MILLIS = 300L
         const val TYPING_HEARTBEAT_MILLIS = 5_000L
+        const val CINDER_PARTICIPANT_REFRESH_MILLIS = 5_000L
+        const val CONFIRMED_DELETION_EFFECT_MILLIS = 900L
         const val REMOTE_LOGOUT_CLEANUP_TIMEOUT_MILLIS = 10_000L
         private const val ROOM_AI_CONFIGURATION_REFRESH_MILLIS = 60_000L
     }
@@ -1326,7 +1383,8 @@ internal fun shouldApplyCinderParticipantState(
         candidateParticipant.revision > currentParticipant.revision ||
         (
             candidateParticipant.revision == currentParticipant.revision &&
-                candidateParticipant.active == currentParticipant.active
+                candidateParticipant.active == currentParticipant.active &&
+                candidateParticipant.mode == currentParticipant.mode
             )
     )
 

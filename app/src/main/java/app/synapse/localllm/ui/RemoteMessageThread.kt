@@ -13,7 +13,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -36,12 +39,14 @@ import androidx.compose.material.icons.filled.AddReaction
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,7 +60,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -76,6 +84,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,7 +98,10 @@ import app.synapse.localllm.domain.remote.RemoteAssistantAvailability
 import app.synapse.localllm.domain.remote.RemoteAssistantConversationCatalog
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteCachedMessage
+import app.synapse.localllm.domain.remote.RemoteCachedProfile
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
+import app.synapse.localllm.domain.remote.RemoteCinderParticipationMode
+import app.synapse.localllm.domain.remote.RemoteCinderWorkState
 import app.synapse.localllm.domain.remote.RemoteMessageDeliveryState
 import app.synapse.localllm.domain.remote.RemoteMessageId
 import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
@@ -101,6 +113,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun RemoteMessageThread(
@@ -125,6 +138,7 @@ internal fun RemoteMessageThread(
     onStartDirectCall: (RemoteRoomId, RemoteDirectCallMediaKind) -> Unit,
     onCallPermissionDenied: (RemoteDirectCallMediaKind) -> Unit,
     directCallActionEnabled: Boolean,
+    feedbackPreferences: ChatFeedbackPreferences,
     onReply: (RemoteMessageId) -> Unit,
     onToggleReaction: (RemoteCachedMessage, String) -> Unit,
     onCancelReply: () -> Unit,
@@ -136,6 +150,7 @@ internal fun RemoteMessageThread(
     onMessageRevealed: () -> Unit,
     onLocalAiConfigurationChanged: (Boolean, Boolean) -> Unit,
     onCinderParticipationChanged: (Boolean) -> Unit,
+    onCinderModeChanged: (RemoteCinderParticipationMode) -> Unit,
     onMentionSynapse: () -> Unit,
     onMentionCinder: () -> Unit,
     appearanceState: ChatAppearanceUiState,
@@ -148,7 +163,24 @@ internal fun RemoteMessageThread(
 ) {
     var showRoomMembers by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
     var showAppearance by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
+    val feedbackController = rememberChatFeedbackController()
+    val feedbackHaptics = LocalHapticFeedback.current
+    val deletionEffectScope = rememberCoroutineScope()
+    var observedMessageIds by remember(state.selectedRoomId?.raw) { mutableStateOf<Set<String>?>(null) }
+    var observedReadyAttachmentIds by remember(state.selectedRoomId?.raw) { mutableStateOf(emptySet<String>()) }
+    var observedDeletedMessageIds by remember(state.selectedRoomId?.raw) { mutableStateOf<Set<String>?>(null) }
+    var activeDeletionEffectIds by remember(state.selectedRoomId?.raw) { mutableStateOf(emptySet<String>()) }
     val listState = rememberLazyListState()
+    var scrollInitialized by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
+    var lastScrollObservedMessageId by remember(state.selectedRoomId?.raw) { mutableStateOf<String?>(null) }
+    var pendingNewMessageCount by rememberSaveable(state.selectedRoomId?.raw) { mutableIntStateOf(0) }
+    val isNearMessageEnd by remember(listState) {
+        derivedStateOf {
+            val layout = listState.layoutInfo
+            layout.totalItemsCount == 0 ||
+                (layout.visibleItemsInfo.lastOrNull()?.index ?: 0) >= layout.totalItemsCount - 3
+        }
+    }
     var displayedMessageScale by rememberSaveable(state.selectedRoomId?.raw) {
         mutableFloatStateOf(appearanceState.appearance.messageScale)
     }
@@ -190,6 +222,17 @@ internal fun RemoteMessageThread(
         -> room.title
         null -> "Private conversation"
     }
+    val localDeletionEffectIds = state.confirmedLocalDeletionEffects
+        .mapTo(linkedSetOf()) { message -> message.messageId.raw }
+    val presentationMessages = remember(state.messages, state.confirmedLocalDeletionEffects) {
+        (state.messages + state.confirmedLocalDeletionEffects)
+            .distinctBy { message -> message.messageId }
+            .sortedBy(RemoteCachedMessage::displayInstant)
+    }
+    val initialUnreadCutoff = remember(room?.roomId) { room?.lastReadAt ?: room?.joinedAt }
+    val initialUnreadCount = remember(room?.roomId) { room?.unreadCount ?: 0 }
+    var unreadDividerMessageId by rememberSaveable(room?.roomId?.raw) { mutableStateOf<String?>(null) }
+    var unreadDividerResolved by rememberSaveable(room?.roomId?.raw) { mutableStateOf(false) }
 
     LaunchedEffect(showRoomMembers, room?.roomId) {
         if (showRoomMembers && room?.kind == RemoteRoomKind.GROUP) {
@@ -199,14 +242,89 @@ internal fun RemoteMessageThread(
     LaunchedEffect(appearanceState.appearance.messageScale) {
         displayedMessageScale = appearanceState.appearance.messageScale
     }
+    LaunchedEffect(state.messages) {
+        val currentIds = state.messages.mapTo(linkedSetOf()) { message -> message.messageId.raw }
+        val previousIds = observedMessageIds
+        if (previousIds != null) {
+            val newMessages = state.messages.filter { message -> message.messageId.raw !in previousIds }
+            when {
+                newMessages.any { message -> message.senderUid.raw != state.account?.accountUid?.raw } ->
+                    feedbackController.play(ChatSoundCue.INCOMING, feedbackPreferences.soundsEnabled)
+                newMessages.isNotEmpty() -> {
+                    feedbackController.play(ChatSoundCue.SENT, feedbackPreferences.soundsEnabled)
+                    if (feedbackPreferences.hapticsEnabled) {
+                        feedbackHaptics.performHapticFeedback(
+                            androidx.compose.ui.hapticfeedback.HapticFeedbackType.Confirm,
+                        )
+                    }
+                }
+            }
+        }
+        observedMessageIds = currentIds
+    }
+    LaunchedEffect(state.pendingAttachments) {
+        val readyIds = state.pendingAttachments
+            .filter { pending -> pending.state == RemoteAttachmentTransferState.READY }
+            .mapTo(linkedSetOf()) { pending -> pending.selection.attachmentId.raw }
+        if ((readyIds - observedReadyAttachmentIds).isNotEmpty()) {
+            feedbackController.play(ChatSoundCue.UPLOAD_COMPLETE, feedbackPreferences.soundsEnabled)
+        }
+        observedReadyAttachmentIds = readyIds
+    }
 
+    LaunchedEffect(state.messages.map { message -> message.messageId.raw to message.deletedAt }) {
+        val currentDeletedIds = state.messages
+            .filter { message -> message.deletedAt != null }
+            .mapTo(linkedSetOf()) { message -> message.messageId.raw }
+        observedDeletedMessageIds?.let { previousDeletedIds ->
+            (currentDeletedIds - previousDeletedIds).forEach { messageId ->
+                activeDeletionEffectIds = activeDeletionEffectIds + messageId
+                deletionEffectScope.launch {
+                    delay(CONFIRMED_DELETION_EFFECT_DURATION_MILLIS.toLong())
+                    activeDeletionEffectIds = activeDeletionEffectIds - messageId
+                }
+            }
+        }
+        observedDeletedMessageIds = currentDeletedIds
+    }
+    LaunchedEffect(presentationMessages, initialUnreadCutoff, initialUnreadCount) {
+        if (!unreadDividerResolved && presentationMessages.isNotEmpty()) {
+            unreadDividerMessageId = if (initialUnreadCount > 0) {
+                remoteUnreadDividerMessageId(
+                    messages = presentationMessages,
+                    currentAccountUid = state.account?.accountUid?.raw,
+                    lastReadAt = initialUnreadCutoff,
+                )?.raw
+            } else {
+                null
+            }
+            unreadDividerResolved = true
+        }
+    }
     LaunchedEffect(state.messages.lastOrNull()?.messageId) {
-        if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
+        val newestMessage = state.messages.lastOrNull() ?: return@LaunchedEffect
+        val newestMessageId = newestMessage.messageId.raw
+        if (!scrollInitialized) {
+            listState.scrollToItem(presentationMessages.lastIndex.coerceAtLeast(0) + 1)
+            scrollInitialized = true
+        } else if (lastScrollObservedMessageId != null && newestMessageId != lastScrollObservedMessageId) {
+            val sentByCurrentAccount = newestMessage.senderUid.raw == state.account?.accountUid?.raw
+            if (sentByCurrentAccount || isNearMessageEnd) {
+                listState.animateScrollToItem(presentationMessages.lastIndex.coerceAtLeast(0) + 1)
+                pendingNewMessageCount = 0
+            } else {
+                pendingNewMessageCount += 1
+            }
+        }
+        lastScrollObservedMessageId = newestMessageId
+    }
+    LaunchedEffect(isNearMessageEnd) {
+        if (isNearMessageEnd) pendingNewMessageCount = 0
     }
     LaunchedEffect(state.messageToRevealId, state.messages) {
         val messageId = state.messageToRevealId ?: return@LaunchedEffect
-        val index = state.messages.indexOfFirst { message -> message.messageId == messageId }
-        if (index >= 0) listState.animateScrollToItem(index)
+        val index = presentationMessages.indexOfFirst { message -> message.messageId == messageId }
+        if (index >= 0) listState.animateScrollToItem(index + 1)
         onMessageRevealed()
     }
 
@@ -242,12 +360,12 @@ internal fun RemoteMessageThread(
                         text = if (showRoomMembers) {
                             "Tap to return to messages"
                         } else {
-                            state.typingParticipantUids.takeIf { typingUids -> typingUids.isNotEmpty() }
-                                ?.let { typingUids ->
-                                    typingUids.mapNotNull { uid ->
-                                        state.profiles.firstOrNull { profile -> profile.profileUid == uid }?.displayName
-                                    }.joinToString().takeIf(String::isNotBlank)?.plus(" typing…")
-                                }
+                            remoteConversationActivityLabel(
+                                typingNames = state.typingParticipantUids.mapNotNull { uid ->
+                                    state.profiles.firstOrNull { profile -> profile.profileUid == uid }?.displayName
+                                },
+                                cinderWorkState = state.cinderParticipant?.workState,
+                            )
                                 ?: when (room?.kind) {
                                     RemoteRoomKind.ASSISTANT -> remoteAssistantAvailabilityLabel(
                                         state.selectedAssistantAvailability,
@@ -316,6 +434,7 @@ internal fun RemoteMessageThread(
                     room = room,
                     onConfigurationChanged = onLocalAiConfigurationChanged,
                     onCinderParticipationChanged = onCinderParticipationChanged,
+                    onCinderModeChanged = onCinderModeChanged,
                 )
                 HorizontalDivider()
                 if (room?.kind == RemoteRoomKind.GROUP) {
@@ -363,7 +482,7 @@ internal fun RemoteMessageThread(
                     },
             ) {
                 ChatBackgroundLayer(appearanceState.appearance.background)
-                if (state.messages.isEmpty()) {
+                if (presentationMessages.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
                             text = (state.selectedAssistantAvailability as? RemoteAssistantAvailability.Unavailable)
@@ -377,8 +496,7 @@ internal fun RemoteMessageThread(
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                         ) {
                             item(key = "load-older") {
                                 OutlinedButton(
@@ -396,65 +514,138 @@ internal fun RemoteMessageThread(
                                 }
                             }
                             itemsIndexed(
-                                items = state.messages,
+                                items = presentationMessages,
                                 key = { _, message -> message.messageId.raw },
                             ) { index, message ->
-                                val previousDate = state.messages.getOrNull(index - 1)
+                                val previousDate = presentationMessages.getOrNull(index - 1)
                                     ?.displayInstant()
                                     ?.atZone(ZoneId.systemDefault())
                                     ?.toLocalDate()
                                 val messageDate = message.displayInstant().atZone(ZoneId.systemDefault()).toLocalDate()
-                                if (messageDate != previousDate) {
-                                    Text(
-                                        text = remoteMessageDateLabel(messageDate),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = appearanceState.appearance.bubblePalette.presentation().contentColor,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
                                 val isCurrentAccount = message.senderUid.raw == state.account?.accountUid?.raw
+                                val groupPresentation = remoteMessageGroupPresentation(
+                                    messages = presentationMessages,
+                                    index = index,
+                                    currentAccountUid = state.account?.accountUid?.raw,
+                                    showGroupIdentities = room?.kind == RemoteRoomKind.GROUP,
+                                )
                                 val bubblePalette = appearanceState.appearance.bubblePalette.presentation()
                                 val isLocallyHostedAiMessage = message.authorKind == "SYNAPSE_AI" &&
                                     state.roomAiConfiguration?.localAiHostUid == state.account?.accountUid
-                                val supportsRemoteInteractions = room?.kind != RemoteRoomKind.ASSISTANT
+                                val isLocalDeletionEffect = message.messageId.raw in localDeletionEffectIds
+                                val supportsRemoteInteractions = room?.kind != RemoteRoomKind.ASSISTANT &&
+                                    !isLocalDeletionEffect
                                 val canDeleteForEveryone = supportsRemoteInteractions &&
                                     (isCurrentAccount || isLocallyHostedAiMessage)
-                                RemoteMessageBubble(
-                                    message = message,
-                                    repliedMessage = message.replyToMessageId?.let { replyId ->
-                                        state.messages.firstOrNull { candidate -> candidate.messageId == replyId }
-                                    },
-                                    isCurrentAccount = isCurrentAccount,
-                                    bubbleColor = if (isCurrentAccount) {
-                                        bubblePalette.outgoingBubbleColor
-                                    } else {
-                                        bubblePalette.incomingBubbleColor
-                                    },
-                                    bubbleContentColor = bubblePalette.contentColor,
-                                    canDeleteForEveryone = canDeleteForEveryone,
-                                    supportsRemoteInteractions = supportsRemoteInteractions,
-                                    selectedReaction = state.ownReactionSelections[message.messageId],
-                                    senderDisplayName = when {
-                                        message.authorKind == "SYNAPSE_AI" -> "Synapse • Phone-local AI"
-                                        message.authorKind == "REMOTE_AI" -> remoteAiSenderDisplayName(message)
-                                        room?.kind == RemoteRoomKind.GROUP ->
-                                            state.profiles.firstOrNull { profile -> profile.profileUid == message.senderUid }
-                                                ?.displayName
-                                                ?: "Group member"
-                                        else -> null
-                                    },
-                                    onReply = { onReply(message.messageId) },
-                                    onToggleReaction = { emoji -> onToggleReaction(message, emoji) },
-                                    onEdit = { body -> onEdit(message, body) },
-                                    onDeleteForMe = { onDeleteForMe(message) },
-                                    onDeleteForEveryone = { onDeleteForEveryone(message) },
-                                    attachmentDownloads = state.attachmentDownloads,
-                                    onDownloadAttachment = { attachmentId, thumbnail ->
-                                        onDownloadAttachment(message, attachmentId, thumbnail)
-                                    },
-                                    onCancelAttachmentDownload = onCancelAttachmentDownload,
-                                    onJumpToReply = { replyId -> onJumpToMessage(replyId) },
-                                )
+                                val senderProfile = state.profiles.firstOrNull { profile ->
+                                    profile.profileUid == message.senderUid
+                                }
+                                val senderDisplayName = when {
+                                    message.authorKind == "SYNAPSE_AI" -> "Synapse • Phone-local AI"
+                                    message.authorKind == "REMOTE_AI" -> remoteAiSenderDisplayName(message)
+                                    room?.kind == RemoteRoomKind.GROUP -> senderProfile?.displayName ?: "Group member"
+                                    else -> null
+                                }
+                                val repliedMessage = message.replyToMessageId?.let { replyId ->
+                                    state.messages.firstOrNull { candidate -> candidate.messageId == replyId }
+                                }
+                                Column(
+                                    modifier = Modifier.padding(
+                                        top = if (groupPresentation.beginsNewVisualGroup) 9.dp else 2.dp,
+                                    ),
+                                ) {
+                                    if (messageDate != previousDate) {
+                                        RemoteMessageDateDivider(
+                                            label = remoteMessageDateLabel(messageDate),
+                                            contentColor = bubblePalette.contentColor,
+                                        )
+                                    }
+                                    if (message.messageId.raw == unreadDividerMessageId) {
+                                        RemoteUnreadMessageDivider()
+                                    }
+                                    RemoteMessageBubble(
+                                        message = message,
+                                        repliedMessage = repliedMessage,
+                                        repliedSenderDisplayName = repliedMessage?.let { replied ->
+                                            remoteMessageSenderDisplayName(
+                                                message = replied,
+                                                currentAccountUid = state.account?.accountUid?.raw,
+                                                profiles = state.profiles,
+                                            )
+                                        },
+                                        isCurrentAccount = isCurrentAccount,
+                                        bubbleColor = if (isCurrentAccount) {
+                                            bubblePalette.outgoingBubbleColor
+                                        } else {
+                                            bubblePalette.incomingBubbleColor
+                                        },
+                                        bubbleContentColor = bubblePalette.contentColor,
+                                        bubbleShape = remoteMessageBubbleShape(
+                                            position = groupPresentation.position,
+                                            isCurrentAccount = isCurrentAccount,
+                                        ),
+                                        canDeleteForEveryone = canDeleteForEveryone,
+                                        supportsRemoteInteractions = supportsRemoteInteractions,
+                                        selectedReaction = state.ownReactionSelections[message.messageId],
+                                        senderDisplayName = senderDisplayName,
+                                        senderNameColor = remoteParticipantNameColor(
+                                            roomId = message.roomId.raw,
+                                            senderUid = message.senderUid.raw,
+                                        ),
+                                        senderProfile = senderProfile,
+                                        showIdentityGutter = room?.kind == RemoteRoomKind.GROUP &&
+                                            !isCurrentAccount,
+                                        showSenderName = groupPresentation.showSenderName,
+                                        showAvatar = groupPresentation.showAvatar,
+                                        renderAsDeleted = message.deletedAt != null || isLocalDeletionEffect,
+                                        playDeletionEffect = message.messageId.raw in activeDeletionEffectIds ||
+                                            isLocalDeletionEffect,
+                                        isLocalDeletionEffect = isLocalDeletionEffect,
+                                        reducedMotion = feedbackPreferences.reducedMotionEnabled,
+                                        onReply = { onReply(message.messageId) },
+                                        onToggleReaction = { emoji -> onToggleReaction(message, emoji) },
+                                        onEdit = { body -> onEdit(message, body) },
+                                        onDeleteForMe = { onDeleteForMe(message) },
+                                        onDeleteForEveryone = { onDeleteForEveryone(message) },
+                                        attachmentDownloads = state.attachmentDownloads,
+                                        onDownloadAttachment = { attachmentId, thumbnail ->
+                                            onDownloadAttachment(message, attachmentId, thumbnail)
+                                        },
+                                        onDownloadReplyThumbnail = { replied, attachmentId ->
+                                            onDownloadAttachment(replied, attachmentId, true)
+                                        },
+                                        onCancelAttachmentDownload = onCancelAttachmentDownload,
+                                        onJumpToReply = { replyId -> onJumpToMessage(replyId) },
+                                        feedbackPreferences = feedbackPreferences,
+                                        feedbackController = feedbackController,
+                                    )
+                                }
+                            }
+                        }
+                        if (pendingNewMessageCount > 0) {
+                            Surface(
+                                onClick = {
+                                    deletionEffectScope.launch {
+                                        listState.animateScrollToItem(presentationMessages.lastIndex + 1)
+                                        pendingNewMessageCount = 0
+                                    }
+                                },
+                                shape = RoundedCornerShape(24.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                tonalElevation = 6.dp,
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(14.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("$pendingNewMessageCount new")
+                                }
                             }
                         }
                     }
@@ -477,6 +668,7 @@ internal fun RemoteMessageThread(
                 onCancelReply = onCancelReply,
                 onMentionSynapse = onMentionSynapse,
                 onMentionCinder = onMentionCinder,
+                reducedMotion = feedbackPreferences.reducedMotionEnabled,
             )
         }
     }
@@ -496,6 +688,7 @@ private fun RemoteAiParticipantControls(
     room: RemoteCachedRoom?,
     onConfigurationChanged: (Boolean, Boolean) -> Unit,
     onCinderParticipationChanged: (Boolean) -> Unit,
+    onCinderModeChanged: (RemoteCinderParticipationMode) -> Unit,
 ) {
     val configuration = state.roomAiConfiguration
     val canRetainOrDesignateHost = state.currentDeviceId != null ||
@@ -517,7 +710,26 @@ private fun RemoteAiParticipantControls(
             }
             cinderParticipant.active -> {
                 Text("Cinder • OpenClaw remote AI", fontWeight = FontWeight.SemiBold)
-                Text("Response policy: explicit @Cinder mentions only")
+                Text("Choose how Cinder participates in this room.")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RemoteCinderParticipationMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = cinderParticipant.mode == mode,
+                            onClick = { onCinderModeChanged(mode) },
+                            enabled = cinderParticipant.canManage && !state.isActionRunning,
+                            label = { Text(mode.cinderModeLabel()) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                Text(
+                    cinderParticipant.mode.cinderModeExplanation(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     "Removing Cinder stops future response jobs and keeps existing room history.",
                     style = MaterialTheme.typography.bodySmall,
@@ -618,17 +830,43 @@ private fun RemoteAiParticipantControls(
     }
 }
 
+private fun RemoteCinderParticipationMode.cinderModeLabel(): String = when (this) {
+    RemoteCinderParticipationMode.SILENT -> "Silent"
+    RemoteCinderParticipationMode.MENTION -> "Mention"
+    RemoteCinderParticipationMode.AUTO -> "Auto"
+}
+
+private fun RemoteCinderParticipationMode.cinderModeExplanation(): String = when (this) {
+    RemoteCinderParticipationMode.SILENT ->
+        "Cinder stays present and receives authorized room context, but does not reply."
+    RemoteCinderParticipationMode.MENTION ->
+        "Cinder replies only when a message includes a normalized @Cinder mention."
+    RemoteCinderParticipationMode.AUTO ->
+        "Cinder may join naturally and can send authorized proactive room messages."
+}
+
 @Composable
 private fun RemoteMessageBubble(
     message: RemoteCachedMessage,
     repliedMessage: RemoteCachedMessage?,
+    repliedSenderDisplayName: String?,
     isCurrentAccount: Boolean,
     bubbleColor: Color,
     bubbleContentColor: Color,
+    bubbleShape: Shape,
     canDeleteForEveryone: Boolean,
     supportsRemoteInteractions: Boolean,
     selectedReaction: String?,
     senderDisplayName: String?,
+    senderNameColor: Color,
+    senderProfile: RemoteCachedProfile?,
+    showIdentityGutter: Boolean,
+    showSenderName: Boolean,
+    showAvatar: Boolean,
+    renderAsDeleted: Boolean,
+    playDeletionEffect: Boolean,
+    isLocalDeletionEffect: Boolean,
+    reducedMotion: Boolean,
     onReply: () -> Unit,
     onToggleReaction: (String) -> Unit,
     onEdit: (String) -> Unit,
@@ -636,123 +874,163 @@ private fun RemoteMessageBubble(
     onDeleteForEveryone: () -> Unit,
     attachmentDownloads: Map<String, RemoteAttachmentDownloadUi>,
     onDownloadAttachment: (RemoteAttachmentId, Boolean) -> Unit,
+    onDownloadReplyThumbnail: (RemoteCachedMessage, RemoteAttachmentId) -> Unit,
     onCancelAttachmentDownload: (RemoteAttachmentId, Boolean) -> Unit,
     onJumpToReply: (RemoteMessageId) -> Unit,
+    feedbackPreferences: ChatFeedbackPreferences,
+    feedbackController: AndroidChatFeedbackController,
 ) {
     val clipboard = LocalClipboard.current
     val coroutineScope = rememberCoroutineScope()
     val hapticFeedback = LocalHapticFeedback.current
-    val availableActions = remoteMessageActions(
-        messageDeleted = message.deletedAt != null,
-        isCurrentAccount = isCurrentAccount,
-        supportsRemoteInteractions = supportsRemoteInteractions,
-    )
+    val availableActions = if (isLocalDeletionEffect) {
+        emptyList()
+    } else {
+        remoteMessageActions(
+            messageDeleted = renderAsDeleted,
+            isCurrentAccount = isCurrentAccount,
+            supportsRemoteInteractions = supportsRemoteInteractions,
+        )
+    }
     var showMessageActions by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var showEmojiPicker by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var showEditDialog by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
     var editText by rememberSaveable(message.messageId.raw) { mutableStateOf(message.body) }
     var showDeleteDialog by rememberSaveable(message.messageId.raw) { mutableStateOf(false) }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isCurrentAccount) Arrangement.End else Arrangement.Start,
-    ) {
-        Box(modifier = Modifier.fillMaxWidth(0.82f)) {
-            Column(
-                horizontalAlignment = if (isCurrentAccount) Alignment.End else Alignment.Start,
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = bubbleColor,
-                    contentColor = bubbleContentColor,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .combinedClickable(
+    val toggleReactionWithFeedback: (String) -> Unit = { emoji ->
+        feedbackController.play(ChatSoundCue.REACTION, feedbackPreferences.soundsEnabled)
+        if (feedbackPreferences.hapticsEnabled) {
+            hapticFeedback.performHapticFeedback(
+                androidx.compose.ui.hapticfeedback.HapticFeedbackType.Confirm,
+            )
+        }
+        onToggleReaction(emoji)
+    }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val maximumBubbleWidth = maxWidth * 0.82f
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (isCurrentAccount) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            if (showIdentityGutter) {
+                Box(
+                    modifier = Modifier.width(32.dp).height(32.dp),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    if (showAvatar) {
+                        RemoteProfileAvatar(
+                            profile = senderProfile,
+                            displayName = senderDisplayName ?: "Group member",
+                            size = 30.dp,
+                        )
+                    }
+                }
+                Spacer(Modifier.width(5.dp))
+            }
+            Box(modifier = Modifier.widthIn(max = maximumBubbleWidth)) {
+                Column(
+                    horizontalAlignment = if (isCurrentAccount) Alignment.End else Alignment.Start,
+                ) {
+                    Surface(
+                        shape = bubbleShape,
+                        color = bubbleColor,
+                        contentColor = bubbleContentColor,
+                        modifier = Modifier.combinedClickable(
+                            enabled = availableActions.isNotEmpty(),
                             onClick = {},
                             onLongClickLabel = "Message reactions and options",
                             onLongClick = {
-                                hapticFeedback.performHapticFeedback(
-                                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
-                                )
+                                if (feedbackPreferences.hapticsEnabled) {
+                                    hapticFeedback.performHapticFeedback(
+                                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                                    )
+                                }
                                 showMessageActions = true
                             },
                         ),
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                        if (!isCurrentAccount && senderDisplayName != null) {
-                            Text(
-                                senderDisplayName,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Spacer(Modifier.height(2.dp))
-                        }
-                        message.replyToMessageId?.let { replyId ->
-                            Surface(
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().clickable { onJumpToReply(replyId) },
-                            ) {
-                                Text(
-                                    text = repliedMessage?.let { replied ->
-                                        if (replied.deletedAt != null) "Message deleted" else replied.body.take(100)
-                                    } ?: "Open replied message",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.padding(8.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
+                            if (renderAsDeleted) {
+                                RemoteConfirmedDeletedMessageEffect(
+                                    playEffect = playDeletionEffect,
+                                    reducedMotion = reducedMotion,
                                 )
-                            }
-                            Spacer(Modifier.height(6.dp))
-                        }
-                        Text(if (message.deletedAt != null) "Message deleted" else message.body)
-                        if (message.deletedAt == null) {
-                            message.attachments.forEach { attachment ->
-                                RemoteMessageAttachmentCard(
-                                    attachment = attachment,
+                                if (!isLocalDeletionEffect) {
+                                    Text(
+                                        text = remoteMessageTimestamp(message),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = bubbleContentColor.copy(alpha = 0.72f),
+                                    )
+                                }
+                            } else {
+                                if (showSenderName && senderDisplayName != null) {
+                                    Text(
+                                        text = senderDisplayName,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = senderNameColor,
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                }
+                                message.replyToMessageId?.let { replyId ->
+                                    RemoteMessageReplyPreview(
+                                        repliedMessage = repliedMessage,
+                                        senderDisplayName = repliedSenderDisplayName,
+                                        downloads = attachmentDownloads,
+                                        onDownloadThumbnail = onDownloadReplyThumbnail,
+                                        onClick = { onJumpToReply(replyId) },
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                }
+                                if (message.body.isNotBlank()) Text(message.body)
+                                RemoteMessageAttachmentGallery(
+                                    attachments = message.attachments,
                                     downloads = attachmentDownloads,
                                     onDownload = onDownloadAttachment,
                                     onCancelDownload = onCancelAttachmentDownload,
                                 )
+                                if (message.editedAt != null) {
+                                    Text("Edited", style = MaterialTheme.typography.labelSmall)
+                                }
+                                Text(
+                                    text = remoteMessageTimestamp(message),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = bubbleContentColor.copy(alpha = 0.72f),
+                                )
+                                if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = remoteMessageDeliveryLabel(message),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            bubbleContentColor.copy(alpha = 0.72f)
+                                        },
+                                    )
+                                }
                             }
                         }
-                        if (message.editedAt != null && message.deletedAt == null) {
-                            Text("Edited", style = MaterialTheme.typography.labelSmall)
-                        }
-                        Text(
-                            text = remoteMessageTimestamp(message),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = bubbleContentColor.copy(alpha = 0.72f),
+                    }
+                    if (!renderAsDeleted && supportsRemoteInteractions) {
+                        RemoteMessageReactionSummary(
+                            reactionCounts = message.reactionCounts,
+                            selectedReaction = selectedReaction,
+                            onToggleReaction = toggleReactionWithFeedback,
                         )
-                        if (isCurrentAccount || message.deliveryState != RemoteMessageDeliveryState.SENT) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = remoteMessageDeliveryLabel(message),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (message.deliveryState == RemoteMessageDeliveryState.FAILED) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    bubbleContentColor.copy(alpha = 0.72f)
-                                },
-                            )
-                        }
                     }
                 }
-                if (message.deletedAt == null && supportsRemoteInteractions) {
-                    RemoteMessageReactionSummary(
-                        reactionCounts = message.reactionCounts,
-                        selectedReaction = selectedReaction,
-                        onToggleReaction = onToggleReaction,
-                    )
-                }
-            }
-            DropdownMenu(
-                expanded = showMessageActions,
-                onDismissRequest = { showMessageActions = false },
-            ) {
-                if (message.deletedAt == null && supportsRemoteInteractions) {
+                DropdownMenu(
+                    expanded = showMessageActions,
+                    onDismissRequest = { showMessageActions = false },
+                ) {
+                    if (!renderAsDeleted && supportsRemoteInteractions) {
                     RemoteQuickReactionBar(
                         selectedReaction = selectedReaction,
                         onReactionSelected = { emoji ->
                             showMessageActions = false
-                            onToggleReaction(emoji)
+                            toggleReactionWithFeedback(emoji)
                         },
                         onShowAllReactions = {
                             showMessageActions = false
@@ -761,14 +1039,14 @@ private fun RemoteMessageBubble(
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
                 }
-                availableActions.forEach { action ->
+                    availableActions.forEach { action ->
                     val actionIcon = when (action) {
                         RemoteMessageAction.REPLY -> Icons.AutoMirrored.Filled.Reply
                         RemoteMessageAction.COPY -> Icons.Default.ContentCopy
                         RemoteMessageAction.EDIT -> Icons.Default.Edit
                         RemoteMessageAction.DELETE -> Icons.Default.Delete
                     }
-                    DropdownMenuItem(
+                        DropdownMenuItem(
                         text = { Text(action.label) },
                         leadingIcon = {
                             Icon(
@@ -797,7 +1075,8 @@ private fun RemoteMessageBubble(
                                 RemoteMessageAction.DELETE -> showDeleteDialog = true
                             }
                         },
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -807,7 +1086,7 @@ private fun RemoteMessageBubble(
             onDismiss = { showEmojiPicker = false },
             onEmojiPicked = { emoji ->
                 showEmojiPicker = false
-                onToggleReaction(emoji)
+                toggleReactionWithFeedback(emoji)
             },
         )
     }
@@ -1092,6 +1371,28 @@ internal fun remoteMessageDeliveryLabel(message: RemoteCachedMessage): String =
         RemoteMessageDeliveryState.READ -> "Read"
         RemoteMessageDeliveryState.FAILED -> message.failureReason ?: "Send failed"
     }
+
+internal fun remoteConversationActivityLabel(
+    typingNames: List<String>,
+    cinderWorkState: RemoteCinderWorkState?,
+): String? {
+    val uniqueTypingNames = typingNames.filter(String::isNotBlank).distinct()
+    val typingLabel = when (uniqueTypingNames.size) {
+        0 -> null
+        1 -> "${uniqueTypingNames.single()} is typing…"
+        2 -> "${uniqueTypingNames[0]} and ${uniqueTypingNames[1]} are typing…"
+        else -> "${uniqueTypingNames[0]}, ${uniqueTypingNames[1]} +${uniqueTypingNames.size - 2} are typing…"
+    }
+    val cinderLabel = when (cinderWorkState) {
+        RemoteCinderWorkState.QUEUED,
+        RemoteCinderWorkState.THINKING,
+        -> "Cinder is thinking…"
+        RemoteCinderWorkState.IDLE,
+        null,
+        -> null
+    }
+    return listOfNotNull(typingLabel, cinderLabel).takeIf { labels -> labels.isNotEmpty() }?.joinToString(" · ")
+}
 
 private const val MAXIMUM_MESSAGE_LENGTH = 4_000
 private const val MAXIMUM_VISIBLE_REACTION_TYPES = 4

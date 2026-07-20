@@ -80,7 +80,7 @@ internal class AndroidRemoteAttachmentSelectionStager(
             } ?: throw RemoteChatException("Android could not read the selected attachment.")
             val resolvedMimeType = resolveRemoteAttachmentMimeType(reportedMimeType, incomingFile)
             val maximumBytes = RemoteAttachmentPolicy.maximumBytesFor(resolvedMimeType)
-                ?: throw IllegalArgumentException("Choose a supported image, document, or audio file.")
+                ?: throw IllegalArgumentException("Choose a supported image, video, document, or audio file.")
             require(copiedBytes <= maximumBytes) {
                 "The selected attachment exceeds the ${maximumBytes / MEBIBYTE} MB limit."
             }

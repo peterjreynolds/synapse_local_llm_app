@@ -54,6 +54,9 @@ class SynapseSettingsStore(context: Context) {
                 smsAutoReplyInstructions = normalizeSmsAutoReplyInstructions(
                     preferences[SMS_AUTO_REPLY_INSTRUCTIONS],
                 ),
+                chatSoundsEnabled = preferences[CHAT_SOUNDS_ENABLED] ?: true,
+                chatHapticsEnabled = preferences[CHAT_HAPTICS_ENABLED] ?: true,
+                reducedMotionEnabled = preferences[REDUCED_MOTION_ENABLED] ?: false,
                 memoryDatabaseWarningBytes = preferences[MEMORY_DATABASE_WARNING_BYTES]
                     ?: 512L * 1024L * 1024L,
                 attachmentCacheWarningBytes = preferences[ATTACHMENT_CACHE_WARNING_BYTES]
@@ -132,6 +135,18 @@ class SynapseSettingsStore(context: Context) {
         }
     }
 
+    suspend fun updateChatFeedback(
+        soundsEnabled: Boolean,
+        hapticsEnabled: Boolean,
+        reducedMotionEnabled: Boolean,
+    ) {
+        dataStore.edit { preferences ->
+            preferences[CHAT_SOUNDS_ENABLED] = soundsEnabled
+            preferences[CHAT_HAPTICS_ENABLED] = hapticsEnabled
+            preferences[REDUCED_MOTION_ENABLED] = reducedMotionEnabled
+        }
+    }
+
     private fun parseRuntimeBackend(rawBackend: String?): InferenceRuntimeBackend =
         rawBackend
             ?.let { backend -> runCatching { InferenceRuntimeBackend.valueOf(backend) }.getOrNull() }
@@ -191,6 +206,9 @@ class SynapseSettingsStore(context: Context) {
         val SPEECH_PLAYBACK_ENABLED = booleanPreferencesKey("speech_playback_enabled")
         val SMS_AUTO_REPLY_ENABLED = booleanPreferencesKey("sms_auto_reply_enabled")
         val SMS_AUTO_REPLY_INSTRUCTIONS = stringPreferencesKey("sms_auto_reply_instructions")
+        val CHAT_SOUNDS_ENABLED = booleanPreferencesKey("chat_sounds_enabled")
+        val CHAT_HAPTICS_ENABLED = booleanPreferencesKey("chat_haptics_enabled")
+        val REDUCED_MOTION_ENABLED = booleanPreferencesKey("reduced_motion_enabled")
         val MEMORY_DATABASE_WARNING_BYTES = longPreferencesKey("memory_database_warning_bytes")
         val ATTACHMENT_CACHE_WARNING_BYTES = longPreferencesKey("attachment_cache_warning_bytes")
         val MINIMUM_FREE_STORAGE_BYTES = longPreferencesKey("minimum_free_storage_bytes")

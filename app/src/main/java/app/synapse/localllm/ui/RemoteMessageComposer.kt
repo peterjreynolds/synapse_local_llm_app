@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material3.DropdownMenu
@@ -52,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.synapse.localllm.domain.remote.RemoteAssistantAvailability
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
+import app.synapse.localllm.domain.remote.RemoteCinderParticipationMode
+import app.synapse.localllm.ui.theme.SynapseDesignSystem
 
 @Composable
 internal fun RemoteMessageComposer(
@@ -68,11 +71,17 @@ internal fun RemoteMessageComposer(
     onCancelReply: () -> Unit,
     onMentionSynapse: () -> Unit,
     onMentionCinder: () -> Unit,
+    reducedMotion: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val designTokens = SynapseDesignSystem.tokens
     var showAddMenu by rememberSaveable(state.selectedRoomId?.raw) { mutableStateOf(false) }
     val photoAndGifPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        onAttachmentSelected(uri.toString())
+    }
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         onAttachmentSelected(uri.toString())
     }
@@ -98,7 +107,9 @@ internal fun RemoteMessageComposer(
         !state.isActionRunning &&
         state.pendingAttachments.size < MAXIMUM_PENDING_ATTACHMENTS
     val showMentionSynapse = state.roomAiConfiguration?.localAiEnabled == true
-    val showMentionCinder = state.cinderParticipant?.active == true
+    val showMentionCinder = state.cinderParticipant?.let { participant ->
+        participant.active && participant.mode != RemoteCinderParticipationMode.SILENT
+    } == true
     val canOpenAddMenu = submissionEnabled &&
         !state.isRecordingVoiceNote &&
         !state.isActionRunning &&
@@ -122,8 +133,8 @@ internal fun RemoteMessageComposer(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = designTokens.spacing.medium, vertical = designTokens.spacing.small),
+        verticalArrangement = Arrangement.spacedBy(designTokens.spacing.compact),
     ) {
         state.replyToMessageId?.let { replyId ->
             val repliedMessage = state.messages.firstOrNull { message -> message.messageId == replyId }
@@ -161,35 +172,20 @@ internal fun RemoteMessageComposer(
             )
         }
         if (state.isRecordingVoiceNote) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                shape = RoundedCornerShape(14.dp),
-            ) {
-                Row(
-                    modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(Icons.Default.Mic, contentDescription = null)
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Recording voice note", style = MaterialTheme.typography.labelLarge)
-                        Text("Tap stop to attach it", style = MaterialTheme.typography.labelSmall)
-                    }
-                    TextButton(onClick = onCancelVoiceNote) { Text("Cancel") }
-                }
-            }
+            RemoteVoiceRecordingIndicator(
+                reducedMotion = reducedMotion,
+                onCancel = onCancelVoiceNote,
+            )
         }
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(designTokens.radii.pill),
             color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .defaultMinSize(minHeight = 52.dp)
+                    .defaultMinSize(minHeight = designTokens.minimumTouchTarget)
                     .padding(horizontal = 2.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
@@ -200,7 +196,7 @@ internal fun RemoteMessageComposer(
                     ) {
                         Icon(
                             Icons.Rounded.Add,
-                            contentDescription = "Add photos, GIFs, files, or audio",
+                            contentDescription = "Add photos, GIFs, videos, files, or audio",
                         )
                     }
                     DropdownMenu(
@@ -215,6 +211,17 @@ internal fun RemoteMessageComposer(
                                 showAddMenu = false
                                 photoAndGifPicker.launch(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Videos") },
+                            leadingIcon = { Icon(Icons.Default.Movie, contentDescription = null) },
+                            enabled = canAddAttachment,
+                            onClick = {
+                                showAddMenu = false
+                                videoPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly),
                                 )
                             },
                         )

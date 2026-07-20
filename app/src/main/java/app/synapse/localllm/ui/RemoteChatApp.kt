@@ -57,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -661,11 +662,26 @@ private fun RemoteSignedInShell(
     val remoteGroupState by remoteGroupViewModel.uiState.collectAsStateWithLifecycle()
     val chatAppearanceState by chatAppearanceViewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val callFeedbackController = rememberChatFeedbackController()
+    val callHaptics = LocalHapticFeedback.current
+    var previousCallPhase by remember { mutableStateOf(directCallState.phase) }
     var selectedSection by rememberSaveable { mutableStateOf(RemoteAppSection.CHATS) }
     val availableSections = availableRemoteAppSections(state.account?.role)
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(directCallState.phase) {
+        if (directCallState.phase == DirectCallUiPhase.ACTIVE && previousCallPhase != DirectCallUiPhase.ACTIVE) {
+            callFeedbackController.play(ChatSoundCue.CALL_CONNECTED, localState.settings.chatSoundsEnabled)
+            if (localState.settings.chatHapticsEnabled) {
+                callHaptics.performHapticFeedback(
+                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.Confirm,
+                )
+            }
+        }
+        previousCallPhase = directCallState.phase
+    }
 
     LaunchedEffect(state.selectedRoomId) {
         if (state.selectedRoomId != null) selectedSection = RemoteAppSection.CHATS
@@ -784,6 +800,11 @@ private fun RemoteSignedInShell(
                         appearanceViewModel = chatAppearanceViewModel,
                         directCallState = directCallState,
                         directCallViewModel = directCallViewModel,
+                        feedbackPreferences = ChatFeedbackPreferences(
+                            soundsEnabled = localState.settings.chatSoundsEnabled,
+                            hapticsEnabled = localState.settings.chatHapticsEnabled,
+                            reducedMotionEnabled = localState.settings.reducedMotionEnabled,
+                        ),
                     )
                     RemoteAppSection.PEOPLE -> RemotePeoplePane(
                         state = state,
@@ -802,8 +823,10 @@ private fun RemoteSignedInShell(
                         appearanceState = chatAppearanceState,
                         directCallRingtoneState = directCallRingtoneState,
                         directCallRingtoneViewModel = directCallRingtoneViewModel,
+                        settings = localState.settings,
                         onBubblePaletteSelected = chatAppearanceViewModel::selectBubblePalette,
                         onCheckAppUpdate = { localViewModel.checkForAppUpdate(automatic = false) },
+                        onChatFeedbackChanged = localViewModel::updateChatFeedback,
                     )
                     RemoteAppSection.LOCAL_AI -> SynapseApp(
                         viewModel = localViewModel,

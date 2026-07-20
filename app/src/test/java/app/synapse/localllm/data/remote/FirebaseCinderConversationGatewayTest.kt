@@ -31,6 +31,7 @@ class FirebaseCinderConversationGatewayTest {
                     "availableUntilMillis" to 10_000L,
                     "checkedAtMillis" to 1_000L,
                     "protocolVersion" to 1L,
+                    "workState" to "THINKING",
                 )
                 "submitCinderMessage" -> mapOf(
                     "acceptance" to "ACCEPTED",
@@ -53,7 +54,7 @@ class FirebaseCinderConversationGatewayTest {
         )
 
         assertEquals(
-            RemoteAssistantAvailability.Available,
+            RemoteAssistantAvailability.Working,
             gateway.observeAvailability(ACCOUNT_UID, ENDPOINT).first(),
         )
         val receipt = gateway.sendMessage(ENDPOINT, SendRemoteMessageCommand(humanMessage()))
