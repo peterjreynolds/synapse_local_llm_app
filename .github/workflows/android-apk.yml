@@ -37,9 +37,12 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Test release version policy
+      - name: Test release workflow policy
         shell: bash
-        run: node --test scripts/ci/resolve-synapse-release-version.test.mjs
+        run: |
+          node --test \
+            scripts/ci/resolve-synapse-release-version.test.mjs \
+            scripts/ci/run-idempotent-release-command-with-retry.test.mjs
 
       - name: Resolve monotonic release version
         shell: bash
@@ -64,6 +67,7 @@ jobs:
           version_name="$(printf '%s' "$release_version_json" | jq -er '.versionName')"
           printf 'SYNAPSE_VERSION_CODE=%s\n' "$version_code" >> "$GITHUB_ENV"
           printf 'SYNAPSE_VERSION_NAME=%s\n' "$version_name" >> "$GITHUB_ENV"
+          printf 'SYNAPSE_RELEASE_EXISTS=%s\n' "$release_exists" >> "$GITHUB_ENV"
           {
             printf '### Rolling APK version\n\n'
             printf -- '- Version code: `%s`\n' "$version_code"
@@ -175,11 +179,17 @@ jobs:
             "SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256." \
             "The synapse-ai release and apk-latest branch are updated together after every successful main build or explicit manual workflow dispatch.")"
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" --clobber
+          if [ "$SYNAPSE_RELEASE_EXISTS" = "1" ]; then
+            SYNAPSE_RELEASE_OPERATION="upload rolling release asset" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              gh release upload "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" --clobber
             git tag --force "$RELEASE_TAG" "$GITHUB_SHA"
-            git push --force origin "refs/tags/$RELEASE_TAG"
-            gh release edit "$RELEASE_TAG" \
+            SYNAPSE_RELEASE_OPERATION="push rolling release tag" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              git push --force origin "refs/tags/$RELEASE_TAG"
+            SYNAPSE_RELEASE_OPERATION="update rolling release metadata" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              gh release edit "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
               --title "Synapse AI APK" \
               --notes "$release_notes" \
@@ -219,7 +229,10 @@ jobs:
           git -C "$publish_root" add APK/README.md APK/Synapse-AI.apk APK/Synapse-AI.apk.sha256
           git -C "$publish_root" commit -m "publish latest Synapse AI APK"
           git -C "$publish_root" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git -C "$publish_root" -c "http.https://github.com/.extraheader=$auth_header" push --force origin "$APK_BRANCH"
+          SYNAPSE_RELEASE_OPERATION="publish rolling APK branch" \
+            bash "$GITHUB_WORKSPACE/scripts/ci/run-idempotent-release-command-with-retry.sh" \
+            git -C "$publish_root" -c "http.https://github.com/.extraheader=$auth_header" \
+            push --force origin "$APK_BRANCH"
 
       - name: Verify rolling distribution
         shell: bash
@@ -228,17 +241,29 @@ jobs:
         run: |
           expected_apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
           expected_asset_digest="sha256:$expected_apk_sha256"
-          release_target="$(gh release view "$RELEASE_TAG" --json targetCommitish --jq .targetCommitish)"
+          release_receipt_json="$(
+            SYNAPSE_RELEASE_OPERATION="read rolling release receipt" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              gh release view "$RELEASE_TAG" --json targetCommitish,assets
+          )"
+          release_target="$(printf '%s' "$release_receipt_json" | jq -r '.targetCommitish')"
           release_asset_count="$(
-            gh release view "$RELEASE_TAG" --json assets \
-              --jq '[.assets[] | select(.name == "Synapse-AI.apk")] | length'
+            printf '%s' "$release_receipt_json" \
+              | jq -r '[.assets[] | select(.name == "Synapse-AI.apk")] | length'
           )"
           release_asset_digest="$(
-            gh release view "$RELEASE_TAG" --json assets \
-              --jq '.assets[] | select(.name == "Synapse-AI.apk") | .digest'
+            printf '%s' "$release_receipt_json" \
+              | jq -r '.assets[] | select(.name == "Synapse-AI.apk") | .digest'
           )"
-          remote_tag_sha="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
-          git fetch --force --depth=1 origin "$APK_BRANCH"
+          remote_tag_sha="$(
+            SYNAPSE_RELEASE_OPERATION="read rolling release tag" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              git ls-remote origin "refs/tags/$RELEASE_TAG" \
+              | awk '{print $1}'
+          )"
+          SYNAPSE_RELEASE_OPERATION="fetch rolling APK branch" \
+            bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+            git fetch --force --depth=1 origin "$APK_BRANCH"
           branch_apk_sha256="$(git show FETCH_HEAD:APK/Synapse-AI.apk.sha256 | cut -d ' ' -f 1)"
 
           if [ "$release_target" != "$GITHUB_SHA" ]; then
