@@ -9,6 +9,7 @@ import android.graphics.ImageDecoder
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
 import app.synapse.localllm.domain.remote.RemoteAttachmentKind
@@ -329,11 +330,9 @@ private fun Bitmap.scaleToMaximumEdge(maximumEdge: Int): Bitmap {
     require(largestEdge > 0) { "The selected video frame has invalid dimensions." }
     if (largestEdge <= maximumEdge) return this
     val scale = maximumEdge.toFloat() / largestEdge.toFloat()
-    val scaled = Bitmap.createScaledBitmap(
-        this,
+    val scaled = scale(
         maxOf(1, (width * scale).toInt()),
         maxOf(1, (height * scale).toInt()),
-        true,
     )
     if (scaled !== this) recycle()
     return scaled
