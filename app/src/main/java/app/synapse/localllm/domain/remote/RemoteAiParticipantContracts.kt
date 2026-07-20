@@ -63,8 +63,10 @@ data class RemoteCinderParticipantState(
     val provenance: RemoteAiProvenance,
     val provider: String,
     val responsePolicy: RemoteAiResponsePolicy,
+    val revision: Long,
 ) {
     init {
+        require(revision >= 0L) { "Cinder participant revision must not be negative." }
         require(participantId == RemoteAssistantConversationCatalog.cinder.participantId) {
             "Cinder participant state must use the registered Cinder identity."
         }

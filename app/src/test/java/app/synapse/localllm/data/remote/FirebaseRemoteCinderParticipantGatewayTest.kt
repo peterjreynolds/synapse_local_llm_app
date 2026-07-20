@@ -19,6 +19,7 @@ class FirebaseRemoteCinderParticipantGatewayTest {
         assertEquals(RemoteAssistantConversationCatalog.cinder.participantId, state.participantId)
         assertEquals(RemoteAiProvenance.REMOTE_HOSTED, state.provenance)
         assertEquals(RemoteAiResponsePolicy.MENTION_ONLY, state.responsePolicy)
+        assertEquals(7L, state.revision)
     }
 
     @Test
@@ -42,6 +43,7 @@ class FirebaseRemoteCinderParticipantGatewayTest {
         "provenance" to "REMOTE_HOSTED",
         "provider" to "OPENCLAW_CINDER",
         "responsePolicy" to "MENTION_ONLY",
+        "revision" to 7L,
         "roomId" to ROOM_ID.raw,
     )
 

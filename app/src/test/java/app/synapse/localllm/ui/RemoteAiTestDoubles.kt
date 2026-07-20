@@ -28,7 +28,10 @@ internal object NoOpRemoteAiParticipantGateway : RemoteAiParticipantGateway {
 
     override suspend fun updateCinderParticipant(
         command: UpdateRemoteCinderParticipantCommand,
-    ): RemoteCinderParticipantState = inactiveCinderParticipant(command.roomId).copy(active = command.active)
+    ): RemoteCinderParticipantState = inactiveCinderParticipant(command.roomId).copy(
+        active = command.active,
+        revision = 1,
+    )
 
     override suspend fun getRoomConfiguration(
         accountUid: RemoteAccountUid,
@@ -78,6 +81,7 @@ private fun inactiveCinderParticipant(roomId: RemoteRoomId): RemoteCinderPartici
         provenance = RemoteAiProvenance.REMOTE_HOSTED,
         provider = "OPENCLAW_CINDER",
         responsePolicy = RemoteAiResponsePolicy.MENTION_ONLY,
+        revision = 0,
     )
 
 internal object IdleRemoteLocalAiResponseHost : RemoteLocalAiResponseHost {

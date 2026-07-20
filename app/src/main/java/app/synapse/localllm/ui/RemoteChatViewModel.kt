@@ -30,6 +30,7 @@ import app.synapse.localllm.domain.remote.RemoteCachedMessage
 import app.synapse.localllm.domain.remote.RemoteCachedRoom
 import app.synapse.localllm.domain.remote.RemoteChatCacheRepository
 import app.synapse.localllm.domain.remote.RemoteChatException
+import app.synapse.localllm.domain.remote.RemoteCinderParticipantState
 import app.synapse.localllm.domain.remote.RemoteConversationGateway
 import app.synapse.localllm.domain.remote.RemoteDeviceRegistrationGateway
 import app.synapse.localllm.domain.remote.RemoteDirectoryGateway
@@ -400,9 +401,7 @@ class RemoteChatViewModel(
         val participant = remoteAiParticipantGateway.updateCinderParticipant(
             UpdateRemoteCinderParticipantCommand(accountUid, roomId, active),
         )
-        if (selectedRoomId.value == roomId) {
-            mutableUiState.update { state -> state.copy(cinderParticipant = participant) }
-        }
+        publishCinderParticipantIfCurrent(roomId, participant)
     }
 
     fun insertCinderMention() {
@@ -1074,9 +1073,7 @@ class RemoteChatViewModel(
             while (selectedRoomId.value == roomId) {
                 try {
                     val participant = remoteAiParticipantGateway.getCinderParticipant(accountUid, roomId)
-                    if (selectedRoomId.value == roomId) {
-                        mutableUiState.update { state -> state.copy(cinderParticipant = participant) }
-                    }
+                    publishCinderParticipantIfCurrent(roomId, participant)
                     reportedUnavailable = false
                 } catch (exception: CancellationException) {
                     throw exception
@@ -1091,6 +1088,21 @@ class RemoteChatViewModel(
                     }
                 }
                 delay(ROOM_AI_CONFIGURATION_REFRESH_MILLIS)
+            }
+        }
+    }
+
+    private fun publishCinderParticipantIfCurrent(
+        roomId: RemoteRoomId,
+        participant: RemoteCinderParticipantState,
+    ) {
+        if (selectedRoomId.value != roomId || participant.roomId != roomId) return
+        mutableUiState.update { state ->
+            val currentParticipant = state.cinderParticipant
+            if (shouldApplyCinderParticipantState(roomId, currentParticipant, participant)) {
+                state.copy(cinderParticipant = participant)
+            } else {
+                state
             }
         }
     }
@@ -1304,6 +1316,19 @@ internal fun resolveAuthorizedNotificationRoom(
 
 internal fun shouldPublishRoomAiRefreshFailure(localAiEnabled: Boolean?): Boolean =
     localAiEnabled == true
+
+internal fun shouldApplyCinderParticipantState(
+    selectedRoomId: RemoteRoomId,
+    currentParticipant: RemoteCinderParticipantState?,
+    candidateParticipant: RemoteCinderParticipantState,
+): Boolean = candidateParticipant.roomId == selectedRoomId && (
+    currentParticipant?.roomId != selectedRoomId ||
+        candidateParticipant.revision > currentParticipant.revision ||
+        (
+            candidateParticipant.revision == currentParticipant.revision &&
+                candidateParticipant.active == currentParticipant.active
+            )
+    )
 
 private inline fun <T, K, V : Any> Iterable<T>.associateNotNull(
     keySelector: (T) -> K,

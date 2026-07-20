@@ -244,12 +244,17 @@ class RemoteCinderConversationViewModelTest {
             every { observeTypingParticipants(any(), any()) } returns emptyFlow()
             coEvery { getNotificationPreferences(any()) } returns RemoteNotificationPreferences()
         }
+        var participantRevision = 0L
         val remoteAiParticipantGateway = mockk<RemoteAiParticipantGateway>(relaxed = true) {
             coEvery { getRoomConfiguration(any(), any()) } coAnswers { awaitCancellation() }
             coEvery { getCinderParticipant(ACTIVE_ACCOUNT.accountUid, HUMAN_ROOM_ID) } returns
                 cinderParticipant(active = false)
             coEvery { updateCinderParticipant(any()) } coAnswers {
-                cinderParticipant(firstArg<UpdateRemoteCinderParticipantCommand>().active)
+                participantRevision += 1
+                cinderParticipant(
+                    active = firstArg<UpdateRemoteCinderParticipantCommand>().active,
+                    revision = participantRevision,
+                )
             }
         }
         val deviceRegistrationGateway = mockk<RemoteDeviceRegistrationGateway>(relaxed = true) {
@@ -336,12 +341,54 @@ class RemoteCinderConversationViewModelTest {
         )
     }
 
+    @Test
+    fun participantRefreshRemainsRoomScopedAndCannotRegressARevision() {
+        val current = cinderParticipant(active = true, revision = 4)
+
+        assertFalse(
+            shouldApplyCinderParticipantState(
+                HUMAN_ROOM_ID,
+                current,
+                cinderParticipant(active = false, revision = 3),
+            ),
+        )
+        assertTrue(
+            shouldApplyCinderParticipantState(
+                HUMAN_ROOM_ID,
+                current,
+                cinderParticipant(active = false, revision = 5),
+            ),
+        )
+        assertFalse(
+            shouldApplyCinderParticipantState(
+                HUMAN_ROOM_ID,
+                current,
+                cinderParticipant(active = false, revision = 4),
+            ),
+        )
+        assertFalse(
+            shouldApplyCinderParticipantState(
+                HUMAN_ROOM_ID,
+                current,
+                cinderParticipant(
+                    active = false,
+                    revision = 5,
+                    roomId = RemoteRoomId("group_${"b".repeat(32)}"),
+                ),
+            ),
+        )
+    }
+
     private object FixedClock : SynapseClock {
         override fun now(): Instant = Instant.EPOCH
     }
 
-    private fun cinderParticipant(active: Boolean) = RemoteCinderParticipantState(
-        roomId = HUMAN_ROOM_ID,
+    private fun cinderParticipant(
+        active: Boolean,
+        revision: Long = if (active) 1 else 0,
+        roomId: RemoteRoomId = HUMAN_ROOM_ID,
+    ) = RemoteCinderParticipantState(
+        roomId = roomId,
         participantId = RemoteAssistantConversationCatalog.cinder.participantId,
         displayName = "Cinder",
         active = active,
@@ -349,6 +396,7 @@ class RemoteCinderConversationViewModelTest {
         provenance = RemoteAiProvenance.REMOTE_HOSTED,
         provider = "OPENCLAW_CINDER",
         responsePolicy = RemoteAiResponsePolicy.MENTION_ONLY,
+        revision = revision,
     )
 
     private fun humanRoom() = RemoteCachedRoom(

@@ -200,6 +200,7 @@ internal fun Map<*, *>.toCinderParticipantState(expectedRoomId: RemoteRoomId): R
         provenance = RemoteAiProvenance.REMOTE_HOSTED,
         provider = provider,
         responsePolicy = RemoteAiResponsePolicy.MENTION_ONLY,
+        revision = requireAiLong("revision"),
     )
 }
 
