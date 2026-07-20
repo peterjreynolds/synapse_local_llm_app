@@ -79,6 +79,10 @@ internal fun RemoteChatsPane(
 ) {
     var showGroupCreation by rememberSaveable { mutableStateOf(false) }
     val selectedRoomId = state.selectedRoomId
+    var showSharedContent by rememberSaveable(selectedRoomId?.raw) { mutableStateOf(false) }
+    var sharedContentCategory by rememberSaveable(selectedRoomId?.raw) {
+        mutableStateOf(RemoteSharedContentCategory.PHOTOS)
+    }
     LaunchedEffect(groupState.roomToOpen, groupState.roomToClose) {
         groupState.roomToOpen?.let(viewModel::selectRoom)
         if (groupState.roomToClose == selectedRoomId) viewModel.selectRoom(null)
@@ -98,12 +102,31 @@ internal fun RemoteChatsPane(
             onCreateGroup = { showGroupCreation = true },
             isActionRunning = groupState.isActionRunning,
         )
+    } else if (showSharedContent) {
+        val room = state.rooms.firstOrNull { candidate -> candidate.roomId == selectedRoomId }
+        RemoteSharedContentBrowser(
+            state = state,
+            roomTitle = room?.title ?: state.selectedAssistantEndpoint?.displayName ?: "Conversation",
+            selectedCategory = sharedContentCategory,
+            onCategorySelected = { category -> sharedContentCategory = category },
+            onBack = { showSharedContent = false },
+            onLoadOlder = viewModel::loadOlderMessages,
+            onJumpToMessage = { messageId ->
+                showSharedContent = false
+                viewModel.jumpToMessage(messageId)
+            },
+            onDownloadAttachment = { item, attachmentId, thumbnail ->
+                viewModel.downloadAttachment(item.message, attachmentId, thumbnail)
+            },
+            onCancelAttachmentDownload = viewModel::cancelAttachmentDownload,
+        )
     } else {
         val room = state.rooms.firstOrNull { candidate -> candidate.roomId == selectedRoomId }
         RemoteMessageThread(
             state = state,
             room = room,
             onBack = { viewModel.selectRoom(null) },
+            onOpenSharedContent = { showSharedContent = true },
             onSend = viewModel::sendMessage,
             onComposerChanged = viewModel::updateComposerText,
             onAttachmentSelected = viewModel::addAttachment,

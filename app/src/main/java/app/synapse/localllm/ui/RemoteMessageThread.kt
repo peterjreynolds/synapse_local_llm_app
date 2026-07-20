@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.AddReaction
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -120,6 +121,7 @@ internal fun RemoteMessageThread(
     state: RemoteChatUiState,
     room: RemoteCachedRoom?,
     onBack: () -> Unit,
+    onOpenSharedContent: () -> Unit,
     onSend: (String) -> Unit,
     onComposerChanged: (String) -> Unit,
     onAttachmentSelected: (String) -> Unit,
@@ -381,6 +383,9 @@ internal fun RemoteMessageThread(
                     )
                 }
             }
+            IconButton(onClick = onOpenSharedContent) {
+                Icon(Icons.Default.Collections, contentDescription = "Shared media, links, and files")
+            }
             if (room?.kind == RemoteRoomKind.DIRECT) {
                 IconButton(
                     onClick = {
@@ -423,6 +428,11 @@ internal fun RemoteMessageThread(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                     horizontalArrangement = Arrangement.End,
                 ) {
+                    TextButton(onClick = onOpenSharedContent) {
+                        Icon(Icons.Default.Collections, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Shared content")
+                    }
                     TextButton(onClick = { showAppearance = true }) {
                         Icon(Icons.Default.Palette, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
