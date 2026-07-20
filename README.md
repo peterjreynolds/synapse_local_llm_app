@@ -69,10 +69,11 @@ Cinder appears as an app-owned assistant conversation in the normal remote chat
 list and can be summoned into human rooms with an explicit `@Cinder` response
 policy. The Android and Firebase source now includes authenticated submission,
 durable jobs and leases, server-ordered reply synchronization, exact remote-AI
-attribution, and an OpenClaw worker boundary. Live Firebase deployment, secret
-configuration, and an end-to-end OpenClaw round trip remain unproven; until a
-worker heartbeat is available, sends fail before creating a local ghost. The
-contract and exact activation steps are recorded in
+attribution, room-scoped participant revisions, and an authenticated OpenClaw
+worker boundary for both replies and proactive Cinder messages. Human rooms
+remain mention-only while the dedicated conversation responds automatically.
+Until a current worker heartbeat is available, direct sends fail before
+creating a local ghost. The contract and exact live-verification steps are recorded in
 [`docs/cinder-conversation-integration.md`](docs/cinder-conversation-integration.md).
 
 ## Embedded Runtime

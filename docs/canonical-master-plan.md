@@ -77,8 +77,9 @@ governance runtime, or an external sidecar.
   remote room/thread/composer presentation, account-scoped Room cache,
   authenticated Firebase submission and cursor sync, durable jobs/leases,
   human-room summon/remove and mention-only routing, exact OpenClaw remote-AI
-  attribution, and an explicit guard against phone-local Synapse inference.
-  Live deployment and an end-to-end OpenClaw round trip remain unproven; see
+  attribution, room-scoped participant revisions, proactive OpenClaw delivery,
+  and an explicit guard against phone-local Synapse inference. Live status is a
+  separate receipt boundary; see
   [`cinder-conversation-integration.md`](cinder-conversation-integration.md).
 
 ## Synapse Chat Phase 1 — Complete
@@ -331,8 +332,10 @@ Android app to an assistant runtime implementation.
   acceptance, server-owned ordering, reply store, metadata-only push, and
   authenticated reply synchronization defined in
   [`cinder-conversation-integration.md`](cinder-conversation-integration.md).
-- Activate the companion OpenClaw worker and prove the documented live direct
-  and human-room round trips before calling Cinder operational.
+- Preserve the protocol-v1 OpenClaw reply and proactive-outbound contract, with
+  account-scoped dedicated continuity and room-scoped human-room continuity.
+- Verify the companion OpenClaw worker and documented live direct, human-room,
+  and proactive round trips against the current candidate before calling it operational.
 - Keep credentials and provider-specific runtime types outside the APK.
 - Do not route Cinder turns into the phone-local Synapse inference coordinator.
 - Do not claim working replies until a real backend round trip and durable sync

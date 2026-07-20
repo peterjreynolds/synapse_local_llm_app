@@ -1,7 +1,8 @@
 # Cinder Conversation Integration
 
-Status: Firebase and Android source implementation complete; live deployment and
-OpenClaw worker round trip not yet proven
+Status: protocol-v1 Android/Firebase implementation and emulator coverage are
+complete. Treat live operation as a separate receipt boundary and verify the
+currently deployed Functions, worker heartbeat, and artifact before claiming it.
 
 Cinder is Peter's existing OpenClaw agent. OpenClaw owns Cinder's identity,
 sessions, transcript continuity, workspace, tools, memory/Wingman context, and
@@ -18,6 +19,9 @@ inference.
 - Trusted attribution: `REMOTE_AI`, `REMOTE_HOSTED`, and `OPENCLAW_CINDER`.
 - Human-room response policy: `MENTION_ONLY` with an explicit, normalized
   `@Cinder` mention.
+- Dedicated `assistant_cinder` turns are automatic and do not require a mention.
+  New jobs carry `explicitMention: false`; the room kind remains authoritative
+  so legacy protocol-v1 jobs with `true` stay compatible.
 - The dedicated conversation accepts text only in this slice. Attachments,
   voice notes, and replies fail explicitly and are never silently discarded.
 - Direct Cinder sends reach Firebase before any local message is created. A
@@ -28,6 +32,9 @@ inference.
   synchronization, and metadata-only notification paths.
 - Removing Cinder from a human room prevents future claims and completions but
   preserves existing message history.
+- Cinder may send proactive text from its normal OpenClaw session, memory,
+  heartbeat, cron, or message-tool flow. Firebase remains the only durable
+  Synapse message writer and applies the same attribution and notification path.
 
 ## Authenticated Android Callables
 
@@ -76,15 +83,20 @@ existing remote message table.
 Both accept a human direct or group `roomId`. An active direct-room member may
 change participation. A group requires owner or administrator role.
 `setCinderParticipant` also accepts `active`, updates the canonical participant
-document and `aiParticipantIds`, and writes a bounded audit event.
+document and `aiParticipantIds`, and writes a bounded audit event only for an
+actual add/remove transition. Receipts include a monotonic room-scoped
+`revision`; repeating the current state is an idempotent no-op with the same
+revision. Android ignores a lower revision so a delayed refresh cannot replace a
+newer participant state or leak state from another selected room.
 
 ## OpenClaw Worker Contract
 
-The companion worker uses four HTTPS Functions endpoints:
+The companion worker uses five HTTPS Functions endpoints:
 
 - `claimCinderResponse`
 - `completeCinderResponseJob`
 - `failCinderResponseJob`
+- `sendCinderOutboundMessage`
 - `skipCinderResponseJob`
 
 Requests must be `POST` with `Authorization: Bearer <CINDER_WORKER_TOKEN>`. The
@@ -105,6 +117,12 @@ participant/mention state, source author and body, server sequence/revision, and
 up to 12 normalized context messages. The worker must dispatch that context
 through the normal OpenClaw Cinder channel/runtime, not a new assistant stack.
 
+Dedicated conversations map the connector account plus Firebase account UID to
+one direct OpenClaw peer. Human direct and group rooms map the connector account
+plus room ID to one shared group peer, so different members in the same room
+reuse the same Cinder session. Firebase still records the authenticated source
+sender on each job; OpenClaw's room peer owns session continuity.
+
 Complete, fail, and skip require `jobId`, `leaseId`, `leaseToken`, and
 `workerId`. Complete also requires the final visible body. Fail requires a
 bounded failure code and retry policy. Skip requires a bounded reason. Leases
@@ -117,6 +135,23 @@ sender's message with the exact active Cinder participant metadata and an
 explicit `@Cinder` mention. Claim and completion both re-check the source and
 participant state. Completion creates one deterministic remote-AI room message;
 removal or unavailable source state records a skip instead.
+
+### Proactive outbound send
+
+`sendCinderOutboundMessage` accepts `workerId`, `accountUid`, `roomId`, normalized
+`body`, and a 64-hex-character `idempotencyKey`. The canonical OpenClaw target is
+`synapse-chat:<accountUid>:<roomId>`. A retry of the same command returns the
+same `messageId`, `roomId`, and server sequence; reuse with different command
+data fails with `IDEMPOTENCY_CONFLICT`.
+
+For `assistant_cinder`, the account must still be active. The first proactive
+message may create the dedicated Firebase conversation, after which Android
+receives it through the normal cursor sync and private metadata-only push. For a
+human direct or group room, the account must be an active room member and the
+exact Cinder participant must still be active. The message enters the existing
+room stream and metadata-only notification path. Removed participants, deleted
+rooms, inactive members, and unavailable accounts fail closed with
+`TARGET_UNAVAILABLE`; no message is written.
 
 ## Persistence, Rules, And Retention
 
@@ -178,11 +213,11 @@ still requires all of the following:
    ```bash
    npm --prefix firebase exec -- firebase deploy \
      --project "$PROJECT_ID" \
-     --only "functions:synapse-chat:getCinderAvailability,functions:synapse-chat:submitCinderMessage,functions:synapse-chat:syncCinderMessages,functions:synapse-chat:getCinderParticipant,functions:synapse-chat:setCinderParticipant,functions:synapse-chat:queueCinderHumanRoomResponse,functions:synapse-chat:claimCinderResponse,functions:synapse-chat:completeCinderResponseJob,functions:synapse-chat:failCinderResponseJob,functions:synapse-chat:skipCinderResponseJob,functions:synapse-chat:notifyRemoteMessage,functions:synapse-chat:notifyCinderMessage,functions:synapse-chat:updateRoomAiConfiguration,functions:synapse-chat:cleanupExpiredOperationalData"
+     --only "functions:synapse-chat:getCinderAvailability,functions:synapse-chat:submitCinderMessage,functions:synapse-chat:syncCinderMessages,functions:synapse-chat:getCinderParticipant,functions:synapse-chat:setCinderParticipant,functions:synapse-chat:queueCinderHumanRoomResponse,functions:synapse-chat:claimCinderResponse,functions:synapse-chat:completeCinderResponseJob,functions:synapse-chat:failCinderResponseJob,functions:synapse-chat:sendCinderOutboundMessage,functions:synapse-chat:skipCinderResponseJob,functions:synapse-chat:notifyRemoteMessage,functions:synapse-chat:notifyCinderMessage,functions:synapse-chat:updateRoomAiConfiguration,functions:synapse-chat:cleanupExpiredOperationalData"
    ```
 
-4. Discover the four worker URLs from deployed metadata instead of constructing
-   hostnames. The result must contain exactly four `ACTIVE` rows in
+4. Discover the five worker URLs from deployed metadata instead of constructing
+   hostnames. The result must contain exactly five `ACTIVE` rows in
    `northamerica-northeast1`, each with a non-empty HTTPS URI:
 
    ```bash
@@ -190,12 +225,12 @@ still requires all of the following:
      --project "$PROJECT_ID" \
      --json |
      jq -r '.result[] |
-       select(.id | test("^(claimCinderResponse|completeCinderResponseJob|failCinderResponseJob|skipCinderResponseJob)$")) |
+       select(.id | test("^(claimCinderResponse|completeCinderResponseJob|failCinderResponseJob|sendCinderOutboundMessage|skipCinderResponseJob)$")) |
        [.id, .region, .state, .uri] | @tsv'
    ```
 
-   Configure those discovered URIs as OpenClaw's claim, complete, fail, and skip
-   URLs. Enable both the `synapse-chat` plugin entry and channel, use one stable
+   Configure those discovered URIs as OpenClaw's claim, complete, fail, send,
+   and skip URLs. Enable both the `synapse-chat` plugin entry and channel, use one stable
    valid `workerId`, inject `CINDER_WORKER_TOKEN` into the OpenClaw runtime
    environment, and set the channel's `workerToken` field to the literal
    configuration substitution `"${CINDER_WORKER_TOKEN}"`. Keep this
@@ -228,7 +263,14 @@ still requires all of the following:
    completion; completion must return `SKIPPED` with `PARTICIPANT_REMOVED` and
    persist no room reply.
 
-9. Execute the release ledger's complete physical-device checklist on both the
+9. From the same OpenClaw Cinder session, send one unique proactive text to the
+   canonical dedicated target and one to an authorized active human room. Prove
+   idempotent replay, trusted remote-AI persistence, Android synchronization,
+   the metadata-only notification route, and no duplicate message. Remove
+   Cinder, retry a new proactive human-room send, and prove
+   `TARGET_UNAVAILABLE` with no durable message.
+
+10. Execute the release ledger's complete physical-device checklist on both the
    Galaxy S9/API 29 class and a physical API 33+ device. In addition to the
    existing install, session, messaging, attachment, updater, notification, and
    App Check evidence, record Cinder offline draft preservation, advancing
@@ -237,5 +279,5 @@ still requires all of the following:
    a release-readiness claim until every required gate passes for the same
    candidate SHA.
 
-No deployment, secret mutation, OpenClaw runtime change, release dispatch, or
-APK publication is performed by the source implementation milestone.
+Source and emulator results do not substitute for live deployment, worker,
+notification-delivery, physical-device, or rolling-APK receipts.
