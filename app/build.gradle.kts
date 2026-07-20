@@ -89,6 +89,14 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
         }
+        create("rolling") {
+            initWith(getByName("release"))
+            // apk-latest retains this established application ID and signer so installed
+            // builds remain update-compatible while the dedicated variant can stay minified.
+            applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
     }
 
     buildFeatures {
@@ -155,16 +163,16 @@ kapt {
     correctErrorTypes = true
 }
 
-val publishDebugSynapseApk by tasks.registering(Copy::class) {
-    dependsOn("packageDebug")
-    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+val publishRollingSynapseApk by tasks.registering(Copy::class) {
+    dependsOn("packageRolling")
+    from(layout.buildDirectory.file("outputs/apk/rolling/app-rolling.apk"))
     into(layout.buildDirectory.dir("outputs/apk/synapse"))
     rename { "Synapse-AI.apk" }
 }
 
 afterEvaluate {
-    tasks.named("assembleDebug") {
-        finalizedBy(publishDebugSynapseApk)
+    tasks.named("assembleRolling") {
+        finalizedBy(publishRollingSynapseApk)
     }
 }
 

@@ -132,10 +132,11 @@ Then run:
 ```sh
 ./gradlew test
 ./gradlew ktlintCheck lintDebug
-./gradlew assembleDebug
+./gradlew assembleDebug assembleRolling
 ```
 
-The debug APK will be under `app/build/outputs/apk/debug/`.
+The debuggable APK is under `app/build/outputs/apk/debug/`. The minified rolling
+APK is copied to `app/build/outputs/apk/synapse/Synapse-AI.apk`.
 
 ## GitHub APK Delivery
 

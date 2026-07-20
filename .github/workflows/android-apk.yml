@@ -27,6 +27,7 @@ jobs:
       EXPECTED_MINIMUM_ANDROID_API: "28"
       EXPECTED_APK_ABIS: arm64-v8a armeabi-v7a x86_64
       EXPECTED_SIGNING_CERTIFICATE_SHA256: 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b
+      APK_BRANCH_MAX_BYTES: "104857600"
 
     steps:
       - name: Check out repository
@@ -128,12 +129,18 @@ jobs:
 
       - name: Assemble APK
         shell: bash
-        run: bash scripts/ci/run-gradle-with-retry.sh assembleDebug --stacktrace
+        run: bash scripts/ci/run-gradle-with-retry.sh assembleRolling --stacktrace
 
       - name: Verify APK output
         shell: bash
         run: |
           test -f "$APK_PATH"
+          actual_apk_bytes="$(stat -c '%s' "$APK_PATH")"
+          if [ "$actual_apk_bytes" -gt "$APK_BRANCH_MAX_BYTES" ]; then
+            echo "APK is $actual_apk_bytes bytes; apk-latest accepts at most $APK_BRANCH_MAX_BYTES bytes." >&2
+            exit 1
+          fi
+          printf '%s\n' "$actual_apk_bytes" | tee apk-size-bytes.txt
           ls -lh "$APK_PATH"
           sha256sum "$APK_PATH" | tee apk-sha256.txt
           actual_application_id="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
