@@ -46,12 +46,19 @@ import org.webrtc.VideoTrack
 import org.webrtc.audio.AudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule
 
-class AndroidDirectCallMediaGateway(context: Context) :
+class AndroidDirectCallMediaGateway internal constructor(
+    context: Context,
+    private val videoEglBaseFactory: DirectCallVideoEglBaseFactory,
+) :
     DirectCallMediaGateway,
     DirectCallVideoRendererController {
+    constructor(context: Context) : this(context, WebRtcDirectCallVideoEglBaseFactory)
+
     private val applicationContext = context.applicationContext
     private val audioManager = applicationContext.getSystemService(AudioManager::class.java)
-    private val videoEglBase = EglBase.create()
+    private val videoEglBase: EglBase by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        videoEglBaseFactory.createEglBase()
+    }
     private val videoRendererLock = Any()
     private val videoRendererTargets = mutableMapOf<SurfaceViewRenderer, DirectCallVideoRendererTarget>()
     private var audioDeviceModule: AudioDeviceModule? = null
@@ -465,6 +472,14 @@ class AndroidDirectCallMediaGateway(context: Context) :
             }
         }
     }
+}
+
+internal fun interface DirectCallVideoEglBaseFactory {
+    fun createEglBase(): EglBase
+}
+
+private object WebRtcDirectCallVideoEglBaseFactory : DirectCallVideoEglBaseFactory {
+    override fun createEglBase(): EglBase = EglBase.create()
 }
 
 private suspend fun PeerConnection.createSessionDescription(
