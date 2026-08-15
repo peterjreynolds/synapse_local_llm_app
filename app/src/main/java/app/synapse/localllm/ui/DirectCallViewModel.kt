@@ -425,12 +425,20 @@ class DirectCallViewModel(
     }
 
     private fun stopMedia() {
+        val hadMediaResources = mediaCallId != null || localVideoPreviewCallId != null
+        val hadCallSession = mutableUiState.value.session != null
         cancelLocalVideoPreviewJob()
         callSignalJob?.cancel()
         callSignalJob = null
-        mediaGateway.stop()
-        alertGateway.stop()
-        foregroundController.stop()
+        if (hadMediaResources) {
+            mediaGateway.stop()
+        }
+        if (hadCallSession) {
+            alertGateway.stop()
+        }
+        if (foregroundCallId != null) {
+            foregroundController.stop()
+        }
         foregroundCallId = null
         mediaCallId = null
         processedSignalIds.clear()

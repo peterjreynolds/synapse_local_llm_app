@@ -39,6 +39,29 @@ class DirectCallViewModelTest {
     }
 
     @Test
+    fun bindingAnIdleAccountDoesNotInvokeAndroidCallTeardownBoundaries() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val mediaGateway = RecordingMediaGateway()
+        val alertGateway = RecordingAlertGateway()
+        val foregroundController = RecordingForegroundController()
+        val viewModel = DirectCallViewModel(
+            RecordingCallGateway(),
+            mediaGateway,
+            alertGateway,
+            foregroundController,
+            RecordingTerminalNotificationStore(),
+        )
+
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+
+        assertEquals(0, mediaGateway.stopCount)
+        assertEquals(0, alertGateway.stopCount)
+        assertEquals(0, foregroundController.stopCount)
+        assertEquals(DirectCallUiPhase.IDLE, viewModel.uiState.value.phase)
+    }
+
+    @Test
     fun startsOutgoingCallAndEndsItWithForegroundCleanup() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val gateway = RecordingCallGateway()
@@ -411,6 +434,7 @@ class DirectCallViewModelTest {
         var mediaKind: RemoteDirectCallMediaKind? = null
         var role: RemoteDirectCallRole? = null
         var speakerEnabledValue = false
+        var stopCount = 0
 
         override suspend fun startLocalVideoPreview() {
             localVideoPreviewStarted = true
@@ -448,6 +472,7 @@ class DirectCallViewModelTest {
         }
 
         override fun stop() {
+            stopCount += 1
             started = false
             localVideoPreviewStarted = false
             mediaKind = null
@@ -458,6 +483,7 @@ class DirectCallViewModelTest {
     private class RecordingAlertGateway : DirectCallAlertGateway {
         var ringbackPlaying = false
         var incomingRingtonePlaying = false
+        var stopCount = 0
 
         override fun startOutgoingRingback(expiresAtMillis: Long) {
             ringbackPlaying = true
@@ -470,6 +496,7 @@ class DirectCallViewModelTest {
         }
 
         override fun stop() {
+            stopCount += 1
             ringbackPlaying = false
             incomingRingtonePlaying = false
         }
@@ -489,6 +516,7 @@ class DirectCallViewModelTest {
         var started = false
         var dismissedCallId: RemoteDirectCallId? = null
         var mediaKind: RemoteDirectCallMediaKind? = null
+        var stopCount = 0
 
         override fun start(
             callId: RemoteDirectCallId,
@@ -499,6 +527,7 @@ class DirectCallViewModelTest {
         }
 
         override fun stop() {
+            stopCount += 1
             started = false
         }
 
