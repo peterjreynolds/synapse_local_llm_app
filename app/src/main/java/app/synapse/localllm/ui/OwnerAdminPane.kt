@@ -80,6 +80,10 @@ fun OwnerAdminPane(
     var deleteOwnerPassword by remember { mutableStateOf("") }
     var ownerActionPin by remember { mutableStateOf("") }
 
+    DisposableEffect(viewModel) {
+        viewModel.setAdminSurfaceVisible(true)
+        onDispose { viewModel.setAdminSurfaceVisible(false) }
+    }
     BlockScreenshotsWhileVisible()
     ClearSensitiveInputsOnStop {
         createTemporaryPassword = ""

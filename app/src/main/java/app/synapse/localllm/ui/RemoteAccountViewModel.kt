@@ -61,7 +61,12 @@ class RemoteAccountViewModel(
         val accountUid = mutableUiState.value.accountUid ?: return
         if (mutableUiState.value.isRefreshing) return
         accountRefreshJob?.cancel()
-        accountRefreshJob = viewModelScope.launch { loadAccountControls(accountUid) }
+        accountRefreshJob = viewModelScope.launch {
+            sessionController.activeSession
+                .filter { token -> token?.accountUid == accountUid }
+                .first()
+            loadAccountControls(accountUid, includeRegisteredDevices = true)
+        }
     }
 
     fun setUserBlocked(
@@ -152,12 +157,15 @@ class RemoteAccountViewModel(
                 sessionController.activeSession
                     .filter { token -> token?.accountUid == account.accountUid }
                     .first()
-                loadAccountControls(account.accountUid)
+                loadAccountControls(account.accountUid, includeRegisteredDevices = false)
             }
         }
     }
 
-    private suspend fun loadAccountControls(accountUid: RemoteAccountUid) {
+    private suspend fun loadAccountControls(
+        accountUid: RemoteAccountUid,
+        includeRegisteredDevices: Boolean,
+    ) {
         updateForAccount(accountUid) { state -> state.copy(isRefreshing = true, notice = null) }
         var loadFailure: Exception? = null
         try {
@@ -174,20 +182,22 @@ class RemoteAccountViewModel(
         } catch (exception: Exception) {
             loadFailure = exception
         }
-        try {
-            val devices = deviceRegistrationGateway.listOwnDevices(accountUid)
-            updateForAccount(accountUid) { state ->
-                state.copy(
-                    registeredDevices = devices.sortedWith(
-                        compareByDescending<RemoteRegisteredDevice> { it.isCurrentDevice }
-                            .thenByDescending { it.updatedAtMillis ?: Long.MIN_VALUE },
-                    ),
-                )
+        if (includeRegisteredDevices) {
+            try {
+                val devices = deviceRegistrationGateway.listOwnDevices(accountUid)
+                updateForAccount(accountUid) { state ->
+                    state.copy(
+                        registeredDevices = devices.sortedWith(
+                            compareByDescending<RemoteRegisteredDevice> { it.isCurrentDevice }
+                                .thenByDescending { it.updatedAtMillis ?: Long.MIN_VALUE },
+                        ),
+                    )
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                loadFailure = loadFailure ?: exception
             }
-        } catch (exception: CancellationException) {
-            throw exception
-        } catch (exception: Exception) {
-            loadFailure = loadFailure ?: exception
         }
         updateForAccount(accountUid) { state ->
             state.copy(

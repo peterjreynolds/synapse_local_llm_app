@@ -41,6 +41,47 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteAccountViewModelTest {
     @Test
+    fun signInLoadsPrivacyButDefersDeviceInventoryUntilAccountControlsAreVisible() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val authenticationState = MutableStateFlow<RemoteAuthenticationState>(
+            signedInState(PETER_UID, "peter"),
+        )
+        val privacyGateway = mockk<RemotePrivacyGateway> {
+            coEvery { getOwnPrivacyState() } returns RemotePrivacyState(emptySet(), false)
+        }
+        val deviceGateway = emptyDeviceGateway()
+        val viewModel = RemoteAccountViewModel(
+            authenticationGateway = mockk {
+                every { this@mockk.authenticationState } returns authenticationState
+            },
+            privacyGateway = privacyGateway,
+            deviceRegistrationGateway = deviceGateway,
+            invitationGateway = emptyInvitationGateway(),
+            sessionController = activeSessionController(PETER_UID),
+        )
+
+        try {
+            advanceUntilIdle()
+
+            assertEquals(PETER_UID, viewModel.uiState.value.accountUid)
+            assertFalse(viewModel.uiState.value.isRefreshing)
+            assertTrue(viewModel.uiState.value.privacyStateVerified)
+            coVerify(exactly = 1) { privacyGateway.getOwnPrivacyState() }
+            coVerify(exactly = 0) { deviceGateway.listOwnDevices(any()) }
+
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertTrue(viewModel.uiState.value.privacyStateVerified)
+            coVerify(exactly = 2) { privacyGateway.getOwnPrivacyState() }
+            coVerify(exactly = 1) { deviceGateway.listOwnDevices(PETER_UID) }
+        } finally {
+            viewModel.viewModelScope.cancel()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
     fun blockAndDeletionMutationsUpdateStateWithoutRetainingPassword() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val authenticationState = MutableStateFlow<RemoteAuthenticationState>(

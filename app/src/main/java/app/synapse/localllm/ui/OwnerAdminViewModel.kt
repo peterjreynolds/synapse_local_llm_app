@@ -61,6 +61,7 @@ class OwnerAdminViewModel(
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(OwnerAdminUiState())
     private var activeOwnerUid: RemoteAccountUid? = null
+    private var isAdminSurfaceVisible = false
     private var outboxObservationJob: Job? = null
 
     val uiState: StateFlow<OwnerAdminUiState> = mutableUiState
@@ -80,7 +81,7 @@ class OwnerAdminViewModel(
                                 activeOwnerUid = account.accountUid
                                 mutableUiState.value = OwnerAdminUiState()
                                 observeOwnerOutbox(account.accountUid)
-                                refresh()
+                                if (isAdminSurfaceVisible) refresh()
                             }
                         } else {
                             clearOwnerState()
@@ -93,6 +94,12 @@ class OwnerAdminViewModel(
                 }
             }
         }
+    }
+
+    fun setAdminSurfaceVisible(visible: Boolean) {
+        if (isAdminSurfaceVisible == visible) return
+        isAdminSurfaceVisible = visible
+        if (visible && activeOwnerUid != null) refresh()
     }
 
     fun refresh(searchPrefix: String? = null) = launchAction {
