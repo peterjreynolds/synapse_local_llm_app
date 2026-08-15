@@ -43,6 +43,41 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class OwnerAdminViewModelTest {
     @Test
+    fun ownerSignInDefersAdminCallsUntilTheAdminSurfaceIsVisible() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val ownerUid = RemoteAccountUid("owner-uid")
+        val ownerAdminGateway = mockk<OwnerAdminGateway>(relaxed = true)
+        val viewModel = OwnerAdminViewModel(
+            authenticationGateway = ownerAuthenticationGateway(ownerUid),
+            ownerAdminGateway = ownerAdminGateway,
+            remoteInvitationGateway = mockk(),
+            remoteChatCacheRepository = emptyOutboxRepository(),
+        )
+
+        try {
+            advanceUntilIdle()
+
+            coVerify(exactly = 0) { ownerAdminGateway.listAccounts(any()) }
+            coVerify(exactly = 0) { ownerAdminGateway.listInvitations() }
+            coVerify(exactly = 0) { ownerAdminGateway.listAuditEvents(any()) }
+            coVerify(exactly = 0) { ownerAdminGateway.getRegistrationApprovalRequired() }
+            coVerify(exactly = 0) { ownerAdminGateway.getOperationsSummary() }
+
+            viewModel.setAdminSurfaceVisible(true)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { ownerAdminGateway.listAccounts(null) }
+            coVerify(exactly = 1) { ownerAdminGateway.listInvitations() }
+            coVerify(exactly = 1) { ownerAdminGateway.listAuditEvents() }
+            coVerify(exactly = 1) { ownerAdminGateway.getRegistrationApprovalRequired() }
+            coVerify(exactly = 1) { ownerAdminGateway.getOperationsSummary() }
+        } finally {
+            viewModel.viewModelScope.cancel()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
     fun localOutboxSummaryCountsOnlyTheActiveOwnerScope() {
         val ownerUid = RemoteAccountUid("owner-uid")
         val otherUid = RemoteAccountUid("other-uid")
@@ -176,6 +211,8 @@ class OwnerAdminViewModelTest {
 
         try {
             runCurrent()
+            viewModel.setAdminSurfaceVisible(true)
+            runCurrent()
             authenticationStateFlow.value = RemoteAuthenticationState.SignedOut
             runCurrent()
             delayedAccounts.complete(
@@ -201,6 +238,24 @@ class OwnerAdminViewModelTest {
             Dispatchers.resetMain()
         }
     }
+}
+
+private fun ownerAuthenticationGateway(ownerUid: RemoteAccountUid) = mockk<RemoteAuthenticationGateway> {
+    every { authenticationState } returns MutableStateFlow(
+        RemoteAuthenticationState.SignedIn(
+            RemoteAuthenticatedAccount(
+                accountUid = ownerUid,
+                usernameNormalized = "peter",
+                role = RemoteAccountRole.OWNER,
+                state = RemoteAccountState.ACTIVE,
+                mustChangePassword = false,
+            ),
+        ),
+    )
+}
+
+private fun emptyOutboxRepository() = mockk<RemoteChatCacheRepository> {
+    every { observePendingOutbox() } returns emptyFlow()
 }
 
 private fun ownerOperationsSummary() =

@@ -702,6 +702,11 @@ private fun RemoteSignedInShell(
     LaunchedEffect(availableSections) {
         if (selectedSection !in availableSections) selectedSection = RemoteAppSection.CHATS
     }
+    LaunchedEffect(selectedSection, remoteAccountState.accountUid) {
+        if (selectedSection == RemoteAppSection.PEOPLE || selectedSection == RemoteAppSection.PROFILE) {
+            remoteAccountViewModel.refresh()
+        }
+    }
     LaunchedEffect(state.notice) {
         state.notice?.let { notice ->
             snackbarHostState.showSnackbar(notice)
