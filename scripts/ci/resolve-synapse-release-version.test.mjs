@@ -29,6 +29,28 @@ test("keeps a newer workflow sequence monotonic", () => {
   );
 });
 
+test("honors a product-specific minimum without changing the default sequence", () => {
+  assert.deepEqual(
+    resolveSynapseReleaseVersion({
+      workflowRunNumber: "18",
+      currentReleaseBody: null,
+      minimumVersionCode: "2031",
+    }),
+    {versionCode: 2031, versionName: "0.1.2031"},
+  );
+});
+
+test("increments an existing release above the product-specific minimum", () => {
+  assert.deepEqual(
+    resolveSynapseReleaseVersion({
+      workflowRunNumber: "18",
+      currentReleaseBody: "Version code: 2040.",
+      minimumVersionCode: 2031,
+    }),
+    {versionCode: 2041, versionName: "0.1.2041"},
+  );
+});
+
 test("fails closed when an existing release has no version receipt", () => {
   assert.throws(
     () => resolveSynapseReleaseVersion({workflowRunNumber: 19, currentReleaseBody: "Missing receipt"}),
@@ -40,5 +62,17 @@ test("rejects invalid workflow run numbers", () => {
   assert.throws(
     () => resolveSynapseReleaseVersion({workflowRunNumber: "0", currentReleaseBody: null}),
     /workflow run number must be a positive integer/,
+  );
+});
+
+test("rejects invalid minimum version codes", () => {
+  assert.throws(
+    () =>
+      resolveSynapseReleaseVersion({
+        workflowRunNumber: "19",
+        currentReleaseBody: null,
+        minimumVersionCode: "0",
+      }),
+    /minimum version code must be a positive integer/,
   );
 });

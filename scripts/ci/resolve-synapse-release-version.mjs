@@ -5,8 +5,16 @@ const RELEASE_BODY_BYTE_LIMIT = 64 * 1024;
 const VERSION_CODE_OFFSET = 2_000;
 const VERSION_CODE_PATTERN = /\bVersion code:\s*(\d+)\b/i;
 
-export function resolveSynapseReleaseVersion({workflowRunNumber, currentReleaseBody}) {
+export function resolveSynapseReleaseVersion({
+  workflowRunNumber,
+  currentReleaseBody,
+  minimumVersionCode = 1,
+}) {
   const normalizedRunNumber = parsePositiveInteger(workflowRunNumber, "workflow run number");
+  const normalizedMinimumVersionCode = parsePositiveInteger(
+    minimumVersionCode,
+    "minimum version code",
+  );
   if (currentReleaseBody !== null && typeof currentReleaseBody !== "string") {
     throw new TypeError("Current release body must be a string or null.");
   }
@@ -18,6 +26,7 @@ export function resolveSynapseReleaseVersion({workflowRunNumber, currentReleaseB
   const versionCode = Math.max(
     workflowVersionCode,
     currentVersionCode === null ? workflowVersionCode : currentVersionCode + 1,
+    normalizedMinimumVersionCode,
   );
   if (versionCode > ANDROID_VERSION_CODE_LIMIT) {
     throw new RangeError(`Resolved Android version code ${versionCode} exceeds the supported limit.`);
@@ -71,6 +80,7 @@ async function runCommandLine() {
   const versionPlan = resolveSynapseReleaseVersion({
     workflowRunNumber: process.env.GITHUB_RUN_NUMBER,
     currentReleaseBody,
+    minimumVersionCode: process.env.SYNAPSE_MINIMUM_VERSION_CODE ?? 1,
   });
   process.stdout.write(`${JSON.stringify(versionPlan)}\n`);
 }
