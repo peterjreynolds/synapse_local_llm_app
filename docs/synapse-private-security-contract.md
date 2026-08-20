@@ -86,12 +86,25 @@ Server lifecycle:
 
 1. Accept a bounded ciphertext envelope and immutable expiry.
 2. Authorize delivery only to current active room members.
-3. Delete expired message rows in bounded, observable purge batches.
-4. Cascade deletion to reactions, receipts, encrypted key envelopes, reply
+3. Make expired rows unreadable at `expires_at` in every policy, independently
+   of background-job timing.
+4. Attempt physical database purge every minute while the hosted project and
+   scheduler are running, then catch up immediately after a paused Free project
+   resumes.
+5. Cascade deletion to reactions, receipts, encrypted key envelopes, reply
    links, typing state, and attachment metadata.
-5. Delete encrypted attachment and thumbnail objects.
-6. Retain only aggregate purge receipts that contain no room, account, message,
+6. Delete encrypted attachment and thumbnail objects through the Storage API;
+   deleting only Storage metadata is not a successful purge.
+7. Retain only aggregate purge receipts that contain no room, account, message,
    object-path, network, or content identifiers.
+
+Hosted Supabase backups and provider recovery systems may retain deleted
+ciphertext for their infrastructure-defined window. They never receive
+plaintext or message keys, and client key destruction makes those remnants
+cryptographically unreadable. A requirement that even expired ciphertext
+never enter or remain in provider backups requires a separately operated
+backend with backups disabled; hosted Supabase cannot honestly make that
+stronger guarantee.
 
 Client lifecycle:
 
