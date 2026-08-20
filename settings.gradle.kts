@@ -11,9 +11,20 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = "SignalBuildArtifacts"
+                    url = uri("https://build-artifacts.signal.org/libraries/maven/")
+                }
+            }
+            filter {
+                includeGroup("org.signal")
+            }
+        }
     }
 }
 
 rootProject.name = "SynapseLocalLlmApp"
 include(":app")
-
+include(":privatechat")

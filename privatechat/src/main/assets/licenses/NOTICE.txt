@@ -1,0 +1,10 @@
+Synapse Private includes Signal's libsignal 0.101.0.
+
+Copyright Signal Messenger, LLC and libsignal contributors.
+Licensed under the GNU Affero General Public License, version 3.
+
+Upstream source: https://github.com/signalapp/libsignal/tree/v0.101.0
+Synapse Private source: https://github.com/peterjreynolds/synapse_local_llm_app
+
+Signal does not sponsor, support, or endorse this application. The libsignal
+maintainers describe third-party use as unsupported and its APIs as unstable.
