@@ -1,0 +1,319 @@
+name: Build Synapse Private APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: synapse-private-apk-release
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    name: Build and publish private chat APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APK_PATH: privatechat/build/outputs/apk/rolling/privatechat-rolling.apk
+      APK_NAME: Synapse-Private.apk
+      UPDATE_METADATA_PATH: Synapse-Private-update.json
+      RELEASE_TAG: synapse-private
+      EXPECTED_APPLICATION_ID: app.synapse.privatechat
+      EXPECTED_MINIMUM_ANDROID_API: "28"
+      EXPECTED_APK_ABIS: arm64-v8a,armeabi-v7a,x86_64
+      EXPECTED_SIGNING_CERTIFICATE_SHA256: 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b
+      MAXIMUM_APK_BYTES: "524288000"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test release contracts
+        shell: bash
+        run: |
+          node --test \
+            scripts/ci/build-synapse-private-update-metadata.test.mjs \
+            scripts/ci/resolve-synapse-release-version.test.mjs \
+            scripts/ci/run-idempotent-release-command-with-retry.test.mjs
+
+      - name: Resolve monotonic release version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNAPSE_MINIMUM_VERSION_CODE: "2031"
+        run: |
+          release_exists=0
+          current_release_body=""
+          if current_release_body="$(gh release view "$RELEASE_TAG" --json body --jq .body 2>/dev/null)"; then
+            release_exists=1
+          fi
+          release_version_json="$(
+            printf '%s' "$current_release_body" |
+              SYNAPSE_RELEASE_EXISTS="$release_exists" \
+              node scripts/ci/resolve-synapse-release-version.mjs
+          )"
+          version_code="$(printf '%s' "$release_version_json" | jq -er '.versionCode')"
+          version_name="$(printf '%s' "$release_version_json" | jq -er '.versionName')"
+          if [ "$version_code" -le 2030 ]; then
+            echo "Synapse Private version code must remain above 2030." >&2
+            exit 1
+          fi
+          printf 'SYNAPSE_VERSION_CODE=%s\n' "$version_code" >> "$GITHUB_ENV"
+          printf 'SYNAPSE_VERSION_NAME=%s\n' "$version_name" >> "$GITHUB_ENV"
+          printf 'SYNAPSE_RELEASE_EXISTS=%s\n' "$release_exists" >> "$GITHUB_ENV"
+          {
+            printf '### Synapse Private rolling version\n\n'
+            printf -- '- Version code: `%s`\n' "$version_code"
+            printf -- '- Version name: `%s`\n' "$version_name"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools"
+
+      - name: Restore stable signing key
+        shell: bash
+        env:
+          SYNAPSE_DEBUG_KEYSTORE_B64: ${{ secrets.SYNAPSE_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$SYNAPSE_DEBUG_KEYSTORE_B64" ]; then
+            echo "SYNAPSE_DEBUG_KEYSTORE_B64 is required for update-compatible APK signing." >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.android"
+          printf '%s' "$SYNAPSE_DEBUG_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+
+      - name: Run Synapse Private unit tests
+        shell: bash
+        run: bash scripts/ci/run-gradle-with-retry.sh :privatechat:testDebugUnitTest --stacktrace
+
+      - name: Run Synapse Private ktlint
+        shell: bash
+        run: bash scripts/ci/run-gradle-with-retry.sh :privatechat:ktlintCheck --stacktrace
+
+      - name: Run Synapse Private Android lint
+        shell: bash
+        run: bash scripts/ci/run-gradle-with-retry.sh :privatechat:lintDebug --stacktrace
+
+      - name: Assemble rolling APK
+        shell: bash
+        run: bash scripts/ci/run-gradle-with-retry.sh :privatechat:assembleRolling --stacktrace
+
+      - name: Verify APK and build update metadata
+        shell: bash
+        run: |
+          test -f "$APK_PATH"
+          actual_apk_bytes="$(stat -c '%s' "$APK_PATH")"
+          if [ "$actual_apk_bytes" -gt "$MAXIMUM_APK_BYTES" ]; then
+            echo "APK is $actual_apk_bytes bytes; maximum is $MAXIMUM_APK_BYTES bytes." >&2
+            exit 1
+          fi
+          actual_apk_sha256="$(sha256sum "$APK_PATH" | cut -d ' ' -f 1)"
+          actual_application_id="$(
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" |
+              sed -n "s/^package: name='\([^']*\)'.*/\1/p"
+          )"
+          actual_version_code="$(
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" |
+              sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p"
+          )"
+          actual_version_name="$(
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" |
+              sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p"
+          )"
+          actual_minimum_android_api="$(
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" |
+              sed -n "s/^sdkVersion:'\([^']*\)'.*/\1/p"
+          )"
+          actual_apk_abis="$(
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK_PATH" |
+              sed -n "s/^native-code: //p" |
+              tr -d "'" |
+              xargs |
+              tr ' ' ','
+          )"
+          actual_signer_sha256="$(
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK_PATH" |
+              sed -n "s/^Signer #1 certificate SHA-256 digest: //p"
+          )"
+
+          test "$actual_application_id" = "$EXPECTED_APPLICATION_ID"
+          test "$actual_version_code" = "$SYNAPSE_VERSION_CODE"
+          test "$actual_version_name" = "$SYNAPSE_VERSION_NAME"
+          test "$actual_minimum_android_api" = "$EXPECTED_MINIMUM_ANDROID_API"
+          test "$actual_apk_abis" = "$EXPECTED_APK_ABIS"
+          test "$actual_signer_sha256" = "$EXPECTED_SIGNING_CERTIFICATE_SHA256"
+
+          expected_native_entries="$(mktemp)"
+          actual_native_entries="$(mktemp)"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            printf 'lib/%s/libandroidx.graphics.path.so\n' "$abi"
+            printf 'lib/%s/libsignal_jni.so\n' "$abi"
+          done | sort > "$expected_native_entries"
+          unzip -Z1 "$APK_PATH" | grep '^lib/' | sort > "$actual_native_entries"
+          diff -u "$expected_native_entries" "$actual_native_entries"
+
+          published_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          SYNAPSE_PRIVATE_APPLICATION_ID="$actual_application_id" \
+          SYNAPSE_PRIVATE_MINIMUM_ANDROID_API="$actual_minimum_android_api" \
+          SYNAPSE_PRIVATE_APK_ABIS="$actual_apk_abis" \
+          SYNAPSE_PRIVATE_APK_NAME="$APK_NAME" \
+          SYNAPSE_PRIVATE_APK_BYTES="$actual_apk_bytes" \
+          SYNAPSE_PRIVATE_APK_SHA256="$actual_apk_sha256" \
+          SYNAPSE_PRIVATE_SIGNER_SHA256="$actual_signer_sha256" \
+          SYNAPSE_PRIVATE_SOURCE_COMMIT="$GITHUB_SHA" \
+          SYNAPSE_PRIVATE_RELEASE_TAG="$RELEASE_TAG" \
+          SYNAPSE_PRIVATE_PUBLISHED_AT="$published_at" \
+          node scripts/ci/build-synapse-private-update-metadata.mjs > "$UPDATE_METADATA_PATH"
+
+          jq -e \
+            --argjson version_code "$SYNAPSE_VERSION_CODE" \
+            --arg apk_sha256 "$actual_apk_sha256" \
+            --arg source_commit "$GITHUB_SHA" \
+            '.versionCode == $version_code and .apk.sha256 == $apk_sha256 and .source.commit == $source_commit' \
+            "$UPDATE_METADATA_PATH" >/dev/null
+
+          printf '%s\n' "$actual_apk_bytes" > apk-size-bytes.txt
+          printf '%s\n' "$actual_apk_sha256" > apk-sha256.txt
+          printf '%s\n' "$actual_application_id" > apk-application-id.txt
+          printf '%s\n' "$actual_version_code" > apk-version-code.txt
+          printf '%s\n' "$actual_signer_sha256" > apk-signer-sha256.txt
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Synapse-Private-${{ env.SYNAPSE_VERSION_CODE }}
+          path: |
+            ${{ env.APK_PATH }}
+            ${{ env.UPDATE_METADATA_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish rolling release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk_sha256="$(cat apk-sha256.txt)"
+          signer_sha256="$(cat apk-signer-sha256.txt)"
+          release_notes="$(printf '%s\n\n' \
+            "Latest Synapse Private human-to-human chat APK from commit $GITHUB_SHA." \
+            "Version code: $SYNAPSE_VERSION_CODE. Package: $EXPECTED_APPLICATION_ID." \
+            "Minimum Android API: $EXPECTED_MINIMUM_ANDROID_API." \
+            "APK ABIs: arm64-v8a, armeabi-v7a, x86_64." \
+            "SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256." \
+            "Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" \
+            "This app contains no Cinder, local model, or AI runtime. Signal is not affiliated with or endorsing this app." \
+            "Private calling requires a configured TURN-only relay and fails closed when no relay is available.")"
+
+          if [ "$SYNAPSE_RELEASE_EXISTS" = "1" ]; then
+            SYNAPSE_RELEASE_OPERATION="upload Synapse Private APK" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              gh release upload "$RELEASE_TAG" "$APK_PATH#$APK_NAME" --clobber
+            SYNAPSE_RELEASE_OPERATION="upload Synapse Private update metadata" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              gh release upload "$RELEASE_TAG" "$UPDATE_METADATA_PATH" --clobber
+            git tag --force "$RELEASE_TAG" "$GITHUB_SHA"
+            SYNAPSE_RELEASE_OPERATION="push Synapse Private release tag" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              git push --force origin "refs/tags/$RELEASE_TAG"
+            SYNAPSE_RELEASE_OPERATION="update Synapse Private release" \
+              bash scripts/ci/run-idempotent-release-command-with-retry.sh \
+              gh release edit "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Synapse Private APK" \
+              --notes "$release_notes" \
+              --latest
+          else
+            gh release create "$RELEASE_TAG" \
+              "$APK_PATH#$APK_NAME" \
+              "$UPDATE_METADATA_PATH" \
+              --target "$GITHUB_SHA" \
+              --title "Synapse Private APK" \
+              --notes "$release_notes" \
+              --latest
+          fi
+
+      - name: Verify rolling release receipts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          expected_apk_sha256="$(cat apk-sha256.txt)"
+          expected_apk_digest="sha256:$expected_apk_sha256"
+          expected_metadata_sha256="$(sha256sum "$UPDATE_METADATA_PATH" | cut -d ' ' -f 1)"
+          expected_metadata_digest="sha256:$expected_metadata_sha256"
+          release_receipt="$(gh release view "$RELEASE_TAG" --json targetCommitish,assets,body)"
+          release_target="$(printf '%s' "$release_receipt" | jq -r '.targetCommitish')"
+          apk_asset_count="$(
+            printf '%s' "$release_receipt" |
+              jq -r --arg name "$APK_NAME" '[.assets[] | select(.name == $name)] | length'
+          )"
+          apk_asset_digest="$(
+            printf '%s' "$release_receipt" |
+              jq -r --arg name "$APK_NAME" '.assets[] | select(.name == $name) | .digest'
+          )"
+          metadata_asset_count="$(
+            printf '%s' "$release_receipt" |
+              jq -r --arg name "$UPDATE_METADATA_PATH" '[.assets[] | select(.name == $name)] | length'
+          )"
+          metadata_asset_digest="$(
+            printf '%s' "$release_receipt" |
+              jq -r --arg name "$UPDATE_METADATA_PATH" '.assets[] | select(.name == $name) | .digest'
+          )"
+          remote_tag_sha="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
+
+          test "$release_target" = "$GITHUB_SHA"
+          test "$remote_tag_sha" = "$GITHUB_SHA"
+          test "$apk_asset_count" = "1"
+          test "$apk_asset_digest" = "$expected_apk_digest"
+          test "$metadata_asset_count" = "1"
+          test "$metadata_asset_digest" = "$expected_metadata_digest"
+          printf '%s' "$release_receipt" | jq -er '.body' | grep -F "Version code: $SYNAPSE_VERSION_CODE." >/dev/null
+
+          receipt_directory="$(mktemp -d)"
+          gh release download "$RELEASE_TAG" \
+            --pattern "$UPDATE_METADATA_PATH" \
+            --dir "$receipt_directory"
+          cmp "$UPDATE_METADATA_PATH" "$receipt_directory/$UPDATE_METADATA_PATH"
+          jq -e \
+            --argjson version_code "$SYNAPSE_VERSION_CODE" \
+            --arg apk_sha256 "$expected_apk_sha256" \
+            --arg signer_sha256 "$EXPECTED_SIGNING_CERTIFICATE_SHA256" \
+            --arg source_commit "$GITHUB_SHA" \
+            '.versionCode == $version_code and .apk.sha256 == $apk_sha256 and .apk.signerSha256 == $signer_sha256 and .source.commit == $source_commit' \
+            "$receipt_directory/$UPDATE_METADATA_PATH" >/dev/null
+
+          {
+            printf '\n### Synapse Private release receipt\n\n'
+            printf -- '- Source commit: `%s`\n' "$GITHUB_SHA"
+            printf -- '- Version code: `%s`\n' "$SYNAPSE_VERSION_CODE"
+            printf -- '- APK SHA-256: `%s`\n' "$expected_apk_sha256"
+            printf -- '- Signing certificate SHA-256: `%s`\n' "$EXPECTED_SIGNING_CERTIFICATE_SHA256"
+            printf -- '- Release tag: `%s`\n' "$RELEASE_TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
