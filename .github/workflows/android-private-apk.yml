@@ -178,6 +178,9 @@ jobs:
           unzip -Z1 "$APK_PATH" | grep '^lib/' | sort > "$actual_native_entries"
           diff -u "$expected_native_entries" "$actual_native_entries"
 
+          cp "$APK_PATH" "$APK_NAME"
+          cmp "$APK_PATH" "$APK_NAME"
+
           published_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
           SYNAPSE_PRIVATE_APPLICATION_ID="$actual_application_id" \
           SYNAPSE_PRIVATE_MINIMUM_ANDROID_API="$actual_minimum_android_api" \
@@ -209,7 +212,7 @@ jobs:
         with:
           name: Synapse-Private-${{ env.SYNAPSE_VERSION_CODE }}
           path: |
-            ${{ env.APK_PATH }}
+            ${{ env.APK_NAME }}
             ${{ env.UPDATE_METADATA_PATH }}
           if-no-files-found: error
           retention-days: 30
@@ -234,7 +237,7 @@ jobs:
           if [ "$SYNAPSE_RELEASE_EXISTS" = "1" ]; then
             SYNAPSE_RELEASE_OPERATION="upload Synapse Private APK" \
               bash scripts/ci/run-idempotent-release-command-with-retry.sh \
-              gh release upload "$RELEASE_TAG" "$APK_PATH#$APK_NAME" --clobber
+              gh release upload "$RELEASE_TAG" "$APK_NAME" --clobber
             SYNAPSE_RELEASE_OPERATION="upload Synapse Private update metadata" \
               bash scripts/ci/run-idempotent-release-command-with-retry.sh \
               gh release upload "$RELEASE_TAG" "$UPDATE_METADATA_PATH" --clobber
@@ -251,7 +254,7 @@ jobs:
               --latest
           else
             gh release create "$RELEASE_TAG" \
-              "$APK_PATH#$APK_NAME" \
+              "$APK_NAME" \
               "$UPDATE_METADATA_PATH" \
               --target "$GITHUB_SHA" \
               --title "Synapse Private APK" \
