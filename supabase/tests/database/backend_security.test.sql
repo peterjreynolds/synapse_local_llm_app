@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(83);
+select plan(91);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -404,7 +404,7 @@ select ok(
   'legacy non-atomic room creation is unavailable to authenticated clients'
 );
 select ok(
-  has_function_privilege('authenticated', 'public.create_room_with_metadata(text,uuid,jsonb,integer)', 'EXECUTE')
+  has_function_privilege('authenticated', 'public.create_room_with_metadata(uuid,text,uuid,jsonb,integer)', 'EXECUTE')
   and has_function_privilege('authenticated', 'public.set_room_metadata(uuid,uuid,integer,jsonb)', 'EXECUTE')
   and has_function_privilege('authenticated', 'public.edit_message(uuid,uuid,integer,jsonb)', 'EXECUTE')
   and has_function_privilege('authenticated', 'public.remove_reaction(uuid,uuid)', 'EXECUTE')
@@ -804,6 +804,174 @@ select is(
   ),
   5,
   'new receipt foreign keys have covering indexes'
+);
+
+select ok(
+  (
+    select count(*) = 4 and bool_and(relrowsecurity)
+    from pg_class
+    join pg_namespace on pg_namespace.oid = relnamespace
+    where nspname = 'private'
+      and relname in (
+        'device_envelope_capacity', 'device_room_envelope_capacity',
+        'device_sender_envelope_capacity',
+        'envelope_capacity_contributions'
+      )
+  )
+  and not has_table_privilege('authenticated', 'private.device_envelope_capacity', 'SELECT')
+  and not has_table_privilege('authenticated', 'private.device_room_envelope_capacity', 'SELECT')
+  and not has_table_privilege('authenticated', 'private.device_sender_envelope_capacity', 'SELECT')
+  and not has_table_privilege('authenticated', 'private.envelope_capacity_contributions', 'SELECT')
+  and not has_table_privilege('anon', 'private.device_envelope_capacity', 'SELECT')
+  and not has_table_privilege('anon', 'private.device_room_envelope_capacity', 'SELECT')
+  and not has_table_privilege('anon', 'private.device_sender_envelope_capacity', 'SELECT')
+  and not has_table_privilege('anon', 'private.envelope_capacity_contributions', 'SELECT'),
+  'encrypted capacity ledgers are private, RLS-enabled, and inaccessible to clients'
+);
+select ok(
+  exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.rooms'::regclass
+      and attname = 'creation_client_mutation_id'
+      and not attisdropped
+  )
+  and not (
+    select attnotnull
+    from pg_attribute
+    where attrelid = 'public.rooms'::regclass
+      and attname = 'creation_client_mutation_id'
+      and not attisdropped
+  )
+  and exists (
+    select 1
+    from pg_indexes
+    where schemaname = 'public'
+      and tablename = 'rooms'
+      and indexname = 'rooms_owner_creation_mutation_unique'
+      and indexdef like '%(owner_user_id, creation_client_mutation_id)%'
+      and indexdef like '%WHERE (creation_client_mutation_id IS NOT NULL)%'
+  ),
+  'new rooms have a unique owner-scoped creation binding without breaking legacy rooms'
+);
+select ok(
+  pg_get_functiondef(
+    'private.create_room_with_metadata(uuid,text,integer,uuid,jsonb)'::regprocedure
+  ) like '%creation_client_mutation_id%'
+  and pg_get_functiondef(
+    'private.create_room_with_metadata(uuid,text,integer,uuid,jsonb)'::regprocedure
+  ) like '%p_client_mutation_id%'
+  and pg_get_functiondef(
+    'private.create_room_with_metadata(uuid,text,integer,uuid,jsonb)'::regprocedure
+  ) like '%p_room_id%',
+  'room creation persists encrypted metadata room and mutation identities in its authoritative row'
+);
+select ok(
+  (
+    select count(*) = 2
+      and bool_and(not prosecdef)
+      and bool_and(proconfig @> array['search_path=""']::text[])
+    from pg_proc
+    join pg_namespace on pg_namespace.oid = pronamespace
+    where nspname = 'public'
+      and proname in ('send_message', 'send_reaction')
+  )
+  and has_function_privilege(
+    'authenticated', 'public.send_message(uuid,uuid,jsonb,uuid)', 'EXECUTE'
+  )
+  and has_function_privilege(
+    'authenticated', 'public.send_reaction(uuid,uuid,jsonb)', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon', 'public.send_message(uuid,uuid,jsonb,uuid)', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon', 'public.send_reaction(uuid,uuid,jsonb)', 'EXECUTE'
+  ),
+  'content RPC wrappers are empty-path invokers granted only to authenticated clients'
+);
+select ok(
+  pg_get_function_result('public.send_message(uuid,uuid,jsonb,uuid)'::regprocedure)
+    like '%room_id uuid%client_mutation_id uuid%'
+  and pg_get_function_result('public.send_reaction(uuid,uuid,jsonb)'::regprocedure)
+    like '%message_id uuid%client_mutation_id uuid%',
+  'content RPC receipts expose the parent and client mutation identities for correlation'
+);
+select ok(
+  (
+    select count(*) = 4
+      and bool_and(prosecdef)
+      and bool_and(proconfig @> array['search_path=""']::text[])
+    from pg_proc
+    join pg_namespace on pg_namespace.oid = pronamespace
+    where nspname = 'private'
+      and proname in (
+        'reserve_device_envelope_capacity', 'release_device_envelope_capacity',
+        'prevent_envelope_capacity_key_update', 'enforce_message_send_rate'
+      )
+  )
+  and not has_function_privilege(
+    'authenticated', 'private.reserve_device_envelope_capacity()', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated', 'private.release_device_envelope_capacity()', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated', 'private.prevent_envelope_capacity_key_update()', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated', 'private.enforce_message_send_rate()', 'EXECUTE'
+  )
+  and lower(
+    pg_get_functiondef('private.prevent_envelope_capacity_key_update()'::regprocedure)
+  ) like '%new_parent_record_id is distinct from old_parent_record_id%',
+  'capacity and rate trigger functions are inaccessible empty-path security definers'
+);
+select ok(
+  (
+    select count(*) = 12
+    from pg_trigger
+    where not tgisinternal
+      and tgfoid in (
+        'private.reserve_device_envelope_capacity()'::regprocedure,
+        'private.release_device_envelope_capacity()'::regprocedure,
+        'private.prevent_envelope_capacity_key_update()'::regprocedure
+      )
+      and tgrelid in (
+        'public.message_envelopes'::regclass,
+        'public.message_revision_envelopes'::regclass,
+        'public.reaction_envelopes'::regclass,
+        'public.room_metadata_envelopes'::regclass
+      )
+  )
+  and (
+    select count(*) = 4
+      and bool_and((tgtype::integer & 1) = 0)
+      and bool_and(lower(pg_get_triggerdef(oid)) like '%referencing new table as inserted_envelopes%')
+    from pg_trigger
+    where not tgisinternal
+      and tgname like 'reserve_%_capacity'
+  )
+  and (
+    select count(*) = 4
+      and bool_and((tgtype::integer & 1) = 0)
+      and bool_and(lower(pg_get_triggerdef(oid)) like '%referencing old table as deleted_envelopes%')
+    from pg_trigger
+    where not tgisinternal
+      and tgname like 'release_%_capacity'
+  ),
+  'every encrypted-envelope table uses statement transition triggers and immutable-row protection'
+);
+select ok(
+  to_regclass('public.messages_sender_room_created_idx') is not null
+  and exists (
+    select 1
+    from pg_trigger
+    where not tgisinternal
+      and tgname = 'enforce_message_send_rate'
+      and tgrelid = 'public.messages'::regclass
+  ),
+  'message rate enforcement has its actor-room time index and insert trigger'
 );
 
 select * from finish();

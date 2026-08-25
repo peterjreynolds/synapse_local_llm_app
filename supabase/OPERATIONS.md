@@ -12,6 +12,8 @@ legacy Auth identity from becoming an implicit Synapse Private account.
    - `20260820092929_schedule_synapse_private_retention.sql`
    - `20260825090000_add_encrypted_chat_mutations.sql`
    - `20260825100000_enforce_idempotent_core_mutations.sql`
+   - `20260825115540_bind_encrypted_chat_context_and_capacity.sql`
+   - `20260825143000_disambiguate_envelope_capacity_release.sql`
 2. Deploy `redeem-invite`, `sign-in`, `register-device`, `issue-invite`,
    `redeem-room-invite`, and `purge-expired-data` with the JWT settings in
    `config.toml`.
@@ -22,7 +24,7 @@ legacy Auth identity from becoming an implicit Synapse Private account.
 4. Create the one-time bootstrap capability as described below.
 5. Complete every post-deploy receipt before distributing an APK.
 
-Every Edge Function must be redeployed after the fifth migration because all
+Every Edge Function must be redeployed after the sixth migration because all
 six import the shared runtime-secret reader. `issue-invite` also has a changed
 request and database RPC contract.
 
@@ -116,21 +118,24 @@ Room creation is atomic and idempotent:
 
 ```text
 public.create_room_with_metadata(
+  p_room_id uuid,
   p_room_kind text,
   p_client_mutation_id uuid,
   p_envelopes jsonb,
   p_retention_seconds integer
 )
--> room_id, membership_epoch, metadata_revision, created_at, metadata_updated_at
+-> room_id, client_mutation_id, room_kind, retention_seconds,
+   membership_epoch, metadata_revision, created_at, metadata_updated_at
 ```
 
 Its request digest and receipt expire after 24 hours and are physically purged;
 the created room and ciphertext remain governed by their normal lifecycle.
 
-The creation ciphertext is authenticated by the client to actor, mutation ID,
-room kind, retention, and its encrypted title payload because the server room
-UUID does not exist until the transaction runs. Subsequent metadata revisions
-bind the generated room UUID and expected revision:
+The client chooses the room UUID before encryption. The creation ciphertext is
+authenticated to actor, room UUID, mutation ID, room kind, retention, and its
+encrypted title payload. The server inserts that exact UUID and echoes the
+complete request context before the client clears its durable outbox.
+Subsequent metadata revisions bind the same room UUID and expected revision:
 
 ```text
 public.set_room_metadata(
@@ -172,6 +177,13 @@ create a broken or privacy-leaking graph edge. Android may keep a device-local
 encrypted ephemeral cache so an already-consumed Signal envelope survives
 process restart; it must purge that cache when the server row is absent,
 deleted, or expired.
+
+Private transactional ledgers bound each recipient device to 750 envelopes and
+768 KiB globally, with 250-envelope and 256 KiB sub-limits per room and sending
+account. The sender partition prevents one invited account from exhausting a
+recipient across otherwise unrelated rooms. Ledger rows and immutable envelope
+contributions are private, and any quota rejection rolls back the complete
+content mutation atomically.
 
 Reaction removal is idempotent:
 

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(88);
+select plan(104);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -53,6 +53,13 @@ insert into public.room_members (room_id, user_id, member_role)
 values
   ('30000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', 'OWNER'),
   ('30000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', 'OWNER');
+
+select lives_ok(
+  $$update public.rooms
+    set creation_client_mutation_id = null
+    where id = '30000000-0000-4000-8000-000000000002'$$,
+  'a legacy room may retain an explicit null creation binding during upgrade'
+);
 
 insert into public.messages (
   id, room_id, sender_user_id, client_message_id, membership_epoch, expires_at
@@ -321,6 +328,7 @@ select is(
   (
     select metadata_revision
     from private.create_room_with_metadata(
+      '30000000-0000-4000-8000-000000000003',
       'GROUP',
       300,
       '80000000-0000-4000-8000-000000000001',
@@ -347,6 +355,7 @@ select is(
   (
     select room_id
     from private.create_room_with_metadata(
+      '30000000-0000-4000-8000-000000000003',
       'GROUP',
       300,
       '80000000-0000-4000-8000-000000000001',
@@ -383,6 +392,7 @@ select ok(
 );
 select throws_ok(
   $$select * from private.create_room_with_metadata(
+      '30000000-0000-4000-8000-000000000003',
       'GROUP',
       300,
       '80000000-0000-4000-8000-000000000001',
@@ -404,6 +414,50 @@ select throws_ok(
   '23505',
   'room creation mutation id was already used',
   'room creation rejects mutation-id ciphertext substitution'
+);
+select throws_ok(
+  $$select * from private.create_room_with_metadata(
+      '30000000-0000-4000-8000-000000000003',
+      'GROUP',
+      300,
+      '80000000-0000-4000-8000-000000000001',
+      null::jsonb
+    )$$,
+  '22023',
+  'room creation request is invalid',
+  'room creation rejects null request data before replay correlation'
+);
+select throws_ok(
+  $$select * from public.create_room_with_metadata(
+      '00000000-0000-0000-0000-000000000000',
+      'GROUP',
+      '86000000-0000-4000-8000-000000000001',
+      '[]'::jsonb,
+      300
+    )$$,
+  '22023',
+  'room creation request is invalid',
+  'the public room RPC rejects an all-zero room identity'
+);
+select throws_ok(
+  $$select * from public.create_room_with_metadata(
+      '86000000-0000-4000-8000-000000000002',
+      'GROUP',
+      '00000000-0000-0000-0000-000000000000',
+      '[]'::jsonb,
+      300
+    )$$,
+  '22023',
+  'room creation request is invalid',
+  'the public room RPC rejects an all-zero mutation identity'
+);
+select lives_ok(
+  $$update public.room_metadata_envelopes
+    set sender_user_id = null,
+        sender_device_id = null
+    where room_id = '30000000-0000-4000-8000-000000000003'
+      and recipient_device_id = '20000000-0000-4000-8000-000000000001'$$,
+  'foreign-key sender erasure preserves immutable capacity keys'
 );
 
 select is(
@@ -993,25 +1047,6 @@ select throws_ok(
   'member role retry rejects changed input'
 );
 
-select is(
-  (select removed_user_id from private.remove_room_member(
-    '30000000-0000-4000-8000-000000000001',
-    '82000000-0000-4000-8000-000000000003',
-    '10000000-0000-4000-8000-000000000002'
-  )),
-  '10000000-0000-4000-8000-000000000002'::uuid,
-  'member removal returns a durable mutation receipt'
-);
-select is(
-  (select new_membership_epoch from private.remove_room_member(
-    '30000000-0000-4000-8000-000000000001',
-    '82000000-0000-4000-8000-000000000003',
-    '10000000-0000-4000-8000-000000000002'
-  )),
-  3,
-  'member removal retry succeeds after the member row is gone'
-);
-
 select throws_ok(
   $$select * from private.delete_message_for_everyone(
       (select id from public.messages
@@ -1161,6 +1196,471 @@ select is(
   0,
   'retention physically removes expired room-creation mutation receipts'
 );
+
+select is(
+  (
+    select creation_client_mutation_id
+    from public.rooms
+    where owner_user_id = '10000000-0000-4000-8000-000000000001'
+      and creation_client_mutation_id = '80000000-0000-4000-8000-000000000001'
+  ),
+  '80000000-0000-4000-8000-000000000001'::uuid,
+  'room records durably bind encrypted creation metadata to its mutation identity'
+);
+
+select is(
+  (
+    select room_id::text || '/' || client_mutation_id::text
+    from public.send_message(
+      '30000000-0000-4000-8000-000000000001',
+      '85000000-0000-4000-8000-000000000001',
+      jsonb_build_array(
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000001',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'WHISPER',
+          'ciphertext_hex', repeat('a1', 32)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000002',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'LOCAL_AEAD',
+          'ciphertext_hex', repeat('a2', 29)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000004',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'PREKEY',
+          'ciphertext_hex', repeat('a3', 32)
+        )
+      ),
+      null
+    )
+  ),
+  '30000000-0000-4000-8000-000000000001/85000000-0000-4000-8000-000000000001',
+  'public message receipts echo the authenticated room and mutation context'
+);
+
+select is(
+  (
+    select message_id::text || '/' || client_mutation_id::text
+    from public.send_reaction(
+      (
+        select id from public.messages
+        where client_message_id = '85000000-0000-4000-8000-000000000001'
+      ),
+      '85000000-0000-4000-8000-000000000002',
+      jsonb_build_array(
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000001',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'WHISPER',
+          'ciphertext_hex', repeat('b1', 32)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000002',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'LOCAL_AEAD',
+          'ciphertext_hex', repeat('b2', 29)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000004',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'PREKEY',
+          'ciphertext_hex', repeat('b3', 32)
+        )
+      )
+    )
+  ),
+  (
+    select id::text || '/85000000-0000-4000-8000-000000000002'
+    from public.messages
+    where client_message_id = '85000000-0000-4000-8000-000000000001'
+  ),
+  'public reaction receipts echo the authenticated message and mutation context'
+);
+
+insert into public.messages (
+  id, room_id, sender_user_id, sender_device_id, client_message_id,
+  membership_epoch, expires_at
+) values (
+  '85000000-0000-4000-8000-000000000003',
+  '30000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000001',
+  '85000000-0000-4000-8000-000000000003',
+  1,
+  statement_timestamp() + interval '5 minutes'
+);
+insert into public.message_envelopes (
+  message_id, recipient_device_id, protocol_adapter_version,
+  signal_message_type, ciphertext
+)
+select
+  '85000000-0000-4000-8000-000000000003',
+  '20000000-0000-4000-8000-000000000004',
+  1,
+  'PREKEY',
+  decode(
+    repeat(
+      'c1',
+      (
+        262143 - (
+          select stored_ciphertext_bytes
+          from private.device_room_envelope_capacity
+          where recipient_device_id = '20000000-0000-4000-8000-000000000004'
+            and room_id = '30000000-0000-4000-8000-000000000001'
+        )
+      )::integer
+    ),
+    'hex'
+  );
+
+select throws_ok(
+  $$select * from private.send_message(
+      '30000000-0000-4000-8000-000000000001',
+      '85000000-0000-4000-8000-000000000004',
+      null,
+      jsonb_build_array(
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000001',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'WHISPER',
+          'ciphertext_hex', repeat('c2', 32)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000002',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'LOCAL_AEAD',
+          'ciphertext_hex', repeat('c3', 29)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000004',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'PREKEY',
+          'ciphertext_hex', repeat('c4', 2)
+        )
+      )
+    )$$,
+  '54000',
+  'encrypted room polling capacity reached',
+  'a recipient cannot force a polling response beyond the encrypted byte budget'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.messages
+    where client_message_id = '85000000-0000-4000-8000-000000000004'
+  ),
+  0,
+  'a capacity rejection rolls back its parent message atomically'
+);
+select ok(
+  (
+    select capacity.stored_envelope_count = actual.envelope_count
+      and capacity.stored_ciphertext_bytes = actual.ciphertext_bytes
+    from private.device_envelope_capacity as capacity
+    cross join (
+      select count(*)::integer as envelope_count,
+             sum(octet_length(envelope.ciphertext))::bigint as ciphertext_bytes
+      from (
+        select recipient_device_id, ciphertext from public.message_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.message_revision_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.reaction_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.room_metadata_envelopes
+      ) as envelope
+      where envelope.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+    ) as actual
+    where capacity.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+  )
+  and (
+    select capacity.stored_envelope_count = actual.envelope_count
+      and capacity.stored_ciphertext_bytes = actual.ciphertext_bytes
+    from private.device_room_envelope_capacity as capacity
+    cross join (
+      select count(*)::integer as envelope_count,
+             sum(contribution.ciphertext_bytes)::bigint as ciphertext_bytes
+      from private.envelope_capacity_contributions as contribution
+      where contribution.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+        and contribution.room_id = '30000000-0000-4000-8000-000000000001'
+    ) as actual
+    where capacity.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+      and capacity.room_id = '30000000-0000-4000-8000-000000000001'
+  )
+  and (
+    select capacity.stored_envelope_count = actual.envelope_count
+      and capacity.stored_ciphertext_bytes = actual.ciphertext_bytes
+    from private.device_sender_envelope_capacity as capacity
+    cross join (
+      select count(*)::integer as envelope_count,
+             sum(contribution.ciphertext_bytes)::bigint as ciphertext_bytes
+      from private.envelope_capacity_contributions as contribution
+      where contribution.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+        and contribution.sender_user_id = '10000000-0000-4000-8000-000000000001'
+    ) as actual
+    where capacity.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+      and capacity.sender_user_id = '10000000-0000-4000-8000-000000000001'
+  )
+  and (
+    select count(*) = actual.envelope_count
+      and sum(contribution.ciphertext_bytes) = actual.ciphertext_bytes
+    from private.envelope_capacity_contributions as contribution
+    cross join (
+      select count(*)::integer as envelope_count,
+             sum(octet_length(envelope.ciphertext))::bigint as ciphertext_bytes
+      from (
+        select recipient_device_id, ciphertext from public.message_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.message_revision_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.reaction_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.room_metadata_envelopes
+      ) as envelope
+      where envelope.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+    ) as actual
+    where contribution.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+    group by actual.envelope_count, actual.ciphertext_bytes
+  ),
+  'capacity rejection leaves every capacity ledger equal to physical envelopes'
+);
+
+insert into public.rooms (id, owner_user_id, room_kind, retention_seconds)
+values (
+  '85000000-0000-4000-8000-000000000007',
+  '10000000-0000-4000-8000-000000000001',
+  'GROUP',
+  300
+);
+insert into public.room_members (room_id, user_id, member_role)
+values
+  (
+    '85000000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000001',
+    'OWNER'
+  ),
+  (
+    '85000000-0000-4000-8000-000000000007',
+    '10000000-0000-4000-8000-000000000002',
+    'MEMBER'
+  );
+select throws_ok(
+  $$select * from private.send_message(
+      '85000000-0000-4000-8000-000000000007',
+      '85000000-0000-4000-8000-000000000009',
+      null,
+      jsonb_build_array(
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000001',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'WHISPER',
+          'ciphertext_hex', repeat('d1', 29)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000002',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'LOCAL_AEAD',
+          'ciphertext_hex', repeat('d2', 32)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000004',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'PREKEY',
+          'ciphertext_hex', repeat('d3', 32)
+        )
+      )
+    )$$,
+  '54000',
+  'encrypted sender polling capacity reached',
+  'one sender cannot exhaust a recipient across unrelated rooms'
+);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000002","session_id":"60000000-0000-4000-8000-000000000004","role":"authenticated"}',
+  true
+);
+select lives_ok(
+  $$select * from private.send_message(
+      '85000000-0000-4000-8000-000000000007',
+      '85000000-0000-4000-8000-000000000008',
+      null,
+      jsonb_build_array(
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000001',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'PREKEY',
+          'ciphertext_hex', repeat('d1', 29)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000002',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'WHISPER',
+          'ciphertext_hex', repeat('d2', 32)
+        ),
+        jsonb_build_object(
+          'recipient_device_id', '20000000-0000-4000-8000-000000000004',
+          'protocol_adapter_version', 1,
+          'signal_message_type', 'LOCAL_AEAD',
+          'ciphertext_hex', repeat('d3', 32)
+        )
+      )
+    )$$,
+  'one sender at capacity cannot block another sender in an unrelated room'
+);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-4000-8000-000000000001","session_id":"60000000-0000-4000-8000-000000000001","role":"authenticated"}',
+  true
+);
+delete from public.rooms where id = '85000000-0000-4000-8000-000000000007';
+
+delete from public.messages
+where id = '85000000-0000-4000-8000-000000000003';
+select ok(
+  (
+    select capacity.stored_envelope_count = actual.envelope_count
+      and capacity.stored_ciphertext_bytes = actual.ciphertext_bytes
+    from private.device_envelope_capacity as capacity
+    cross join (
+      select count(*)::integer as envelope_count,
+             sum(octet_length(envelope.ciphertext))::bigint as ciphertext_bytes
+      from (
+        select recipient_device_id, ciphertext from public.message_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.message_revision_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.reaction_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.room_metadata_envelopes
+      ) as envelope
+      where envelope.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+    ) as actual
+    where capacity.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+  )
+  and (
+    select capacity.stored_envelope_count = actual.envelope_count
+      and capacity.stored_ciphertext_bytes = actual.ciphertext_bytes
+    from private.device_room_envelope_capacity as capacity
+    cross join (
+      select count(*)::integer as envelope_count,
+             sum(contribution.ciphertext_bytes)::bigint as ciphertext_bytes
+      from private.envelope_capacity_contributions as contribution
+      where contribution.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+        and contribution.room_id = '30000000-0000-4000-8000-000000000001'
+    ) as actual
+    where capacity.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+      and capacity.room_id = '30000000-0000-4000-8000-000000000001'
+  )
+  and (
+    select capacity.stored_envelope_count = actual.envelope_count
+      and capacity.stored_ciphertext_bytes = actual.ciphertext_bytes
+    from private.device_sender_envelope_capacity as capacity
+    cross join (
+      select count(*)::integer as envelope_count,
+             sum(contribution.ciphertext_bytes)::bigint as ciphertext_bytes
+      from private.envelope_capacity_contributions as contribution
+      where contribution.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+        and contribution.sender_user_id = '10000000-0000-4000-8000-000000000001'
+    ) as actual
+    where capacity.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+      and capacity.sender_user_id = '10000000-0000-4000-8000-000000000001'
+  )
+  and (
+    select count(*) = actual.envelope_count
+      and sum(contribution.ciphertext_bytes) = actual.ciphertext_bytes
+    from private.envelope_capacity_contributions as contribution
+    cross join (
+      select count(*)::integer as envelope_count,
+             sum(octet_length(envelope.ciphertext))::bigint as ciphertext_bytes
+      from (
+        select recipient_device_id, ciphertext from public.message_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.message_revision_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.reaction_envelopes
+        union all
+        select recipient_device_id, ciphertext from public.room_metadata_envelopes
+      ) as envelope
+      where envelope.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+    ) as actual
+    where contribution.recipient_device_id = '20000000-0000-4000-8000-000000000004'
+    group by actual.envelope_count, actual.ciphertext_bytes
+  ),
+  'envelope deletion releases exact capacity from every ledger'
+);
+
+select is(
+  (select removed_user_id from private.remove_room_member(
+    '30000000-0000-4000-8000-000000000001',
+    '82000000-0000-4000-8000-000000000003',
+    '10000000-0000-4000-8000-000000000002'
+  )),
+  '10000000-0000-4000-8000-000000000002'::uuid,
+  'member removal returns a durable mutation receipt'
+);
+select is(
+  (select new_membership_epoch from private.remove_room_member(
+    '30000000-0000-4000-8000-000000000001',
+    '82000000-0000-4000-8000-000000000003',
+    '10000000-0000-4000-8000-000000000002'
+  )),
+  3,
+  'member removal retry succeeds after the member row is gone'
+);
+
+insert into public.rooms (id, owner_user_id, room_kind, retention_seconds)
+values (
+  '85000000-0000-4000-8000-000000000005',
+  '10000000-0000-4000-8000-000000000001',
+  'GROUP',
+  300
+);
+insert into public.room_members (room_id, user_id, member_role)
+values (
+  '85000000-0000-4000-8000-000000000005',
+  '10000000-0000-4000-8000-000000000001',
+  'OWNER'
+);
+select lives_ok(
+  $$do $rate_limit$
+    begin
+      for message_number in 1..30 loop
+        insert into public.messages (
+          room_id, sender_user_id, sender_device_id, client_message_id,
+          membership_epoch, expires_at
+        ) values (
+          '85000000-0000-4000-8000-000000000005',
+          '10000000-0000-4000-8000-000000000001',
+          '20000000-0000-4000-8000-000000000001',
+          gen_random_uuid(),
+          1,
+          statement_timestamp() + interval '5 minutes'
+        );
+      end loop;
+    end;
+  $rate_limit$;$$,
+  'an actor may send up to thirty messages per room in a minute'
+);
+select throws_ok(
+  $$insert into public.messages (
+      room_id, sender_user_id, sender_device_id, client_message_id,
+      membership_epoch, expires_at
+    ) values (
+      '85000000-0000-4000-8000-000000000005',
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000001',
+      '85000000-0000-4000-8000-000000000006',
+      1,
+      statement_timestamp() + interval '5 minutes'
+    )$$,
+  '54000',
+  'message send rate limit exceeded',
+  'the thirty-first message in a minute fails closed'
+);
+delete from public.rooms where id = '85000000-0000-4000-8000-000000000005';
 
 select is(
   (select revoked_device_id from private.revoke_device('20000000-0000-4000-8000-000000000002')),
