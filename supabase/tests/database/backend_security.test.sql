@@ -151,8 +151,13 @@ select ok(
   'the Auth insert guard is security-definer with an empty search path'
 );
 select ok(
-  pg_get_functiondef('private.authorize_synapse_private_user_creation(jsonb)'::regprocedure)
-    like '%app_metadata%synapse_private_registration_authority%',
+  lower(pg_get_functiondef('private.authorize_synapse_private_user_creation(jsonb)'::regprocedure))
+    like '%private.auth_identity_is_synapse_private_authorized%'
+  and lower(
+    pg_get_functiondef(
+      'private.auth_identity_is_synapse_private_authorized(text,text,boolean,jsonb)'::regprocedure
+    )
+  ) like '%p_app_metadata ->> ''synapse_private_registration_authority''%',
   'registration authority comes from server-controlled app metadata'
 );
 select ok(
@@ -445,19 +450,19 @@ select ok(
   'confirmed edits physically remove initial and prior revision ciphertext'
 );
 select ok(
-  pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure)
-    like '%target_device.revoked_at IS NULL%'
-  and pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure)
+  lower(pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure))
+    like '%target_device.revoked_at is null%'
+  and lower(pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure))
     like '%revision.expires_at > statement_timestamp()%'
-  and pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure)
+  and lower(pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure))
     like '%private.can_access_message%',
   'revoked sender crypto context remains visible only while accessible ciphertext requires it'
 );
 select ok(
-  pg_get_functiondef('private.list_room_recipient_devices(uuid)'::regprocedure)
-    like '%device.revoked_at IS NULL%'
-  and pg_get_functiondef('private.list_room_recipient_devices(uuid)'::regprocedure)
-    like '%recipient_count NOT BETWEEN 1 AND 129%',
+  lower(pg_get_functiondef('private.list_room_recipient_devices(uuid)'::regprocedure))
+    like '%device.revoked_at is null%'
+  and lower(pg_get_functiondef('private.list_room_recipient_devices(uuid)'::regprocedure))
+    like '%recipient_count not between 1 and 129%',
   'recipient enumeration excludes revoked devices and enforces the 129-device total cap'
 );
 select ok(
