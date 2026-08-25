@@ -2,6 +2,7 @@ package app.synapse.privatechat.domain.account
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -91,6 +92,19 @@ class PrivateAccountAccessContractsTest {
         assertFalse(draft.toString().contains(invitationCode))
         assertFalse(commandRendering.contains(VALID_PASSWORD))
         assertFalse(commandRendering.contains(invitationCode))
+    }
+
+    @Test
+    fun `account denial rejects unbounded or unsafe server messages`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            PrivateAccountAccessOutcome.Denied("")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            PrivateAccountAccessOutcome.Denied("x".repeat(201))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            PrivateAccountAccessOutcome.Denied("unsafe\nmessage")
+        }
     }
 
     private companion object {

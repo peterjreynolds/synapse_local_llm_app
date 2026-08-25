@@ -6,5 +6,5 @@ import app.synapse.privatechat.domain.account.PrivateAccountGateway
 
 internal object PendingTransportPrivateAccountGateway : PrivateAccountGateway {
     override suspend fun requestPrivateAccountAccess(command: PrivateAccountAccessCommand): PrivateAccountAccessOutcome =
-        PrivateAccountAccessOutcome.TransportNotConfigured
+        PrivateAccountAccessOutcome.TransportUnavailable
 }

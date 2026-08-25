@@ -121,9 +121,19 @@ sealed interface PrivateAccountAccessOutcome {
 
     data class Denied(
         val userMessage: String,
-    ) : PrivateAccountAccessOutcome
+    ) : PrivateAccountAccessOutcome {
+        init {
+            require(
+                userMessage.isNotBlank() &&
+                    userMessage.length <= PRIVATE_ACCOUNT_DENIAL_MESSAGE_LIMIT &&
+                    userMessage.none(Char::isISOControl),
+            ) {
+                "Account denial requires a bounded user-facing reason."
+            }
+        }
+    }
 
-    data object TransportNotConfigured : PrivateAccountAccessOutcome
+    data object TransportUnavailable : PrivateAccountAccessOutcome
 }
 
 interface PrivateAccountGateway {
@@ -240,3 +250,4 @@ private const val PRIVATE_DISPLAY_NAME_LIMIT = 64
 private val PRIVATE_PASSWORD_LENGTH_RANGE = 12..128
 private val PRIVATE_USERNAME_PATTERN = Regex("^[a-z][a-z0-9_]{2,31}$")
 private val PRIVATE_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{32,128}$")
+private const val PRIVATE_ACCOUNT_DENIAL_MESSAGE_LIMIT = 200

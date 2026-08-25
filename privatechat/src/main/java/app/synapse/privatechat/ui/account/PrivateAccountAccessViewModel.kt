@@ -104,7 +104,7 @@ class PrivateAccountAccessViewModel(
                 is PrivateAccountAccessOutcome.Denied ->
                     PrivateAccountSubmissionState.AccessDenied(outcome.userMessage)
 
-                PrivateAccountAccessOutcome.TransportNotConfigured ->
+                PrivateAccountAccessOutcome.TransportUnavailable ->
                     PrivateAccountSubmissionState.TransportUnavailable
             }
         } catch (cancellation: CancellationException) {

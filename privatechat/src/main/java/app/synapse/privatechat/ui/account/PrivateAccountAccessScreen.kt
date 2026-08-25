@@ -444,7 +444,7 @@ private fun SubmissionNotice(
             PrivateAccountSubmissionState.Submitting,
             -> null
             PrivateAccountSubmissionState.TransportUnavailable ->
-                "Account connection is not configured in this scaffold build."
+                "The encrypted account connection is unavailable. Try again."
             PrivateAccountSubmissionState.UnexpectedFailure ->
                 "Account access could not be verified. Try again when the connection is available."
         }
