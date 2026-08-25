@@ -2,10 +2,12 @@ package app.synapse.privatechat.crypto.storage
 
 import app.synapse.privatechat.crypto.RemoteIdentityWriteOutcome
 import app.synapse.privatechat.crypto.SignalDeviceAddress
+import app.synapse.privatechat.crypto.SignalPendingOutboundMutationKey
 import app.synapse.privatechat.crypto.SignalPreKeyId
 import app.synapse.privatechat.crypto.SignalProtocolStateAddress
 import app.synapse.privatechat.crypto.SignalProtocolStateCorruptedException
 import app.synapse.privatechat.crypto.StoredLocalSignalIdentity
+import app.synapse.privatechat.crypto.StoredSignalPendingOutboundMutation
 import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
 import app.synapse.privatechat.security.storage.EncryptedStateFile
 import app.synapse.privatechat.security.storage.EncryptedStateKeyProvider
@@ -18,6 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.time.Instant
 import java.util.UUID
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
@@ -119,6 +122,48 @@ class EncryptedSignalProtocolStateRepositoryTest {
         }
         assertFalse(repository.containsPreKey(preKeyId))
         assertFalse(EncryptedSignalProtocolStateRepository(file, cipher).containsPreKey(preKeyId))
+    }
+
+    @Test
+    fun senderRatchetAndPendingRequestShareOneDurableSnapshot() {
+        val file = MemoryEncryptedStateFile()
+        val cipher = productionCipher(file, MemorySignalStateKeyProvider(key(15)))
+        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        val pending = pendingOutboundMutation()
+        repository.writeTransaction {
+            repository.storeSession(REMOTE_ADDRESS, byteArrayOf(1, 2, 3))
+            assertTrue(repository.insertPendingOutboundMutationIfAbsent(pending))
+        }
+
+        val reloaded = EncryptedSignalProtocolStateRepository(file, cipher)
+        assertArrayEquals(byteArrayOf(1, 2, 3), reloaded.loadSession(REMOTE_ADDRESS))
+        assertArrayEquals(
+            pending.opaqueRequest,
+            reloaded.loadPendingOutboundMutation(pending.key)?.opaqueRequest,
+        )
+    }
+
+    @Test
+    fun failedSnapshotCommitPersistsNeitherSenderRatchetNorPendingRequest() {
+        val file = MemoryEncryptedStateFile()
+        val cipher = productionCipher(file, MemorySignalStateKeyProvider(key(16)))
+        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        repository.storeSession(REMOTE_ADDRESS, byteArrayOf(1))
+        val pending = pendingOutboundMutation()
+        file.failNextReplace = true
+
+        assertCorrupted {
+            repository.writeTransaction {
+                repository.storeSession(REMOTE_ADDRESS, byteArrayOf(2))
+                assertTrue(repository.insertPendingOutboundMutationIfAbsent(pending))
+            }
+        }
+
+        assertArrayEquals(byteArrayOf(1), repository.loadSession(REMOTE_ADDRESS))
+        assertNull(repository.loadPendingOutboundMutation(pending.key))
+        val reloaded = EncryptedSignalProtocolStateRepository(file, cipher)
+        assertArrayEquals(byteArrayOf(1), reloaded.loadSession(REMOTE_ADDRESS))
+        assertNull(reloaded.loadPendingOutboundMutation(pending.key))
     }
 
     @Test
@@ -304,6 +349,21 @@ class EncryptedSignalProtocolStateRepositoryTest {
             registrationId = 42,
         )
 
+    private fun pendingOutboundMutation(): StoredSignalPendingOutboundMutation =
+        StoredSignalPendingOutboundMutation.create(
+            key =
+                SignalPendingOutboundMutationKey(
+                    accountId = LOCAL_ADDRESS.accountId,
+                    transportDeviceId = LOCAL_ADDRESS.transportDeviceId,
+                    clientMutationId = UUID.fromString("50000000-0000-4000-8000-000000000001"),
+                ),
+            operationDigest = ByteArray(32) { 5 },
+            opaqueRequest = byteArrayOf(9, 8, 7),
+            peerRecipients = listOf(REMOTE_DEVICE_ADDRESS),
+            createdAt = Instant.parse("2026-08-25T00:00:00Z"),
+            expiresAt = Instant.parse("2026-08-25T01:00:00Z"),
+        )
+
     private fun assertCorrupted(block: () -> Unit) {
         assertThrows(SignalProtocolStateCorruptedException::class.java, block)
     }
@@ -435,6 +495,12 @@ class EncryptedSignalProtocolStateRepositoryTest {
                 UUID.fromString("20000000-0000-4000-8000-000000000001"),
                 app.synapse.privatechat.crypto.SignalDeviceId
                     .fromWire(1),
+            )
+        val REMOTE_DEVICE_ADDRESS =
+            SignalDeviceAddress.fromWire(
+                "20000000-0000-4000-8000-000000000001",
+                "20000000-0000-4000-8000-000000000002",
+                1,
             )
     }
 }

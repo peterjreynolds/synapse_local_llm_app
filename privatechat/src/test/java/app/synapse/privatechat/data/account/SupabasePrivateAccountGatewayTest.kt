@@ -2,6 +2,7 @@ package app.synapse.privatechat.data.account
 
 import app.synapse.privatechat.crypto.InMemorySignalProtocolStateRepository
 import app.synapse.privatechat.crypto.SignalDeviceId
+import app.synapse.privatechat.crypto.SignalProtocolAdapterOwner
 import app.synapse.privatechat.data.session.EncryptedPrivateSessionRepository
 import app.synapse.privatechat.data.session.PrivateInstallationId
 import app.synapse.privatechat.data.supabase.SupabaseTransportException
@@ -10,19 +11,24 @@ import app.synapse.privatechat.domain.account.PrivateAccountAccessCommand
 import app.synapse.privatechat.domain.account.PrivateAccountAccessOutcome
 import app.synapse.privatechat.domain.account.PrivateAccountId
 import app.synapse.privatechat.domain.account.PrivateAccountPassword
+import app.synapse.privatechat.domain.account.PrivateAccountSessionOutcome
 import app.synapse.privatechat.domain.account.PrivateAccountSessionReceipt
+import app.synapse.privatechat.domain.account.PrivateAccountSignOutOutcome
 import app.synapse.privatechat.domain.account.PrivateDisplayName
 import app.synapse.privatechat.domain.account.PrivateInvitationCode
+import app.synapse.privatechat.domain.account.PrivateRemoteSessionRevocationStatus
 import app.synapse.privatechat.domain.account.PrivateUsername
-import app.synapse.privatechat.security.storage.EncryptedStateCipher
-import app.synapse.privatechat.security.storage.EncryptedStateFile
+import app.synapse.privatechat.security.storage.CryptographicallyErasableEncryptedStateStorage
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
+import java.time.Clock
 import java.time.Instant
+import java.time.ZoneOffset
 import java.util.UUID
 
 class SupabasePrivateAccountGatewayTest {
@@ -56,6 +62,245 @@ class SupabasePrivateAccountGatewayTest {
         assertEquals(SIGNAL_DEVICE_ID, persistedSession.signalDeviceId)
         assertEquals(ACCESS_TOKEN, persistedSession.accessTokenForAuthorization())
         assertEquals(REFRESH_TOKEN, persistedSession.refreshTokenForRenewal())
+        assertEquals(USERNAME.canonical, persistedSession.authenticationUsername)
+    }
+
+    @Test
+    fun accountAccessWhileRegisteredIsRejectedBeforeBackendBootstrapOrPersistence() {
+        val events = mutableListOf<String>()
+        val sessionRepository = sessionRepository(events)
+        val signalRepository = InMemorySignalProtocolStateRepository()
+        val backend = RecordingPrivateAccountBackend(events = events)
+        val gateway = gateway(backend, signalRepository, sessionRepository)
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+        val originalSession = requireNotNull(sessionRepository.loadRegisteredSession())
+        val originalIdentity = requireNotNull(signalRepository.loadLocalIdentity())
+        events.clear()
+
+        val outcome = runBlocking { gateway.requestPrivateAccountAccess(signInCommand()) }
+
+        assertEquals(
+            PrivateAccountAccessOutcome.Denied("Sign out before accessing another account."),
+            outcome,
+        )
+        assertEquals(emptyList<String>(), events)
+        val retainedSession = requireNotNull(sessionRepository.loadRegisteredSession())
+        assertEquals(originalSession.accountId, retainedSession.accountId)
+        assertEquals(originalSession.accessTokenForAuthorization(), retainedSession.accessTokenForAuthorization())
+        val retainedIdentity = requireNotNull(signalRepository.loadLocalIdentity())
+        assertEquals(originalIdentity.address, retainedIdentity.address)
+        assertEquals(originalIdentity.registrationId, retainedIdentity.registrationId)
+        assertArrayEquals(originalIdentity.serializedIdentityKeyPair, retainedIdentity.serializedIdentityKeyPair)
+    }
+
+    @Test
+    fun freshPersistedSessionRestoresWithoutRotatingRefreshToken() {
+        val sessionRepository = sessionRepository()
+        val backend = RecordingPrivateAccountBackend()
+        val gateway = gateway(backend, InMemorySignalProtocolStateRepository(), sessionRepository)
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+
+        val outcome = runBlocking { gateway.restorePrivateAccountSession() }
+
+        val active = outcome as PrivateAccountSessionOutcome.Active
+        assertEquals(ACCOUNT_ID, active.receipt.accountId)
+        assertEquals(0, backend.refreshCount)
+    }
+
+    @Test
+    fun expiringSessionRefreshesAndPersistsRotatedTokensAndLocalUsername() {
+        val sessionRepository = sessionRepository()
+        val backend =
+            RecordingPrivateAccountBackend(
+                authenticationOutcome = confirmedAuthentication(expiresAt = FIXED_NOW.plusSeconds(30)),
+            )
+        val gateway = gateway(backend, InMemorySignalProtocolStateRepository(), sessionRepository)
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+
+        val outcome = runBlocking { gateway.restorePrivateAccountSession() }
+
+        val active = outcome as PrivateAccountSessionOutcome.Active
+        assertEquals(ACCOUNT_ID, active.receipt.accountId)
+        assertEquals(1, backend.refreshCount)
+        assertEquals(ACCOUNT_ID, backend.refreshCommand?.expectedAccountId)
+        val persisted = requireNotNull(sessionRepository.loadRegisteredSession())
+        assertEquals(REFRESHED_ACCESS_TOKEN, persisted.accessTokenForAuthorization())
+        assertEquals(REFRESHED_REFRESH_TOKEN, persisted.refreshTokenForRenewal())
+        assertEquals(USERNAME.canonical, persisted.authenticationUsername)
+    }
+
+    @Test
+    fun mismatchedRefreshAccountFailsClosedWithoutReplacingDurableSession() {
+        val sessionRepository = sessionRepository()
+        val backend =
+            RecordingPrivateAccountBackend(
+                refreshOutcome =
+                    PrivateAccountBackendOutcome.Confirmed(
+                        refreshedBackendSession(accountId = OTHER_ACCOUNT_ID),
+                    ),
+            )
+        val gateway = gateway(backend, InMemorySignalProtocolStateRepository(), sessionRepository)
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+
+        val outcome = runBlocking { gateway.refreshPrivateAccountSession() }
+
+        assertSame(
+            PrivateAccountSessionOutcome.VerificationFailed,
+            outcome,
+        )
+        assertEquals(
+            ACCESS_TOKEN,
+            sessionRepository.loadRegisteredSession()?.accessTokenForAuthorization(),
+        )
+    }
+
+    @Test
+    fun terminalRefreshRejectionPurgesConversationStateBeforeClearingAuthenticatedSession() {
+        val events = mutableListOf<String>()
+        val sessionRepository = sessionRepository(events)
+        val backend =
+            RecordingPrivateAccountBackend(
+                refreshOutcome =
+                    PrivateAccountBackendOutcome.Rejected(
+                        userMessage = "Session is no longer valid.",
+                        reason = PrivateBackendRejectionReason.ACCESS_DENIED,
+                    ),
+                events = events,
+            )
+        val gateway =
+            gateway(
+                backend,
+                InMemorySignalProtocolStateRepository(),
+                sessionRepository,
+                RecordingLocalStateInvalidator(events),
+            )
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+        events.clear()
+
+        val outcome = runBlocking { gateway.refreshPrivateAccountSession() }
+
+        assertSame(PrivateAccountSessionOutcome.SignedOut, outcome)
+        assertEquals(listOf("refreshSession", "purgeLocalState", "replaceSessionState"), events)
+        assertNull(sessionRepository.loadRegisteredSession())
+        assertEquals(INSTALLATION_ID, sessionRepository.loadOrCreateInstallationId())
+    }
+
+    @Test
+    fun signOutPurgesAndClearsLocallyBeforeBestEffortRemoteRevocation() {
+        val events = mutableListOf<String>()
+        val sessionRepository = sessionRepository(events)
+        val backend = RecordingPrivateAccountBackend(events = events)
+        val gateway =
+            gateway(
+                backend,
+                InMemorySignalProtocolStateRepository(),
+                sessionRepository,
+                RecordingLocalStateInvalidator(events),
+            )
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+        events.clear()
+
+        val outcome = runBlocking { gateway.signOutPrivateAccount() }
+
+        val signedOut = outcome as PrivateAccountSignOutOutcome.LocallySignedOut
+        assertSame(PrivateRemoteSessionRevocationStatus.Confirmed, signedOut.remoteRevocation)
+        assertEquals(listOf("purgeLocalState", "replaceSessionState", "signOut"), events)
+        assertEquals(ACCESS_TOKEN, backend.signOutCommand?.exposeAccessTokenForRequest())
+        assertNull(sessionRepository.loadRegisteredSession())
+    }
+
+    @Test
+    fun signOutTransportFailureStillReturnsTruthfulLocallySignedOutOutcome() {
+        val events = mutableListOf<String>()
+        val sessionRepository = sessionRepository(events)
+        val backend =
+            RecordingPrivateAccountBackend(
+                authenticationOutcome = confirmedAuthentication(expiresAt = FIXED_NOW.plusSeconds(30)),
+                refreshFailure =
+                    SupabaseTransportException(
+                        failure = SupabaseTransportFailure.NETWORK_UNAVAILABLE,
+                        message = "simulated refresh outage",
+                    ),
+                events = events,
+            )
+        val gateway =
+            gateway(
+                backend,
+                InMemorySignalProtocolStateRepository(),
+                sessionRepository,
+                RecordingLocalStateInvalidator(events),
+            )
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+        events.clear()
+
+        val outcome = runBlocking { gateway.signOutPrivateAccount() }
+
+        val signedOut = outcome as PrivateAccountSignOutOutcome.LocallySignedOut
+        assertSame(PrivateRemoteSessionRevocationStatus.TransportUnavailable, signedOut.remoteRevocation)
+        assertEquals(listOf("purgeLocalState", "replaceSessionState", "refreshSession"), events)
+        assertNull(sessionRepository.loadRegisteredSession())
+        assertNull(backend.signOutCommand)
+    }
+
+    @Test
+    fun remoteLogoutRejectionStillReturnsTruthfulLocallySignedOutOutcome() {
+        val sessionRepository = sessionRepository()
+        val backend =
+            RecordingPrivateAccountBackend(
+                signOutOutcome =
+                    PrivateAccountBackendOutcome.Rejected(
+                        userMessage = "Server could not revoke this session.",
+                        reason = PrivateBackendRejectionReason.REMOTE_FAILURE,
+                    ),
+            )
+        val gateway = gateway(backend, InMemorySignalProtocolStateRepository(), sessionRepository)
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+
+        val outcome = runBlocking { gateway.signOutPrivateAccount() }
+
+        val signedOut = outcome as PrivateAccountSignOutOutcome.LocallySignedOut
+        assertEquals(
+            PrivateRemoteSessionRevocationStatus.Rejected("Server could not revoke this session."),
+            signedOut.remoteRevocation,
+        )
+        assertNull(sessionRepository.loadRegisteredSession())
+    }
+
+    @Test
+    fun localConversationPurgeFailureKeepsSessionAndSkipsRemoteLogout() {
+        val sessionRepository = sessionRepository()
+        val backend = RecordingPrivateAccountBackend()
+        val gateway =
+            gateway(
+                backend,
+                InMemorySignalProtocolStateRepository(),
+                sessionRepository,
+                RecordingLocalStateInvalidator(failure = IllegalStateException("simulated cache purge failure")),
+            )
+        runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+
+        val outcome = runBlocking { gateway.signOutPrivateAccount() }
+
+        assertSame(PrivateAccountSignOutOutcome.LocalStateUnavailable, outcome)
+        assertNotNull(sessionRepository.loadRegisteredSession())
+        assertNull(backend.signOutCommand)
+    }
+
+    @Test
+    fun restoreWithoutSessionPurgesConversationStateBeforeReportingSignedOut() {
+        val events = mutableListOf<String>()
+        val gateway =
+            gateway(
+                RecordingPrivateAccountBackend(events = events),
+                InMemorySignalProtocolStateRepository(),
+                sessionRepository(events),
+                RecordingLocalStateInvalidator(events),
+            )
+
+        val outcome = runBlocking { gateway.restorePrivateAccountSession() }
+
+        assertSame(PrivateAccountSessionOutcome.SignedOut, outcome)
+        assertEquals(listOf("purgeLocalState"), events)
     }
 
     @Test
@@ -124,17 +369,22 @@ class SupabasePrivateAccountGatewayTest {
         backend: PrivateAccountBackend,
         signalRepository: InMemorySignalProtocolStateRepository,
         sessionRepository: EncryptedPrivateSessionRepository,
+        localStateInvalidator: PrivateAccountLocalStateInvalidator = NoStoredPrivateConversationStateInvalidator,
     ): SupabasePrivateAccountGateway =
         SupabasePrivateAccountGateway(
             backend = backend,
-            signalDeviceBootstrapper = PrivateSignalDeviceBootstrapper(signalRepository),
+            signalDeviceBootstrapper =
+                PrivateSignalDeviceBootstrapper(
+                    SignalProtocolAdapterOwner(signalRepository),
+                ),
             sessionRepository = sessionRepository,
+            localStateInvalidator = localStateInvalidator,
+            clock = FIXED_CLOCK,
         )
 
-    private fun sessionRepository(): EncryptedPrivateSessionRepository =
+    private fun sessionRepository(events: MutableList<String>? = null): EncryptedPrivateSessionRepository =
         EncryptedPrivateSessionRepository(
-            encryptedStateFile = MemoryEncryptedStateFile(),
-            stateCipher = CopyingEncryptedStateCipher,
+            encryptedStateStorage = MemoryCryptographicallyErasableStateStorage(events),
             installationIdGenerator = { INSTALLATION_ID },
         )
 
@@ -152,17 +402,28 @@ class SupabasePrivateAccountGatewayTest {
             password = PASSWORD,
         )
 
-    private fun confirmedAuthentication(): PrivateAccountBackendOutcome<UnboundPrivateAccountSession> =
+    private fun confirmedAuthentication(expiresAt: Instant = EXPIRES_AT): PrivateAccountBackendOutcome<UnboundPrivateAccountSession> =
         PrivateAccountBackendOutcome.Confirmed(
             UnboundPrivateAccountSession(
                 reservation = RESERVATION,
                 tokens =
                     PrivateBackendSessionTokens(
-                        expiresAt = EXPIRES_AT,
+                        expiresAt = expiresAt,
                         accessToken = ACCESS_TOKEN,
                         refreshToken = REFRESH_TOKEN,
                     ),
             ),
+        )
+
+    private fun refreshedBackendSession(accountId: PrivateAccountId = ACCOUNT_ID): RefreshedPrivateAccountSession =
+        RefreshedPrivateAccountSession(
+            accountId = accountId,
+            tokens =
+                PrivateBackendSessionTokens(
+                    expiresAt = FIXED_NOW.plusSeconds(7_200),
+                    accessToken = REFRESHED_ACCESS_TOKEN,
+                    refreshToken = REFRESHED_REFRESH_TOKEN,
+                ),
         )
 
     private fun confirmedDeviceBinding(): PrivateAccountBackendOutcome<PrivateDeviceBindingReceipt> =
@@ -176,16 +437,30 @@ class SupabasePrivateAccountGatewayTest {
             ),
         )
 
-    private class RecordingPrivateAccountBackend(
-        private val authenticationOutcome: PrivateAccountBackendOutcome<UnboundPrivateAccountSession>,
-        private val deviceBindingOutcome: PrivateAccountBackendOutcome<PrivateDeviceBindingReceipt>,
+    private inner class RecordingPrivateAccountBackend(
+        private val authenticationOutcome: PrivateAccountBackendOutcome<UnboundPrivateAccountSession> =
+            confirmedAuthentication(),
+        private val deviceBindingOutcome: PrivateAccountBackendOutcome<PrivateDeviceBindingReceipt> =
+            confirmedDeviceBinding(),
+        private val refreshOutcome: PrivateAccountBackendOutcome<RefreshedPrivateAccountSession> =
+            PrivateAccountBackendOutcome.Confirmed(refreshedBackendSession()),
+        private val signOutOutcome: PrivateAccountBackendOutcome<PrivateBackendSignOutReceipt> =
+            PrivateAccountBackendOutcome.Confirmed(PrivateBackendSignOutReceipt),
         private val authenticationFailure: SupabaseTransportException? = null,
+        private val refreshFailure: SupabaseTransportException? = null,
+        val events: MutableList<String> = mutableListOf(),
     ) : PrivateAccountBackend {
         var authenticatedTransportDeviceId: UUID? = null
             private set
         var registrationRedemptionId: UUID? = null
             private set
         var deviceBindingCommand: PrivateDeviceBindingCommand? = null
+            private set
+        var refreshCommand: PrivateSessionRefreshCommand? = null
+            private set
+        var signOutCommand: PrivateSessionSignOutCommand? = null
+            private set
+        var refreshCount = 0
             private set
 
         override suspend fun authenticate(
@@ -194,6 +469,7 @@ class SupabasePrivateAccountGatewayTest {
             registrationRedemptionId: UUID?,
         ): PrivateAccountBackendOutcome<UnboundPrivateAccountSession> {
             authenticationFailure?.let { throw it }
+            events += "authenticate"
             authenticatedTransportDeviceId = transportDeviceId
             this.registrationRedemptionId = registrationRedemptionId
             return authenticationOutcome
@@ -202,36 +478,73 @@ class SupabasePrivateAccountGatewayTest {
         override suspend fun registerDevice(
             command: PrivateDeviceBindingCommand,
         ): PrivateAccountBackendOutcome<PrivateDeviceBindingReceipt> {
+            events += "registerDevice"
             deviceBindingCommand = command
             return deviceBindingOutcome
         }
-    }
 
-    private class MemoryEncryptedStateFile : EncryptedStateFile {
-        private var committedCiphertext: ByteArray? = null
+        override suspend fun refreshSession(
+            command: PrivateSessionRefreshCommand,
+        ): PrivateAccountBackendOutcome<RefreshedPrivateAccountSession> {
+            events += "refreshSession"
+            refreshFailure?.let { throw it }
+            refreshCount += 1
+            refreshCommand = command
+            return refreshOutcome
+        }
 
-        override fun read(maximumBytes: Int): ByteArray? = committedCiphertext?.copyOf()
-
-        override fun replace(ciphertext: ByteArray) {
-            committedCiphertext = ciphertext.copyOf()
+        override suspend fun signOut(command: PrivateSessionSignOutCommand): PrivateAccountBackendOutcome<PrivateBackendSignOutReceipt> {
+            events += "signOut"
+            signOutCommand = command
+            return signOutOutcome
         }
     }
 
-    private object CopyingEncryptedStateCipher : EncryptedStateCipher {
-        override fun encrypt(plaintext: ByteArray): ByteArray = plaintext.copyOf()
+    private class RecordingLocalStateInvalidator(
+        private val events: MutableList<String>? = null,
+        private val failure: Exception? = null,
+    ) : PrivateAccountLocalStateInvalidator {
+        override suspend fun purgeForSessionInvalidation(): PrivateAccountLocalStatePurgeReceipt {
+            events?.add("purgeLocalState")
+            failure?.let { throw it }
+            return PrivateAccountLocalStatePurgeReceipt.PURGED
+        }
+    }
 
-        override fun decrypt(ciphertext: ByteArray): ByteArray = ciphertext.copyOf()
+    private class MemoryCryptographicallyErasableStateStorage(
+        private val events: MutableList<String>? = null,
+    ) : CryptographicallyErasableEncryptedStateStorage {
+        private var committedState: ByteArray? = null
+
+        override fun readDecryptedState(): ByteArray? = committedState?.copyOf()
+
+        override fun replaceEncryptedState(plaintext: ByteArray) {
+            committedState = plaintext.copyOf()
+        }
+
+        override fun replaceAfterCryptographicErasure(retainedPlaintext: ByteArray?) {
+            events?.add("replaceSessionState")
+            committedState = retainedPlaintext?.copyOf()
+        }
+
+        override fun deletePhysically() {
+            committedState = null
+        }
     }
 
     private companion object {
         val ACCOUNT_UUID: UUID = UUID.fromString("10000000-0000-4000-8000-000000000001")
         val ACCOUNT_ID = PrivateAccountId(ACCOUNT_UUID.toString())
+        val OTHER_ACCOUNT_ID =
+            PrivateAccountId(UUID.fromString("10000000-0000-4000-8000-000000000099").toString())
         val INSTALLATION_ID =
             PrivateInstallationId.fromGeneratedUuid(
                 UUID.fromString("20000000-0000-4000-8000-000000000002"),
             )
         val SIGNAL_DEVICE_ID = SignalDeviceId.fromWire(7)
         val EXPIRES_AT: Instant = Instant.parse("2026-08-25T13:00:00Z")
+        val FIXED_NOW: Instant = Instant.parse("2026-08-25T12:00:00Z")
+        val FIXED_CLOCK: Clock = Clock.fixed(FIXED_NOW, ZoneOffset.UTC)
         val BOUND_AT: Instant = Instant.parse("2026-08-25T12:00:00Z")
         val RESERVATION =
             PrivateDeviceRegistrationReservation(
@@ -246,5 +559,7 @@ class SupabasePrivateAccountGatewayTest {
         val INVITATION_CODE = PrivateInvitationCode("A".repeat(43))
         const val ACCESS_TOKEN = "header.payload.signature-material"
         const val REFRESH_TOKEN = "refresh_token_material_1234567890"
+        const val REFRESHED_ACCESS_TOKEN = "header.payload.refreshed-signature-material"
+        const val REFRESHED_REFRESH_TOKEN = "refreshed_token_material_1234567890"
     }
 }

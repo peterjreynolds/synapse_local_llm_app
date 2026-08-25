@@ -217,6 +217,8 @@ private fun privateOperationNotice(operation: PrivateChatOperationUiState): Stri
                 is PrivateChatMutationReceipt.RoomPreferencesChanged -> "Conversation preferences updated."
                 is PrivateSocialMutationReceipt.ProfileUpdated -> "Profile updated."
                 is PrivateSocialMutationReceipt.RoomCreated -> "Conversation created. Invite its first peer from the conversation."
+                is PrivateSocialMutationReceipt.RoomInvitationRedeemed ->
+                    "Conversation joined. Its encrypted title may take a moment to arrive."
                 is PrivateSocialMutationReceipt.GroupMemberRoleChanged -> "Group member role updated."
                 is PrivateSocialMutationReceipt.GroupMemberRemoved -> "Group member removed."
                 is PrivateSocialMutationReceipt.PresenceSharingChanged -> "Online presence preference updated."

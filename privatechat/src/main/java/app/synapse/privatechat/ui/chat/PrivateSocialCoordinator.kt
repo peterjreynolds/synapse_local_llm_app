@@ -15,8 +15,10 @@ import app.synapse.privatechat.domain.chat.PrivateRoomMemberRole
 import app.synapse.privatechat.domain.chat.PrivateRoomMemberSnapshot
 import app.synapse.privatechat.domain.chat.PrivateSocialGateway
 import app.synapse.privatechat.domain.chat.PrivateSocialTextValidation
+import app.synapse.privatechat.domain.chat.RedeemPrivateRoomInvitationCommand
 import app.synapse.privatechat.domain.chat.RemovePrivateGroupMemberCommand
 import app.synapse.privatechat.domain.chat.UpdatePrivateProfileCommand
+import app.synapse.privatechat.domain.chat.parsePrivateRoomInvitationCode
 import app.synapse.privatechat.domain.chat.validatePrivateProfileDisplayName
 import app.synapse.privatechat.domain.chat.validatePrivateRoomTitle
 import kotlinx.coroutines.CancellationException
@@ -84,6 +86,10 @@ internal class PrivateSocialCoordinator(
     }
 
     fun leaveForeground() {
+        accountInvitationJob?.cancel()
+        accountInvitationJob = null
+        accountInvitationInFlight.set(false)
+        mutationCoordinator.cancelPendingMutation(PrivateChatOperationKind.REDEEM_ROOM_INVITATION)
         presencePublisher.leaveForeground()
     }
 
@@ -144,6 +150,29 @@ internal class PrivateSocialCoordinator(
         mutationCoordinator.requestConfirmedMutation(
             kind = PrivateChatOperationKind.CREATE_ROOM,
             request = { gateway.createRoom(command) },
+            receiptMatches = { receipt -> PrivateSocialReceiptValidator.matches(receipt, command) },
+            onConfirmed = {
+                stateStore.update { state -> state.copy(overlay = PrivateChatOverlay.HIDDEN) }
+            },
+        )
+    }
+
+    fun redeemRoomInvitation(invitationCodeInput: String) {
+        val accountId = activeAccountId ?: return
+        val invitationCode = parsePrivateRoomInvitationCode(invitationCodeInput)
+        if (invitationCode == null) {
+            mutationCoordinator.rejectAction("Enter a valid one-use conversation invitation code.")
+            return
+        }
+        val command =
+            RedeemPrivateRoomInvitationCommand(
+                accountId = accountId,
+                mutationId = mutationIdFactory.createMutationId(),
+                invitationCode = invitationCode,
+            )
+        mutationCoordinator.requestConfirmedMutation(
+            kind = PrivateChatOperationKind.REDEEM_ROOM_INVITATION,
+            request = { gateway.redeemRoomInvitation(command) },
             receiptMatches = { receipt -> PrivateSocialReceiptValidator.matches(receipt, command) },
             onConfirmed = {
                 stateStore.update { state -> state.copy(overlay = PrivateChatOverlay.HIDDEN) }

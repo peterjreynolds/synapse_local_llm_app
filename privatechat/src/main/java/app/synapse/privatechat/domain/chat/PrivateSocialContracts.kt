@@ -107,6 +107,12 @@ data class CreatePrivateOneUseAccountInvitationCommand(
     val mutationId: PrivateClientMutationId,
 )
 
+data class RedeemPrivateRoomInvitationCommand(
+    val accountId: PrivateAccountId,
+    val mutationId: PrivateClientMutationId,
+    val invitationCode: PrivateRoomInvitationCode,
+)
+
 enum class PrivatePresenceSharingState {
     DISABLED,
     ENABLED,
@@ -121,15 +127,7 @@ data class ChangePrivatePresenceSharingCommand(
 data class PublishPrivatePresenceCommand(
     val accountId: PrivateAccountId,
     val mutationId: PrivateClientMutationId,
-    val publishedAt: Instant,
-    val expiresAt: Instant,
-) {
-    init {
-        require(expiresAt.isAfter(publishedAt) && expiresAt <= publishedAt.plusSeconds(PRIVATE_PRESENCE_MAX_TTL_SECONDS)) {
-            "Presence must expire within the short-lived presence window."
-        }
-    }
-}
+)
 
 data class PrivatePresenceSnapshot(
     val accountId: PrivateAccountId,
@@ -199,6 +197,18 @@ sealed interface PrivateSocialMutationReceipt : PrivateMutationReceipt {
         val expiresAt: Instant,
     ) : PrivateSocialMutationReceipt
 
+    data class RoomInvitationRedeemed(
+        override val accountId: PrivateAccountId,
+        override val mutationId: PrivateClientMutationId,
+        val roomId: PrivateRoomId,
+        val membershipEpoch: Int,
+        val completedAt: Instant,
+    ) : PrivateSocialMutationReceipt {
+        init {
+            require(membershipEpoch > 0) { "Redeemed room membership epoch must be positive." }
+        }
+    }
+
     data class PresenceSharingChanged(
         override val accountId: PrivateAccountId,
         override val mutationId: PrivateClientMutationId,
@@ -208,8 +218,18 @@ sealed interface PrivateSocialMutationReceipt : PrivateMutationReceipt {
     data class PresencePublished(
         override val accountId: PrivateAccountId,
         override val mutationId: PrivateClientMutationId,
+        val publishedAt: Instant,
         val expiresAt: Instant,
-    ) : PrivateSocialMutationReceipt
+    ) : PrivateSocialMutationReceipt {
+        init {
+            require(
+                expiresAt.isAfter(publishedAt) &&
+                    expiresAt <= publishedAt.plusSeconds(PRIVATE_PRESENCE_MAX_TTL_SECONDS),
+            ) {
+                "Persisted presence must use a short-lived server interval."
+            }
+        }
+    }
 }
 
 interface PrivateSocialGateway {
@@ -232,6 +252,10 @@ interface PrivateSocialGateway {
     suspend fun createOneUseAccountInvitation(
         command: CreatePrivateOneUseAccountInvitationCommand,
     ): PrivateChatMutationOutcome<PrivateSocialMutationReceipt.OneUseAccountInvitationCreated>
+
+    suspend fun redeemRoomInvitation(
+        command: RedeemPrivateRoomInvitationCommand,
+    ): PrivateChatMutationOutcome<PrivateSocialMutationReceipt.RoomInvitationRedeemed>
 
     suspend fun changePresenceSharing(
         command: ChangePrivatePresenceSharingCommand,

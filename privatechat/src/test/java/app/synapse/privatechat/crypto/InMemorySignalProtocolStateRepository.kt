@@ -12,6 +12,8 @@ internal class InMemorySignalProtocolStateRepository : SignalProtocolStateReposi
     private var signedPreKeys = mutableMapOf<SignalPreKeyId, ByteArray>()
     private var kyberPreKeys = mutableMapOf<SignalPreKeyId, ByteArray>()
     private var consumedKyberBaseKeys = mutableSetOf<ConsumedKyberBaseKey>()
+    private var pendingOutboundMutations =
+        mutableMapOf<SignalPendingOutboundMutationKey, StoredSignalPendingOutboundMutation>()
     private var identityToStoreBeforeNextRemoteIdentityWrite: PendingRemoteIdentityWrite? = null
 
     override fun <T> writeTransaction(block: () -> T): T =
@@ -137,6 +139,33 @@ internal class InMemorySignalProtocolStateRepository : SignalProtocolStateReposi
             matchingAddresses.size
         }
 
+    override fun loadPendingOutboundMutation(key: SignalPendingOutboundMutationKey): StoredSignalPendingOutboundMutation? =
+        synchronized(monitor) { pendingOutboundMutations[key]?.copyForStorage() }
+
+    override fun listPendingOutboundMutations(
+        accountId: UUID,
+        transportDeviceId: UUID,
+    ): List<StoredSignalPendingOutboundMutation> =
+        synchronized(monitor) {
+            pendingOutboundMutations.values
+                .filter { mutation ->
+                    mutation.key.accountId == accountId && mutation.key.transportDeviceId == transportDeviceId
+                }.map(StoredSignalPendingOutboundMutation::copyForStorage)
+        }
+
+    override fun insertPendingOutboundMutationIfAbsent(mutation: StoredSignalPendingOutboundMutation): Boolean =
+        synchronized(monitor) {
+            if (pendingOutboundMutations.containsKey(mutation.key)) {
+                false
+            } else {
+                pendingOutboundMutations[mutation.key] = mutation.copyForStorage()
+                true
+            }
+        }
+
+    override fun deletePendingOutboundMutation(key: SignalPendingOutboundMutationKey): Boolean =
+        synchronized(monitor) { pendingOutboundMutations.remove(key) != null }
+
     override fun loadPreKey(preKeyId: SignalPreKeyId): ByteArray? =
         synchronized(monitor) {
             preKeys[preKeyId]?.copyOf()
@@ -245,6 +274,10 @@ internal class InMemorySignalProtocolStateRepository : SignalProtocolStateReposi
             signedPreKeys = signedPreKeys.copyByteArrays(),
             kyberPreKeys = kyberPreKeys.copyByteArrays(),
             consumedKyberBaseKeys = consumedKyberBaseKeys.toMutableSet(),
+            pendingOutboundMutations =
+                pendingOutboundMutations.entries.associateTo(mutableMapOf()) { (key, mutation) ->
+                    key to mutation.copyForStorage()
+                },
         )
 
     private fun restore(snapshot: RepositorySnapshot) {
@@ -255,6 +288,7 @@ internal class InMemorySignalProtocolStateRepository : SignalProtocolStateReposi
         signedPreKeys = snapshot.signedPreKeys
         kyberPreKeys = snapshot.kyberPreKeys
         consumedKyberBaseKeys = snapshot.consumedKyberBaseKeys
+        pendingOutboundMutations = snapshot.pendingOutboundMutations
     }
 
     private fun <K> Map<K, ByteArray>.copyByteArrays(): MutableMap<K, ByteArray> =
@@ -268,6 +302,7 @@ internal class InMemorySignalProtocolStateRepository : SignalProtocolStateReposi
         val signedPreKeys: MutableMap<SignalPreKeyId, ByteArray>,
         val kyberPreKeys: MutableMap<SignalPreKeyId, ByteArray>,
         val consumedKyberBaseKeys: MutableSet<ConsumedKyberBaseKey>,
+        val pendingOutboundMutations: MutableMap<SignalPendingOutboundMutationKey, StoredSignalPendingOutboundMutation>,
     )
 
     private data class ConsumedKyberBaseKey(

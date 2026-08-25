@@ -40,6 +40,43 @@ internal data class UnboundPrivateAccountSession(
     val tokens: PrivateBackendSessionTokens,
 )
 
+internal data class RefreshedPrivateAccountSession(
+    val accountId: PrivateAccountId,
+    val tokens: PrivateBackendSessionTokens,
+)
+
+internal class PrivateSessionRefreshCommand(
+    val expectedAccountId: PrivateAccountId,
+    refreshToken: String,
+) {
+    private val refreshTokenCharacters = refreshToken
+
+    init {
+        require(SAFE_SESSION_TOKEN.matches(refreshToken)) { "Supabase refresh token is malformed" }
+    }
+
+    fun exposeRefreshTokenForRequest(): String = refreshTokenCharacters
+
+    override fun toString(): String = "PrivateSessionRefreshCommand(accountId=$expectedAccountId, refreshToken=[REDACTED])"
+}
+
+internal class PrivateSessionSignOutCommand(
+    val expectedAccountId: PrivateAccountId,
+    accessToken: String,
+) {
+    private val accessTokenCharacters = accessToken
+
+    init {
+        require(SAFE_SESSION_TOKEN.matches(accessToken)) { "Supabase access token is malformed" }
+    }
+
+    fun exposeAccessTokenForRequest(): String = accessTokenCharacters
+
+    override fun toString(): String = "PrivateSessionSignOutCommand(accountId=$expectedAccountId, accessToken=[REDACTED])"
+}
+
+internal data object PrivateBackendSignOutReceipt
+
 internal data class PrivateDeviceBindingCommand(
     val reservation: PrivateDeviceRegistrationReservation,
     val tokens: PrivateBackendSessionTokens,
@@ -61,6 +98,7 @@ internal sealed interface PrivateAccountBackendOutcome<out Receipt> {
 
     data class Rejected(
         val userMessage: String,
+        val reason: PrivateBackendRejectionReason = PrivateBackendRejectionReason.REMOTE_FAILURE,
     ) : PrivateAccountBackendOutcome<Nothing> {
         init {
             require(
@@ -74,6 +112,12 @@ internal sealed interface PrivateAccountBackendOutcome<out Receipt> {
     }
 }
 
+internal enum class PrivateBackendRejectionReason {
+    ACCESS_DENIED,
+    RATE_LIMITED,
+    REMOTE_FAILURE,
+}
+
 internal interface PrivateAccountBackend {
     suspend fun authenticate(
         command: PrivateAccountAccessCommand,
@@ -82,6 +126,10 @@ internal interface PrivateAccountBackend {
     ): PrivateAccountBackendOutcome<UnboundPrivateAccountSession>
 
     suspend fun registerDevice(command: PrivateDeviceBindingCommand): PrivateAccountBackendOutcome<PrivateDeviceBindingReceipt>
+
+    suspend fun refreshSession(command: PrivateSessionRefreshCommand): PrivateAccountBackendOutcome<RefreshedPrivateAccountSession>
+
+    suspend fun signOut(command: PrivateSessionSignOutCommand): PrivateAccountBackendOutcome<PrivateBackendSignOutReceipt>
 }
 
 private val SAFE_SESSION_TOKEN = Regex("^[A-Za-z0-9._~-]{20,8192}$")

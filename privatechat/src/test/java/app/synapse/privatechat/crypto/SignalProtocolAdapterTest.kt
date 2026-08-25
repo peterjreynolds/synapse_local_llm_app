@@ -10,6 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.charset.StandardCharsets
 import java.time.Instant
+import java.util.UUID
 
 class SignalProtocolAdapterTest {
     @Test
@@ -73,6 +74,34 @@ class SignalProtocolAdapterTest {
                 bob.adapter.decryptFromDevice(initialEnvelope)
             }
 
+        assertEquals(SignalProtocolFailureKind.REPLAY_DETECTED, replayFailure.kind)
+    }
+
+    @Test
+    fun cacheCommitFailureRollsBackInboundRatchetSoTheEnvelopeCanBeRetried() {
+        val alice = createDevice(ALICE_ADDRESS)
+        val bob = createDevice(BOB_ADDRESS)
+        alice.adapter.establishPairwiseSession(bob.bundle)
+        val plaintext = "cache before ratchet commit".toByteArray(StandardCharsets.UTF_8)
+        val envelope = alice.adapter.encryptForDevice(BOB_ADDRESS, plaintext)
+
+        assertThrows(TestCacheCommitException::class.java) {
+            bob.adapter.decryptFromDeviceWithDurableCommit(envelope) { decrypted ->
+                assertArrayEquals(plaintext, decrypted)
+                throw TestCacheCommitException()
+            }
+        }
+
+        val cacheReceipt =
+            bob.adapter.decryptFromDeviceWithDurableCommit(envelope) { decrypted ->
+                assertArrayEquals(plaintext, decrypted)
+                "persisted"
+            }
+        assertEquals("persisted", cacheReceipt)
+        val replayFailure =
+            assertThrows(SignalProtocolException::class.java) {
+                bob.adapter.decryptFromDevice(envelope)
+            }
         assertEquals(SignalProtocolFailureKind.REPLAY_DETECTED, replayFailure.kind)
     }
 
@@ -156,6 +185,78 @@ class SignalProtocolAdapterTest {
         assertFalse(bobEnvelope.serializedCiphertext.contentEquals(carolEnvelope.serializedCiphertext))
         assertArrayEquals(plaintext, bob.adapter.decryptFromDevice(bobEnvelope))
         assertArrayEquals(plaintext, carol.adapter.decryptFromDevice(carolEnvelope))
+    }
+
+    @Test
+    fun pendingOutboundCallbackFailureRollsBackSenderRatchetAndRequest() {
+        val repository = InMemorySignalProtocolStateRepository()
+        val alice = createDevice(ALICE_ADDRESS, repository)
+        val bob = createDevice(BOB_ADDRESS)
+        alice.adapter.establishPairwiseSession(bob.bundle)
+        val plaintext = "atomic pending outbound".toByteArray(StandardCharsets.UTF_8)
+        val mutationKey = pendingMutationKey()
+
+        assertThrows(TestPendingCommitException::class.java) {
+            alice.adapter.encryptForRecipientDevicesWithPendingOutboundCommit(
+                recipients = listOf(BOB_ADDRESS),
+                plaintext = plaintext,
+            ) {
+                throw TestPendingCommitException()
+            }
+        }
+        assertNull(repository.loadPendingOutboundMutation(mutationKey))
+
+        val pending =
+            alice.adapter.encryptForRecipientDevicesWithPendingOutboundCommit(
+                recipients = listOf(BOB_ADDRESS),
+                plaintext = plaintext,
+            ) { fanOut ->
+                pendingMutation(mutationKey, fanOut.envelopes.single().serializedCiphertext)
+            }
+        assertEquals(SignalCiphertextType.PREKEY, pendingRequestEnvelope(pending).ciphertextType)
+        assertArrayEquals(plaintext, bob.adapter.decryptFromDevice(pendingRequestEnvelope(pending)))
+    }
+
+    @Test
+    fun pendingOutboundMutationCanBeReloadedAndConfirmedByExactDigest() {
+        val repository = InMemorySignalProtocolStateRepository()
+        val alice = createDevice(ALICE_ADDRESS, repository)
+        val bob = createDevice(BOB_ADDRESS)
+        alice.adapter.establishPairwiseSession(bob.bundle)
+        val mutationKey = pendingMutationKey()
+        val plaintext = "restart-safe exact request".toByteArray(StandardCharsets.UTF_8)
+        val pending =
+            alice.adapter.encryptForRecipientDevicesWithPendingOutboundCommit(
+                recipients = listOf(BOB_ADDRESS),
+                plaintext = plaintext,
+            ) { fanOut -> pendingMutation(mutationKey, fanOut.envelopes.single().serializedCiphertext) }
+
+        val reloadedAdapter = SignalProtocolAdapter(ALICE_ADDRESS, repository)
+        val reloaded = requireNotNull(reloadedAdapter.loadPendingOutboundMutation(mutationKey))
+        assertArrayEquals(pending.opaqueRequest, reloaded.opaqueRequest)
+        val digest = reloaded.operationDigest
+        reloadedAdapter.confirmPendingOutboundMutation(mutationKey, digest)
+        digest.fill(0)
+        assertNull(reloadedAdapter.loadPendingOutboundMutation(mutationKey))
+    }
+
+    @Test
+    fun sessionInvalidationClearsPendingRequestsAndTheirAdvancedPeerSessions() {
+        val repository = InMemorySignalProtocolStateRepository()
+        val alice = createDevice(ALICE_ADDRESS, repository)
+        val bob = createDevice(BOB_ADDRESS)
+        alice.adapter.establishPairwiseSession(bob.bundle)
+        val mutationKey = pendingMutationKey()
+        alice.adapter.encryptForRecipientDevicesWithPendingOutboundCommit(
+            recipients = listOf(BOB_ADDRESS),
+            plaintext = "session-bound pending request".toByteArray(StandardCharsets.UTF_8),
+        ) { fanOut -> pendingMutation(mutationKey, fanOut.envelopes.single().serializedCiphertext) }
+
+        assertEquals(1, alice.adapter.clearPendingOutboundMutationsForSessionInvalidation())
+
+        assertNull(repository.loadPendingOutboundMutation(mutationKey))
+        assertNull(repository.loadSession(SignalProtocolStateAddress.fromDeviceAddress(BOB_ADDRESS)))
+        assertEquals(0, alice.adapter.clearPendingOutboundMutationsForSessionInvalidation())
     }
 
     @Test
@@ -266,8 +367,10 @@ class SignalProtocolAdapterTest {
         alice.adapter.decryptFromDevice(acknowledgement)
     }
 
-    private fun createDevice(address: SignalDeviceAddress): TestDevice {
-        val repository = InMemorySignalProtocolStateRepository()
+    private fun createDevice(
+        address: SignalDeviceAddress,
+        repository: InMemorySignalProtocolStateRepository = InMemorySignalProtocolStateRepository(),
+    ): TestDevice {
         val adapter = SignalProtocolAdapter(address, repository)
         val initialization = adapter.initializeLocalDevice(FIXED_GENERATION_TIME)
         return TestDevice(
@@ -280,6 +383,39 @@ class SignalProtocolAdapterTest {
         val adapter: SignalProtocolAdapter,
         val bundle: SignalPublicPreKeyBundle,
     )
+
+    private class TestCacheCommitException : IllegalStateException("simulated encrypted-cache commit failure")
+
+    private class TestPendingCommitException : IllegalStateException("simulated pending outbound commit failure")
+
+    private fun pendingMutationKey(): SignalPendingOutboundMutationKey =
+        SignalPendingOutboundMutationKey(
+            accountId = ALICE_ADDRESS.accountId,
+            transportDeviceId = ALICE_ADDRESS.transportDeviceId,
+            clientMutationId = UUID.fromString("40000000-0000-4000-8000-000000000001"),
+        )
+
+    private fun pendingMutation(
+        key: SignalPendingOutboundMutationKey,
+        serializedEnvelope: ByteArray,
+    ): StoredSignalPendingOutboundMutation =
+        StoredSignalPendingOutboundMutation.create(
+            key = key,
+            operationDigest = ByteArray(32) { 7 },
+            opaqueRequest = serializedEnvelope,
+            peerRecipients = listOf(BOB_ADDRESS),
+            createdAt = FIXED_GENERATION_TIME,
+            expiresAt = FIXED_GENERATION_TIME.plusSeconds(60),
+        )
+
+    private fun pendingRequestEnvelope(pending: StoredSignalPendingOutboundMutation): SignalEnvelope =
+        SignalEnvelope.fromWire(
+            protocolVersion = SignalEnvelope.CURRENT_PROTOCOL_VERSION,
+            sender = ALICE_ADDRESS,
+            recipient = BOB_ADDRESS,
+            ciphertextTypeCode = SignalCiphertextType.PREKEY.wireCode,
+            serializedCiphertext = pending.opaqueRequest,
+        )
 
     private companion object {
         val FIXED_GENERATION_TIME: Instant = Instant.parse("2026-08-20T00:00:00Z")

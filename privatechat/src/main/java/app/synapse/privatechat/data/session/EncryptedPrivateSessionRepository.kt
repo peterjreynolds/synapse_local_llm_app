@@ -1,12 +1,9 @@
 package app.synapse.privatechat.data.session
 
-import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
-import app.synapse.privatechat.security.storage.EncryptedStateCipher
-import app.synapse.privatechat.security.storage.EncryptedStateFile
+import app.synapse.privatechat.security.storage.CryptographicallyErasableEncryptedStateStorage
 
 internal class EncryptedPrivateSessionRepository(
-    private val encryptedStateFile: EncryptedStateFile,
-    private val stateCipher: EncryptedStateCipher,
+    private val encryptedStateStorage: CryptographicallyErasableEncryptedStateStorage,
     private val installationIdGenerator: () -> PrivateInstallationId = PrivateInstallationId::generate,
 ) {
     private val monitor = Any()
@@ -23,6 +20,12 @@ internal class EncryptedPrivateSessionRepository(
         }
 
     fun persistAfterDeviceRegistration(session: RegisteredPrivateAccountSession): PrivateSessionPersistenceReceipt =
+        persistRegisteredSession(session)
+
+    fun persistRefreshedSession(session: RegisteredPrivateAccountSession): PrivateSessionPersistenceReceipt =
+        persistRegisteredSession(session)
+
+    private fun persistRegisteredSession(session: RegisteredPrivateAccountSession): PrivateSessionPersistenceReceipt =
         synchronized(monitor) {
             val existingState =
                 state ?: throw PrivateSessionStateUnavailableException(
@@ -68,12 +71,9 @@ internal class EncryptedPrivateSessionRepository(
     private fun persistState(replacementState: PrivateSessionVaultState) {
         val plaintext = PrivateSessionVaultCodec.encode(replacementState)
         try {
-            val ciphertext = stateCipher.encrypt(plaintext)
-            try {
-                encryptedStateFile.replace(ciphertext)
-            } finally {
-                ciphertext.fill(0)
-            }
+            // Every vault mutation may supersede credentials, including refresh and signed-out
+            // migration, so it must rotate the at-rest key rather than reuse the active slot.
+            encryptedStateStorage.replaceAfterCryptographicErasure(plaintext)
         } catch (error: Exception) {
             throw PrivateSessionStateUnavailableException("Private session state commit failed", error)
         } finally {
@@ -82,27 +82,20 @@ internal class EncryptedPrivateSessionRepository(
     }
 
     private fun loadState(): PrivateSessionVaultState? {
-        val ciphertext =
+        val plaintext =
             try {
-                encryptedStateFile.read(MAX_ENCRYPTED_STATE_BYTES)
+                encryptedStateStorage.readDecryptedState()
             } catch (error: Exception) {
                 throw PrivateSessionStateUnavailableException("Private session state could not be read", error)
             } ?: return null
-        val plaintext =
-            try {
-                stateCipher.decrypt(ciphertext)
-            } catch (error: Exception) {
-                throw PrivateSessionStateUnavailableException("Private session state authentication failed", error)
-            }
         return try {
-            PrivateSessionVaultCodec.decode(plaintext).copyForStorage()
+            val decoded = PrivateSessionVaultCodec.decodeVersioned(plaintext)
+            if (decoded.migrationRequired) {
+                persistState(decoded.state)
+            }
+            decoded.state.copyForStorage()
         } finally {
             plaintext.fill(0)
         }
-    }
-
-    private companion object {
-        const val MAX_ENCRYPTED_STATE_BYTES =
-            PrivateSessionVaultCodec.MAX_PLAINTEXT_BYTES + Aes256GcmEncryptedStateCipher.MAX_ENVELOPE_OVERHEAD_BYTES
     }
 }

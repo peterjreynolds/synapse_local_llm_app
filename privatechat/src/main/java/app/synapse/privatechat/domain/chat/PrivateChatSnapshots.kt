@@ -28,6 +28,11 @@ enum class PrivateRoomMuteState {
     MUTED,
 }
 
+enum class PrivateRoomMetadataState {
+    AVAILABLE,
+    PENDING,
+}
+
 enum class PrivateActivitySharingState {
     DISABLED,
     ENABLED,
@@ -69,6 +74,7 @@ data class PrivateRoomSummary(
     val muteState: PrivateRoomMuteState,
     val unreadMessageCount: Int,
     val latestMessagePreview: PrivateMessagePreview?,
+    val metadataState: PrivateRoomMetadataState = PrivateRoomMetadataState.AVAILABLE,
 ) {
     init {
         requireValidPrivateDisplayText(title, "Room title", PRIVATE_ROOM_TITLE_LIMIT)

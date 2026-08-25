@@ -177,6 +177,62 @@ class SupabasePrivateAccountApiTest {
             assertTrue(transport.requests.isEmpty())
         }
 
+    @Test
+    fun refreshUsesSupabaseAuthGrantAndReturnsAccountBoundRotatedTokens() =
+        runBlocking {
+            val transport = RecordingTransport(refreshResponse())
+            val api = SupabasePrivateAccountApi(transport, FIXED_CLOCK)
+            val command =
+                PrivateSessionRefreshCommand(
+                    expectedAccountId = PrivateAccountId(ACCOUNT_ID.toString()),
+                    refreshToken = REFRESH_TOKEN,
+                )
+
+            val outcome = api.refreshSession(command)
+
+            val confirmed = outcome as PrivateAccountBackendOutcome.Confirmed
+            assertEquals(ACCOUNT_ID.toString(), confirmed.receipt.accountId.canonical)
+            assertEquals(REFRESHED_ACCESS_TOKEN, confirmed.receipt.tokens.exposeAccessTokenForRequest())
+            val request = transport.requests.single()
+            assertEquals(listOf("auth", "v1", "token"), request.pathSegments)
+            assertEquals(mapOf("grant_type" to "refresh_token"), request.queryParameters)
+            assertEquals(setOf("refresh_token"), request.jsonBody!!.jsonObject.keys)
+            assertEquals(
+                REFRESH_TOKEN,
+                request.jsonBody!!
+                    .jsonObject
+                    .getValue("refresh_token")
+                    .jsonPrimitive
+                    .content,
+            )
+            assertFalse(request.toString().contains(REFRESH_TOKEN))
+            assertFalse(command.toString().contains(REFRESH_TOKEN))
+        }
+
+    @Test
+    fun signOutUsesLocalScopeAndRequiresExactNoContentReceipt() =
+        runBlocking {
+            val transport = RecordingTransport(SupabaseHttpResponse(statusCode = 204, jsonBody = null))
+            val api = SupabasePrivateAccountApi(transport, FIXED_CLOCK)
+            val command =
+                PrivateSessionSignOutCommand(
+                    expectedAccountId = PrivateAccountId(ACCOUNT_ID.toString()),
+                    accessToken = ACCESS_TOKEN,
+                )
+
+            val outcome = api.signOut(command)
+
+            val confirmed = outcome as PrivateAccountBackendOutcome.Confirmed
+            assertEquals(PrivateBackendSignOutReceipt, confirmed.receipt)
+            val request = transport.requests.single()
+            assertEquals(listOf("auth", "v1", "logout"), request.pathSegments)
+            assertEquals(mapOf("scope" to "local"), request.queryParameters)
+            assertEquals(ACCESS_TOKEN, request.accessToken)
+            assertEquals(null, request.jsonBody)
+            assertFalse(request.toString().contains(ACCESS_TOKEN))
+            assertFalse(command.toString().contains(ACCESS_TOKEN))
+        }
+
     private fun publicBundle(): SignalPublicPreKeyBundle =
         SignalPublicPreKeyBundle.fromWire(
             protocolVersion = 1,
@@ -244,6 +300,25 @@ class SupabasePrivateAccountApiTest {
                 },
         )
 
+    private fun refreshResponse(): SupabaseHttpResponse =
+        SupabaseHttpResponse(
+            statusCode = 200,
+            jsonBody =
+                buildJsonObject {
+                    put("access_token", REFRESHED_ACCESS_TOKEN)
+                    put("refresh_token", REFRESHED_REFRESH_TOKEN)
+                    put("expires_at", FIXED_NOW.plusSeconds(7_200).epochSecond)
+                    put("expires_in", 7_200)
+                    put("token_type", "bearer")
+                    put(
+                        "user",
+                        buildJsonObject {
+                            put("id", ACCOUNT_ID.toString())
+                        },
+                    )
+                },
+        )
+
     private fun sessionTokens(): PrivateBackendSessionTokens =
         PrivateBackendSessionTokens(
             expiresAt = FIXED_NOW.plusSeconds(3_600),
@@ -273,5 +348,7 @@ class SupabasePrivateAccountApiTest {
         const val INVITE_CODE = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         const val ACCESS_TOKEN = "access.token.with-safe-characters-123456789"
         const val REFRESH_TOKEN = "refresh-token-with-safe-characters-123456789"
+        const val REFRESHED_ACCESS_TOKEN = "refreshed.token.with-safe-characters-123456789"
+        const val REFRESHED_REFRESH_TOKEN = "refreshed-token-with-safe-characters-123456789"
     }
 }

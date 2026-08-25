@@ -62,6 +62,7 @@ import app.synapse.privatechat.domain.account.PrivateAccountAccessDraft
 import app.synapse.privatechat.domain.account.PrivateAccountAccessMode
 import app.synapse.privatechat.domain.account.PrivateAccountInputField
 import app.synapse.privatechat.domain.account.PrivateAccountSessionReceipt
+import app.synapse.privatechat.domain.account.PrivateRemoteSessionRevocationStatus
 import app.synapse.privatechat.ui.theme.SynapsePrivateDesignSystem
 import app.synapse.privatechat.ui.theme.SynapsePrivateTheme
 
@@ -240,6 +241,10 @@ fun PrivateAccountAccessScreen(
                         )
                     }
 
+                    SignOutNotice(
+                        signOut = state.signOut,
+                        onDismiss = onDismissNotice,
+                    )
                     SubmissionNotice(
                         submission = state.submission,
                         onDismiss = onDismissNotice,
@@ -300,6 +305,76 @@ fun PrivateAccountAccessScreen(
         }
     }
 }
+
+@Composable
+private fun SignOutNotice(
+    signOut: PrivateAccountSignOutUiState,
+    onDismiss: () -> Unit,
+) {
+    val notice = signOutNotice(signOut) ?: return
+    val remoteRevocationConfirmed =
+        signOut is PrivateAccountSignOutUiState.AlreadySignedOut ||
+            signOut is PrivateAccountSignOutUiState.LocallySignedOut &&
+            (
+                signOut.remoteRevocation is PrivateRemoteSessionRevocationStatus.Confirmed ||
+                    signOut.remoteRevocation is PrivateRemoteSessionRevocationStatus.AlreadyInactive
+            )
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color =
+            if (remoteRevocationConfirmed) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
+            },
+        onClick = onDismiss,
+    ) {
+        Text(
+            text = notice,
+            modifier = Modifier.padding(12.dp),
+            color =
+                if (remoteRevocationConfirmed) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+private fun signOutNotice(signOut: PrivateAccountSignOutUiState): String? =
+    when (signOut) {
+        PrivateAccountSignOutUiState.Idle,
+        PrivateAccountSignOutUiState.SigningOut,
+        is PrivateAccountSignOutUiState.Rejected,
+        PrivateAccountSignOutUiState.TransportUnavailable,
+        PrivateAccountSignOutUiState.LocalStateUnavailable,
+        PrivateAccountSignOutUiState.VerificationFailed,
+        -> null
+
+        PrivateAccountSignOutUiState.AlreadySignedOut ->
+            "No signed-in session remained on this device. Local conversation data was cleared."
+
+        is PrivateAccountSignOutUiState.LocallySignedOut ->
+            when (val remoteRevocation = signOut.remoteRevocation) {
+                PrivateRemoteSessionRevocationStatus.Confirmed ->
+                    "Signed out on this device and the server session was revoked."
+
+                PrivateRemoteSessionRevocationStatus.AlreadyInactive ->
+                    "Signed out on this device. The server session was already inactive."
+
+                PrivateRemoteSessionRevocationStatus.TransportUnavailable ->
+                    "Signed out on this device. The server could not be reached, so remote revocation is unconfirmed."
+
+                is PrivateRemoteSessionRevocationStatus.Rejected ->
+                    "Signed out on this device. Remote revocation was not confirmed: ${remoteRevocation.userMessage}"
+
+                PrivateRemoteSessionRevocationStatus.VerificationFailed ->
+                    "Signed out on this device. The server response could not be verified, so remote revocation is unconfirmed."
+            }
+    }
 
 @Composable
 private fun BrandHeader() {
@@ -445,6 +520,8 @@ private fun SubmissionNotice(
             -> null
             PrivateAccountSubmissionState.TransportUnavailable ->
                 "The encrypted account connection is unavailable. Try again."
+            PrivateAccountSubmissionState.LocalStateUnavailable ->
+                "The secure session vault is unavailable. Account access remains locked."
             PrivateAccountSubmissionState.UnexpectedFailure ->
                 "Account access could not be verified. Try again when the connection is available."
         }

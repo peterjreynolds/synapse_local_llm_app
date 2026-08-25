@@ -9,11 +9,14 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.synapse.privatechat.domain.account.PrivateAccountSessionReceipt
+import app.synapse.privatechat.ui.account.PrivateAccountSignOutUiState
 
 @Composable
 fun PrivateChatRoute(
     accountSession: PrivateAccountSessionReceipt.Active,
     viewModel: PrivateChatViewModel,
+    signOutState: PrivateAccountSignOutUiState,
+    onSignOut: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -43,6 +46,11 @@ fun PrivateChatRoute(
 
     PrivateChatScreen(
         state = state,
+        accountSessionActions =
+            PrivateAccountSessionUiActions(
+                signOutState = signOutState,
+                signOut = onSignOut,
+            ),
         navigationActions =
             PrivateChatNavigationActions(
                 selectRoom = viewModel::selectRoom,
@@ -77,6 +85,7 @@ fun PrivateChatRoute(
                 changeTypingIndicatorSharing = viewModel::changeTypingIndicatorSharing,
                 saveProfile = viewModel::saveProfile,
                 createRoom = viewModel::createRoom,
+                redeemRoomInvitation = viewModel::redeemRoomInvitation,
                 changePresenceSharing = viewModel::changePresenceSharing,
                 changeGroupMemberRole = viewModel::changeGroupMemberRole,
                 removeGroupMember = viewModel::removeGroupMember,

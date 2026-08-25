@@ -91,6 +91,55 @@ internal class SupabasePrivateAccountApi(
         }
     }
 
+    override suspend fun refreshSession(
+        command: PrivateSessionRefreshCommand,
+    ): PrivateAccountBackendOutcome<RefreshedPrivateAccountSession> {
+        val response =
+            transport.execute(
+                SupabaseHttpRequest(
+                    method = SupabaseHttpMethod.POST,
+                    pathSegments = listOf("auth", "v1", "token"),
+                    queryParameters = mapOf("grant_type" to "refresh_token"),
+                    jsonBody =
+                        buildJsonObject {
+                            put("refresh_token", command.exposeRefreshTokenForRequest())
+                        },
+                ),
+            )
+        return when {
+            response.statusCode == 200 ->
+                PrivateAccountBackendOutcome.Confirmed(
+                    parseRefreshedSession(response),
+                )
+
+            response.statusCode in 200..299 ->
+                malformedResponse("Supabase session refresh returned an unexpected success status")
+
+            else -> parseRejection(response)
+        }
+    }
+
+    override suspend fun signOut(command: PrivateSessionSignOutCommand): PrivateAccountBackendOutcome<PrivateBackendSignOutReceipt> {
+        val response =
+            transport.execute(
+                SupabaseHttpRequest(
+                    method = SupabaseHttpMethod.POST,
+                    pathSegments = listOf("auth", "v1", "logout"),
+                    queryParameters = mapOf("scope" to "local"),
+                    accessToken = command.exposeAccessTokenForRequest(),
+                ),
+            )
+        return when {
+            response.statusCode == 204 ->
+                PrivateAccountBackendOutcome.Confirmed(PrivateBackendSignOutReceipt)
+
+            response.statusCode in 200..299 ->
+                malformedResponse("Supabase sign-out returned an unexpected success status")
+
+            else -> parseRejection(response)
+        }
+    }
+
     private suspend fun invokeFunction(
         functionName: String,
         body: JsonObject,
@@ -150,6 +199,14 @@ internal class SupabasePrivateAccountApi(
         )
     }
 
+    private fun parseRefreshedSession(response: SupabaseHttpResponse): RefreshedPrivateAccountSession {
+        val responseBody = response.requireObject("session refresh")
+        return RefreshedPrivateAccountSession(
+            accountId = responseBody.requireObjectField("user").requireAccountId("id"),
+            tokens = responseBody.toSessionTokens(clock),
+        )
+    }
+
     private fun parseRejection(response: SupabaseHttpResponse): PrivateAccountBackendOutcome.Rejected {
         val candidateMessage =
             (response.jsonBody as? JsonObject)
@@ -166,7 +223,13 @@ internal class SupabasePrivateAccountApi(
                 429 -> "Too many attempts. Try again later."
                 else -> "Account access could not be completed."
             }
-        return PrivateAccountBackendOutcome.Rejected(userMessage)
+        val reason =
+            when (response.statusCode) {
+                400, 401, 403 -> PrivateBackendRejectionReason.ACCESS_DENIED
+                429 -> PrivateBackendRejectionReason.RATE_LIMITED
+                else -> PrivateBackendRejectionReason.REMOTE_FAILURE
+            }
+        return PrivateAccountBackendOutcome.Rejected(userMessage, reason)
     }
 }
 

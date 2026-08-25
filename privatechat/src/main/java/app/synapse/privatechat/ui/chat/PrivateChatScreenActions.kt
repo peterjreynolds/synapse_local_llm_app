@@ -11,6 +11,12 @@ import app.synapse.privatechat.domain.chat.PrivateRoomMemberRole
 import app.synapse.privatechat.domain.chat.PrivateRoomMemberSnapshot
 import app.synapse.privatechat.domain.chat.PrivateRoomMuteState
 import app.synapse.privatechat.domain.chat.PrivateRoomPinState
+import app.synapse.privatechat.ui.account.PrivateAccountSignOutUiState
+
+data class PrivateAccountSessionUiActions(
+    val signOutState: PrivateAccountSignOutUiState,
+    val signOut: () -> Unit,
+)
 
 data class PrivateChatNavigationActions(
     val selectRoom: (PrivateRoomId) -> Unit,
@@ -45,6 +51,7 @@ data class PrivateSocialUiActions(
     val changeTypingIndicatorSharing: (PrivateActivitySharingState) -> Unit,
     val saveProfile: (String) -> Unit,
     val createRoom: (PrivateRoomKind, String, PrivateMessageRetention) -> Unit,
+    val redeemRoomInvitation: (String) -> Unit,
     val changePresenceSharing: (PrivatePresenceSharingState) -> Unit,
     val changeGroupMemberRole: (PrivateRoomMemberSnapshot, PrivateRoomMemberRole) -> Unit,
     val removeGroupMember: (PrivateRoomMemberSnapshot) -> Unit,

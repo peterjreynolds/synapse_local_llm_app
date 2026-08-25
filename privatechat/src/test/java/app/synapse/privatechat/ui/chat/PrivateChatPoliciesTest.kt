@@ -254,6 +254,22 @@ class PrivateChatPoliciesTest {
         assertTrue(sanitized.roomInvitation is PrivateRoomInvitationUiState.Hidden)
     }
 
+    @Test
+    fun `background policy clears invitation state and closes sensitive overlays`() {
+        val state =
+            PrivateChatUiState(
+                roomInvitation = PrivateRoomInvitationUiState.Creating,
+                accountInvitation = PrivateAccountInvitationUiState.Creating,
+                overlay = PrivateChatOverlay.CREATE_CONVERSATION,
+            )
+
+        val sanitized = PrivateChatSnapshotPolicy.clearInvitationSecretsForBackground(state)
+
+        assertTrue(sanitized.roomInvitation is PrivateRoomInvitationUiState.Hidden)
+        assertTrue(sanitized.accountInvitation is PrivateAccountInvitationUiState.Hidden)
+        assertEquals(PrivateChatOverlay.HIDDEN, sanitized.overlay)
+    }
+
     private fun roomSummary(): PrivateRoomSummary =
         PrivateRoomSummary(
             roomId = PrivateRoomId("room"),

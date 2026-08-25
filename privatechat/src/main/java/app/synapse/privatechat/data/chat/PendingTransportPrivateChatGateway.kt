@@ -25,6 +25,7 @@ import app.synapse.privatechat.domain.chat.PrivateSocialMutationReceipt
 import app.synapse.privatechat.domain.chat.PrivateSocialSnapshot
 import app.synapse.privatechat.domain.chat.PublishPrivatePresenceCommand
 import app.synapse.privatechat.domain.chat.PublishPrivateTypingStateCommand
+import app.synapse.privatechat.domain.chat.RedeemPrivateRoomInvitationCommand
 import app.synapse.privatechat.domain.chat.RemovePrivateGroupMemberCommand
 import app.synapse.privatechat.domain.chat.SendPrivateMessageCommand
 import app.synapse.privatechat.domain.chat.UpdatePrivateProfileCommand
@@ -103,6 +104,10 @@ object PendingTransportPrivateChatGateway : PrivateChatGateway, PrivateSocialGat
         command: CreatePrivateOneUseAccountInvitationCommand,
     ): PrivateChatMutationOutcome<PrivateSocialMutationReceipt.OneUseAccountInvitationCreated> =
         PrivateChatMutationOutcome.TransportUnavailable
+
+    override suspend fun redeemRoomInvitation(
+        command: RedeemPrivateRoomInvitationCommand,
+    ): PrivateChatMutationOutcome<PrivateSocialMutationReceipt.RoomInvitationRedeemed> = PrivateChatMutationOutcome.TransportUnavailable
 
     override suspend fun changePresenceSharing(
         command: ChangePrivatePresenceSharingCommand,

@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.synapse.privatechat.domain.chat.PrivatePresenceSharingState
+import app.synapse.privatechat.ui.account.PrivateAccountSignOutUiState
 
 @Composable
 internal fun PrivateProfileDialog(
@@ -29,6 +30,7 @@ internal fun PrivateProfileDialog(
     presencePublication: PrivatePresencePublicationUiState,
     accountInvitation: PrivateAccountInvitationUiState,
     operation: PrivateChatOperationUiState,
+    accountSessionActions: PrivateAccountSessionUiActions,
     onSaveProfile: (String) -> Unit,
     onChangePresenceSharing: (PrivatePresenceSharingState) -> Unit,
     onCreateAccountInvitation: () -> Unit,
@@ -36,6 +38,7 @@ internal fun PrivateProfileDialog(
 ) {
     val social = socialState as? PrivateSocialUiState.Available
     val operationRunning = operation is PrivateChatOperationUiState.Running
+    val signOutRunning = accountSessionActions.signOutState is PrivateAccountSignOutUiState.SigningOut
     var displayName by remember(social?.snapshot?.profile?.accountId) {
         mutableStateOf(
             social
@@ -49,10 +52,10 @@ internal fun PrivateProfileDialog(
         onDismissRequest = onDismiss,
         title = { Text("Profile and privacy") },
         text = {
-            if (social == null) {
-                Text(privateSocialUnavailableMessage(socialState))
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (social == null) {
+                    Text(privateSocialUnavailableMessage(socialState))
+                } else {
                     Text(
                         text = "Signed in as @${social.snapshot.profile.username}",
                         style = MaterialTheme.typography.bodyMedium,
@@ -105,6 +108,24 @@ internal fun PrivateProfileDialog(
                         Text("Invite a friend to Synapse Private")
                     }
                 }
+                OutlinedButton(
+                    onClick = accountSessionActions.signOut,
+                    enabled = !operationRunning && !signOutRunning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (signOutRunning) {
+                        Text("Signing out…")
+                    } else {
+                        Text("Sign out of this device")
+                    }
+                }
+                privateSignOutFailureMessage(accountSessionActions.signOutState)?.let { failureMessage ->
+                    Text(
+                        text = failureMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -116,12 +137,31 @@ internal fun PrivateProfileDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !operationRunning) {
+            TextButton(onClick = onDismiss, enabled = !operationRunning && !signOutRunning) {
                 Text("Close")
             }
         },
     )
 }
+
+private fun privateSignOutFailureMessage(state: PrivateAccountSignOutUiState): String? =
+    when (state) {
+        PrivateAccountSignOutUiState.Idle,
+        PrivateAccountSignOutUiState.SigningOut,
+        PrivateAccountSignOutUiState.AlreadySignedOut,
+        is PrivateAccountSignOutUiState.LocallySignedOut,
+        -> null
+
+        is PrivateAccountSignOutUiState.Rejected -> state.userMessage
+        PrivateAccountSignOutUiState.TransportUnavailable ->
+            "Sign-out could not reach the account service. You are still signed in."
+
+        PrivateAccountSignOutUiState.LocalStateUnavailable ->
+            "The secure session could not be cleared. You are still signed in."
+
+        PrivateAccountSignOutUiState.VerificationFailed ->
+            "The sign-out receipt could not be verified. You are still signed in."
+    }
 
 private fun privateSocialUnavailableMessage(state: PrivateSocialUiState): String =
     when (state) {

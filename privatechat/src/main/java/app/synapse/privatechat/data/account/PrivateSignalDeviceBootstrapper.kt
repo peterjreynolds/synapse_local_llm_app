@@ -1,30 +1,29 @@
 package app.synapse.privatechat.data.account
 
 import app.synapse.privatechat.crypto.SignalDeviceAddress
-import app.synapse.privatechat.crypto.SignalProtocolAdapter
-import app.synapse.privatechat.crypto.SignalProtocolStateRepository
+import app.synapse.privatechat.crypto.SignalProtocolAdapterOwner
 import java.util.UUID
 
 internal class PrivateSignalDeviceBootstrapper(
-    private val stateRepository: SignalProtocolStateRepository,
+    private val adapterOwner: SignalProtocolAdapterOwner,
 ) {
     fun preparePublicBundle(reservation: PrivateDeviceRegistrationReservation) =
-        synchronized(stateRepository) {
+        synchronized(adapterOwner) {
             val reservedAddress =
                 SignalDeviceAddress.fromWire(
                     accountId = reservation.accountId.canonical,
                     transportDeviceId = reservation.transportDeviceId.toString(),
                     protocolDeviceId = reservation.signalDeviceId.raw,
                 )
-            val storedIdentity = stateRepository.loadLocalIdentity()
-            if (storedIdentity != null && storedIdentity.address != reservedAddress) {
+            val storedAddress = adapterOwner.storedLocalAddress()
+            if (storedAddress != null && storedAddress != reservedAddress) {
                 throw PrivateDeviceIdentityConflictException(
-                    existingAccountId = storedIdentity.address.accountId,
+                    existingAccountId = storedAddress.accountId,
                     requestedAccountId = reservedAddress.accountId,
                 )
             }
-            val adapter = SignalProtocolAdapter(reservedAddress, stateRepository)
-            if (storedIdentity == null) {
+            val adapter = adapterOwner.adapterFor(reservedAddress)
+            if (storedAddress == null) {
                 adapter.initializeLocalDevice().publicPreKeyBundle
             } else {
                 adapter.generatePublicPreKeyBundle()

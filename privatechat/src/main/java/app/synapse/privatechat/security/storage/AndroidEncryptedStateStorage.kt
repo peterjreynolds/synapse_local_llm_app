@@ -16,9 +16,13 @@ internal interface EncryptedStateFile {
     fun replace(ciphertext: ByteArray)
 }
 
+internal interface DeletableEncryptedStateFile : EncryptedStateFile {
+    fun deletePhysically()
+}
+
 internal class AndroidAtomicEncryptedStateFile(
     private val file: File,
-) : EncryptedStateFile {
+) : DeletableEncryptedStateFile {
     private val atomicFile = AtomicFile(file)
     private val legacyBackupFile = File("${file.path}.bak")
 
@@ -63,12 +67,19 @@ internal class AndroidAtomicEncryptedStateFile(
         }
     }
 
+    override fun deletePhysically() {
+        atomicFile.delete()
+        if (file.exists() || legacyBackupFile.exists()) {
+            throw EncryptedStateUnavailableException("Encrypted state could not be physically deleted")
+        }
+    }
+
     fun permitsEncryptionKeyCreation(): Boolean = !encryptedStateMayExist
 }
 
 internal class AndroidKeystoreAes256KeyProvider(
     private val keyAlias: String,
-) : EncryptedStateKeyProvider {
+) : DestructibleEncryptedStateKeyProvider {
     init {
         require(KEY_ALIAS_PATTERN.matches(keyAlias)) { "Encrypted state key alias is invalid" }
     }
@@ -93,6 +104,18 @@ internal class AndroidKeystoreAes256KeyProvider(
             )
             requireNonExportableAesKey(generator.generateKey())
         }
+
+    override fun deleteKey() {
+        synchronized(KEYSTORE_MONITOR) {
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            if (keyStore.containsAlias(keyAlias)) {
+                keyStore.deleteEntry(keyAlias)
+            }
+            if (keyStore.containsAlias(keyAlias)) {
+                throw EncryptedStateUnavailableException("Encrypted state key could not be deleted")
+            }
+        }
+    }
 
     private fun loadExistingKeyLocked(): SecretKey? {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }

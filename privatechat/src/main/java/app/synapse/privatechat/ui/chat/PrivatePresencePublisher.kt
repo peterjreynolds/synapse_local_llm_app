@@ -12,12 +12,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.time.Clock
 
 internal class PrivatePresencePublisher(
     private val gateway: PrivateSocialGateway,
     private val mutationIdFactory: PrivateClientMutationIdFactory,
-    private val clock: Clock,
     private val coroutineScope: CoroutineScope,
     private val stateStore: PrivateChatUiStateStore,
 ) {
@@ -92,13 +90,10 @@ internal class PrivatePresencePublisher(
     }
 
     private suspend fun publishPresence(accountId: PrivateAccountId): PrivatePresencePublicationUiState {
-        val publishedAt = clock.instant()
         val command =
             PublishPrivatePresenceCommand(
                 accountId = accountId,
                 mutationId = mutationIdFactory.createMutationId(),
-                publishedAt = publishedAt,
-                expiresAt = publishedAt.plusSeconds(PRIVATE_PRESENCE_TTL_SECONDS),
             )
         return try {
             when (val outcome = gateway.publishPresence(command)) {
@@ -123,5 +118,4 @@ internal class PrivatePresencePublisher(
     }
 }
 
-private const val PRIVATE_PRESENCE_TTL_SECONDS = 120L
 private const val PRIVATE_PRESENCE_REPUBLICATION_MILLIS = 60_000L

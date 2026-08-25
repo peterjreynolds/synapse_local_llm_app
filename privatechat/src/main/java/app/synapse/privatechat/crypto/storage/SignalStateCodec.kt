@@ -1,10 +1,12 @@
 package app.synapse.privatechat.crypto.storage
 
 import app.synapse.privatechat.crypto.SignalDeviceAddress
+import app.synapse.privatechat.crypto.SignalPendingOutboundMutationKey
 import app.synapse.privatechat.crypto.SignalPreKeyId
 import app.synapse.privatechat.crypto.SignalProtocolStateAddress
 import app.synapse.privatechat.crypto.SignalProtocolStateCorruptedException
 import app.synapse.privatechat.crypto.StoredLocalSignalIdentity
+import app.synapse.privatechat.crypto.StoredSignalPendingOutboundMutation
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -13,7 +15,8 @@ import java.util.UUID
 
 internal object SignalStateCodec {
     private const val MAGIC = 0x53505331
-    private const val VERSION = 2
+    private const val VERSION = 3
+    private const val LEGACY_VERSION = 2
     private const val MAX_TOTAL_ENTRIES = 100_000
     internal const val MAX_TOTAL_PLAINTEXT_BYTES = 64 * 1_024 * 1_024
     private const val MAX_IDENTITY_BYTES = 256
@@ -49,6 +52,15 @@ internal object SignalStateCodec {
                     data.writeInt(consumed.signedPreKeyId.raw)
                     data.writeBoundedBytes(consumed.baseKeyBytes.copyBytes(), MAX_BASE_KEY_BYTES)
                 }
+            data.writeInt(state.pendingOutboundMutations.size)
+            state.pendingOutboundMutations.values
+                .sortedWith(
+                    compareBy(
+                        { mutation -> mutation.key.accountId },
+                        { mutation -> mutation.key.transportDeviceId },
+                        { mutation -> mutation.key.clientMutationId },
+                    ),
+                ).forEach { mutation -> data.writePendingOutboundMutation(mutation) }
         }
         return output.toByteArray().also {
             require(it.size <= MAX_TOTAL_PLAINTEXT_BYTES) { "Signal state exceeds the size limit" }
@@ -61,7 +73,8 @@ internal object SignalStateCodec {
             val input = ByteArrayInputStream(bytes)
             val data = DataInputStream(input)
             if (data.readInt() != MAGIC) corrupt("Signal state header is invalid")
-            if (data.readInt() != VERSION) corrupt("Signal state version is unsupported")
+            val version = data.readInt()
+            if (version != VERSION && version != LEGACY_VERSION) corrupt("Signal state version is unsupported")
             val entryBudget = DecodedEntryBudget(data.readBoundedCount())
             val localIdentity =
                 if (data.readBoolean()) {
@@ -74,15 +87,28 @@ internal object SignalStateCodec {
                 } else {
                     null
                 }
+            val remoteIdentities = data.readAddressMap(MAX_IDENTITY_BYTES, entryBudget)
+            val sessions = data.readAddressMap(MAX_SESSION_BYTES, entryBudget)
+            val preKeys = data.readPreKeyMap(MAX_PRE_KEY_BYTES, entryBudget)
+            val signedPreKeys = data.readPreKeyMap(MAX_SIGNED_PRE_KEY_BYTES, entryBudget)
+            val kyberPreKeys = data.readPreKeyMap(MAX_KYBER_PRE_KEY_BYTES, entryBudget)
+            val consumedKyberBaseKeys = data.readConsumedKyberKeys(entryBudget)
+            val pendingOutboundMutations =
+                if (version == VERSION) {
+                    data.readPendingOutboundMutations(entryBudget)
+                } else {
+                    mutableMapOf()
+                }
             val state =
                 MutableSignalState(
                     localIdentity = localIdentity,
-                    remoteIdentities = data.readAddressMap(MAX_IDENTITY_BYTES, entryBudget),
-                    sessions = data.readAddressMap(MAX_SESSION_BYTES, entryBudget),
-                    preKeys = data.readPreKeyMap(MAX_PRE_KEY_BYTES, entryBudget),
-                    signedPreKeys = data.readPreKeyMap(MAX_SIGNED_PRE_KEY_BYTES, entryBudget),
-                    kyberPreKeys = data.readPreKeyMap(MAX_KYBER_PRE_KEY_BYTES, entryBudget),
-                    consumedKyberBaseKeys = data.readConsumedKyberKeys(entryBudget),
+                    remoteIdentities = remoteIdentities,
+                    sessions = sessions,
+                    preKeys = preKeys,
+                    signedPreKeys = signedPreKeys,
+                    kyberPreKeys = kyberPreKeys,
+                    consumedKyberBaseKeys = consumedKyberBaseKeys,
+                    pendingOutboundMutations = pendingOutboundMutations,
                 )
             entryBudget.requireExhausted()
             if (input.available() != 0) corrupt("Signal state contains trailing bytes")
@@ -212,6 +238,62 @@ internal object SignalStateCodec {
         }.toMutableSet()
     }
 
+    private fun DataOutputStream.writePendingOutboundMutation(mutation: StoredSignalPendingOutboundMutation) {
+        writeUuid(mutation.key.accountId)
+        writeUuid(mutation.key.transportDeviceId)
+        writeUuid(mutation.key.clientMutationId)
+        writeBoundedBytes(mutation.operationDigest, StoredSignalPendingOutboundMutation.OPERATION_DIGEST_BYTES)
+        writeBoundedBytes(mutation.opaqueRequest, StoredSignalPendingOutboundMutation.MAX_OPAQUE_REQUEST_BYTES)
+        writeLong(mutation.createdAt.epochSecond)
+        writeInt(mutation.createdAt.nano)
+        writeLong(mutation.expiresAt.epochSecond)
+        writeInt(mutation.expiresAt.nano)
+        writeInt(mutation.peerRecipients.size)
+        mutation.peerRecipients.forEach { recipient -> writeDeviceAddress(recipient) }
+    }
+
+    private fun DataInputStream.readPendingOutboundMutations(
+        entryBudget: DecodedEntryBudget,
+    ): MutableMap<SignalPendingOutboundMutationKey, StoredSignalPendingOutboundMutation> {
+        val count = readBoundedCount()
+        if (count > MAX_PENDING_OUTBOUND_MUTATIONS) corrupt("Signal state has too many pending outbound mutations")
+        entryBudget.claim(count)
+        return buildMap<SignalPendingOutboundMutationKey, StoredSignalPendingOutboundMutation>(count) {
+            repeat(count) {
+                val key =
+                    SignalPendingOutboundMutationKey(
+                        accountId = readUuid(),
+                        transportDeviceId = readUuid(),
+                        clientMutationId = readUuid(),
+                    )
+                val operationDigest = readBoundedBytes(StoredSignalPendingOutboundMutation.OPERATION_DIGEST_BYTES)
+                if (operationDigest.size != StoredSignalPendingOutboundMutation.OPERATION_DIGEST_BYTES) {
+                    operationDigest.fill(0)
+                    corrupt("Signal state pending outbound digest size is invalid")
+                }
+                val mutation =
+                    StoredSignalPendingOutboundMutation.create(
+                        key = key,
+                        operationDigest = operationDigest,
+                        opaqueRequest = readBoundedBytes(StoredSignalPendingOutboundMutation.MAX_OPAQUE_REQUEST_BYTES),
+                        createdAt = java.time.Instant.ofEpochSecond(readLong(), readInt().toLong()),
+                        expiresAt = java.time.Instant.ofEpochSecond(readLong(), readInt().toLong()),
+                        peerRecipients = readPendingPeerRecipients(),
+                    )
+                operationDigest.fill(0)
+                if (put(key, mutation) != null) corrupt("Signal state contains a duplicate pending outbound mutation")
+            }
+        }.toMutableMap()
+    }
+
+    private fun DataInputStream.readPendingPeerRecipients(): List<SignalDeviceAddress> {
+        val count = readInt()
+        if (count !in 0..StoredSignalPendingOutboundMutation.MAX_PEER_RECIPIENTS) {
+            corrupt("Signal state pending outbound peer count is invalid")
+        }
+        return List(count) { readDeviceAddress() }
+    }
+
     private fun DataInputStream.readBoundedCount(): Int {
         val count = readInt()
         if (count !in 0..MAX_TOTAL_ENTRIES) corrupt("Signal state record count is invalid")
@@ -227,6 +309,7 @@ internal object SignalStateCodec {
                 signedPreKeys.size,
                 kyberPreKeys.size,
                 consumedKyberBaseKeys.size,
+                pendingOutboundMutations.size,
             ).sumOf { sectionEntries -> sectionEntries.toLong() }
         require(count <= MAX_TOTAL_ENTRIES) { "Too many Signal state records" }
         return count.toInt()
@@ -246,6 +329,8 @@ internal object SignalStateCodec {
     }
 
     private fun corrupt(message: String): Nothing = throw SignalProtocolStateCorruptedException(message)
+
+    private const val MAX_PENDING_OUTBOUND_MUTATIONS = 4
 }
 
 private class BoundedByteArrayOutputStream(

@@ -8,6 +8,13 @@ import app.synapse.privatechat.domain.chat.PrivateSocialSnapshot
 import java.time.Instant
 
 internal object PrivateChatSnapshotPolicy {
+    fun clearInvitationSecretsForBackground(state: PrivateChatUiState): PrivateChatUiState =
+        state.copy(
+            roomInvitation = PrivateRoomInvitationUiState.Hidden,
+            accountInvitation = PrivateAccountInvitationUiState.Hidden,
+            overlay = PrivateChatOverlay.HIDDEN,
+        )
+
     fun sanitizePresentedState(
         state: PrivateChatUiState,
         now: Instant,

@@ -1,8 +1,7 @@
 package app.synapse.privatechat.data.supabase
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import java.io.ByteArrayOutputStream
@@ -11,7 +10,10 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.HttpsURLConnection
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 enum class SupabaseHttpMethod {
     GET,
@@ -86,6 +88,7 @@ class UrlConnectionSupabaseHttpTransport(
     private val connectTimeoutMillis: Int = 15_000,
     private val readTimeoutMillis: Int = 30_000,
     private val maximumResponseBytes: Int = 2 * 1_024 * 1_024,
+    private val connectionFactory: (URI) -> HttpsURLConnection = ::openHttpsConnection,
 ) : SupabaseHttpTransport {
     init {
         require(connectTimeoutMillis in 1_000..60_000) { "Connect timeout is outside the supported range" }
@@ -95,49 +98,76 @@ class UrlConnectionSupabaseHttpTransport(
         }
     }
 
-    override suspend fun execute(request: SupabaseHttpRequest): SupabaseHttpResponse =
-        withContext(Dispatchers.IO) {
-            val requestUri = buildRequestUri(config.projectUri, request)
-            val connection =
-                requestUri.toURL().openConnection().let { openedConnection ->
-                    require(openedConnection is HttpsURLConnection) {
-                        "Supabase transport requires HTTPS"
-                    }
-                    openedConnection
-                }
-            try {
-                configureConnection(connection, request)
-                request.jsonBody?.let { body -> writeRequestBody(connection, body) }
-                val statusCode = connection.responseCode
-                if (statusCode in 300..399) {
-                    throw SupabaseTransportException(
-                        failure = SupabaseTransportFailure.REDIRECT_REJECTED,
-                        message = "Supabase transport rejected an unexpected redirect",
-                    )
-                }
-                val responseBytes = readResponseBytes(connection, statusCode)
-                SupabaseHttpResponse(
-                    statusCode = statusCode,
-                    jsonBody = parseResponseJson(responseBytes),
-                )
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: SupabaseTransportException) {
-                throw failure
-            } catch (error: IOException) {
-                throw SupabaseTransportException(
-                    failure = SupabaseTransportFailure.NETWORK_UNAVAILABLE,
-                    message = "Supabase transport failed",
-                    cause = error,
-                )
-            } finally {
-                connection.disconnect()
+    override suspend fun execute(request: SupabaseHttpRequest): SupabaseHttpResponse {
+        val preparedRequest = prepareRequest(request)
+        return suspendCancellableCoroutine { continuation ->
+            val activeConnection = AtomicReference<HttpsURLConnection?>()
+            continuation.invokeOnCancellation {
+                activeConnection.getAndSet(null)?.disconnect()
             }
+            Dispatchers.IO.dispatch(
+                continuation.context,
+                Runnable {
+                    var connection: HttpsURLConnection? = null
+                    try {
+                        if (!continuation.isActive) return@Runnable
+                        connection = connectionFactory(preparedRequest.uri)
+                        activeConnection.set(connection)
+                        if (!continuation.isActive) return@Runnable
+                        val response = executePreparedRequest(connection, preparedRequest)
+                        continuation.resume(response)
+                    } catch (error: Throwable) {
+                        if (continuation.isActive) continuation.resumeWithException(error.toTransportFailure())
+                    } finally {
+                        connection?.let { openedConnection ->
+                            activeConnection.compareAndSet(openedConnection, null)
+                            openedConnection.disconnect()
+                        }
+                        preparedRequest.clearEncodedBody()
+                    }
+                },
+            )
         }
+    }
+
+    private fun prepareRequest(request: SupabaseHttpRequest): PreparedSupabaseHttpRequest {
+        val encodedBody = request.jsonBody?.toString()?.toByteArray(StandardCharsets.UTF_8)
+        require(encodedBody == null || encodedBody.size <= MAXIMUM_REQUEST_BYTES) {
+            encodedBody?.fill(0)
+            "Supabase request body exceeds the transport limit"
+        }
+        return PreparedSupabaseHttpRequest(
+            uri = buildRequestUri(config.projectUri, request),
+            method = request.method,
+            accessToken = request.accessToken,
+            preferHeader = request.preferHeader,
+            encodedBody = encodedBody,
+        )
+    }
+
+    private fun executePreparedRequest(
+        connection: HttpsURLConnection,
+        request: PreparedSupabaseHttpRequest,
+    ): SupabaseHttpResponse {
+        configureConnection(connection, request)
+        request.encodedBody?.let { encodedBody -> writeRequestBody(connection, encodedBody) }
+        val statusCode = connection.responseCode
+        if (statusCode in 300..399) {
+            throw SupabaseTransportException(
+                failure = SupabaseTransportFailure.REDIRECT_REJECTED,
+                message = "Supabase transport rejected an unexpected redirect",
+            )
+        }
+        val responseBytes = readResponseBytes(connection, statusCode)
+        return SupabaseHttpResponse(
+            statusCode = statusCode,
+            jsonBody = parseResponseJson(responseBytes),
+        )
+    }
 
     private fun configureConnection(
         connection: HttpsURLConnection,
-        request: SupabaseHttpRequest,
+        request: PreparedSupabaseHttpRequest,
     ) {
         connection.instanceFollowRedirects = false
         connection.connectTimeout = connectTimeoutMillis
@@ -152,7 +182,7 @@ class UrlConnectionSupabaseHttpTransport(
         request.preferHeader?.let { preference ->
             connection.setRequestProperty("Prefer", preference)
         }
-        if (request.jsonBody != null) {
+        if (request.encodedBody != null) {
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
         }
@@ -160,12 +190,14 @@ class UrlConnectionSupabaseHttpTransport(
 
     private fun writeRequestBody(
         connection: HttpsURLConnection,
-        body: JsonElement,
+        encodedBody: ByteArray,
     ) {
-        val encodedBody = body.toString().toByteArray(StandardCharsets.UTF_8)
-        require(encodedBody.size <= MAXIMUM_REQUEST_BYTES) { "Supabase request body exceeds the transport limit" }
         connection.setFixedLengthStreamingMode(encodedBody.size)
-        connection.outputStream.use { output -> output.write(encodedBody) }
+        try {
+            connection.outputStream.use { output -> output.write(encodedBody) }
+        } finally {
+            encodedBody.fill(0)
+        }
     }
 
     private fun readResponseBytes(
@@ -211,6 +243,37 @@ class UrlConnectionSupabaseHttpTransport(
         }
     }
 }
+
+private class PreparedSupabaseHttpRequest(
+    val uri: URI,
+    val method: SupabaseHttpMethod,
+    val accessToken: String?,
+    val preferHeader: String?,
+    val encodedBody: ByteArray?,
+) {
+    fun clearEncodedBody() {
+        encodedBody?.fill(0)
+    }
+}
+
+private fun openHttpsConnection(uri: URI): HttpsURLConnection =
+    uri.toURL().openConnection().let { openedConnection ->
+        require(openedConnection is HttpsURLConnection) { "Supabase transport requires HTTPS" }
+        openedConnection
+    }
+
+private fun Throwable.toTransportFailure(): Throwable =
+    when (this) {
+        is SupabaseTransportException -> this
+        is IOException ->
+            SupabaseTransportException(
+                failure = SupabaseTransportFailure.NETWORK_UNAVAILABLE,
+                message = "Supabase transport failed",
+                cause = this,
+            )
+
+        else -> this
+    }
 
 internal fun buildRequestUri(
     projectUri: URI,

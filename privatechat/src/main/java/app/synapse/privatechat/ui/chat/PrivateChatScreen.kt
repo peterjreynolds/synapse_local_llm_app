@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun PrivateChatScreen(
     state: PrivateChatUiState,
+    accountSessionActions: PrivateAccountSessionUiActions,
     navigationActions: PrivateChatNavigationActions,
     messageActions: PrivateMessageUiActions,
     roomActions: PrivateRoomUiActions,
@@ -108,6 +109,7 @@ fun PrivateChatScreen(
         )
         PrivateSocialOverlay(
             state = state,
+            accountSessionActions = accountSessionActions,
             navigationActions = navigationActions,
             socialActions = socialActions,
         )

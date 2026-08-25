@@ -95,6 +95,17 @@ interface SignalProtocolStateRepository {
 
     fun deleteAllSessions(accountId: UUID): Int
 
+    fun loadPendingOutboundMutation(key: SignalPendingOutboundMutationKey): StoredSignalPendingOutboundMutation?
+
+    fun listPendingOutboundMutations(
+        accountId: UUID,
+        transportDeviceId: UUID,
+    ): List<StoredSignalPendingOutboundMutation>
+
+    fun insertPendingOutboundMutationIfAbsent(mutation: StoredSignalPendingOutboundMutation): Boolean
+
+    fun deletePendingOutboundMutation(key: SignalPendingOutboundMutationKey): Boolean
+
     fun loadPreKey(preKeyId: SignalPreKeyId): ByteArray?
 
     fun storePreKey(

@@ -123,7 +123,13 @@ class SignalProtocolAdapter(
                 requireBoundLocalIdentity()
                 requireDistinctProtocolAddress(recipient)
                 stateRepository.writeTransaction {
-                    encryptForDeviceWithinTransaction(recipient, plaintext.copyOf())
+                    plaintext.copyOf().let { ownedPlaintext ->
+                        try {
+                            encryptForDeviceWithinTransaction(recipient, ownedPlaintext)
+                        } finally {
+                            ownedPlaintext.fill(0)
+                        }
+                    }
                 }
             }
         }
@@ -142,14 +148,217 @@ class SignalProtocolAdapter(
                 stateRepository.writeTransaction {
                     PairwiseSignalFanOut(
                         immutableRecipients.map { recipient ->
-                            encryptForDeviceWithinTransaction(recipient, plaintext.copyOf())
+                            plaintext.copyOf().let { ownedPlaintext ->
+                                try {
+                                    encryptForDeviceWithinTransaction(recipient, ownedPlaintext)
+                                } finally {
+                                    ownedPlaintext.fill(0)
+                                }
+                            }
                         },
                     )
                 }
             }
         }
 
+    /**
+     * Persists the exact opaque outbound request in the same encrypted snapshot as every sender
+     * ratchet advanced by this fan-out. A callback failure or snapshot failure rolls both back.
+     */
+    fun encryptForRecipientDevicesWithPendingOutboundCommit(
+        recipients: List<SignalDeviceAddress>,
+        plaintext: ByteArray,
+        createPendingMutation: (PairwiseSignalFanOut) -> StoredSignalPendingOutboundMutation,
+    ): StoredSignalPendingOutboundMutation =
+        synchronized(operationMonitor) {
+            validatePlaintext(plaintext)
+            requireValidFanOutRecipientCount(recipients.size)
+            val immutableRecipients = recipients.toList()
+            requireValidFanOutRecipients(immutableRecipients)
+            classifiedOperation {
+                val localIdentity = requireBoundLocalIdentity()
+                stateRepository.writeTransaction {
+                    val fanOut =
+                        PairwiseSignalFanOut(
+                            immutableRecipients.map { recipient ->
+                                plaintext.copyOf().let { ownedPlaintext ->
+                                    try {
+                                        encryptForDeviceWithinTransaction(recipient, ownedPlaintext)
+                                    } finally {
+                                        ownedPlaintext.fill(0)
+                                    }
+                                }
+                            },
+                        )
+                    val pendingMutation = createPendingMutation(fanOut)
+                    requirePendingMutationBoundToLocalDevice(localIdentity, pendingMutation)
+                    if (!stateRepository.insertPendingOutboundMutationIfAbsent(pendingMutation)) {
+                        throw SignalProtocolException(
+                            kind = SignalProtocolFailureKind.STATE_CONFLICT,
+                            message = "A pending outbound mutation already uses this identifier",
+                        )
+                    }
+                    pendingMutation.copyForStorage()
+                }
+            }
+        }
+
+    fun hasPairwiseSession(recipient: SignalDeviceAddress): Boolean =
+        synchronized(operationMonitor) {
+            classifiedOperation {
+                requireBoundLocalIdentity()
+                requireDistinctProtocolAddress(recipient)
+                stateRepository.writeTransaction {
+                    stateRepository.loadSession(recipient.toStateAddress()) != null
+                }
+            }
+        }
+
+    fun loadPendingOutboundMutation(key: SignalPendingOutboundMutationKey): StoredSignalPendingOutboundMutation? =
+        synchronized(operationMonitor) {
+            classifiedOperation {
+                val localIdentity = requireBoundLocalIdentity()
+                requirePendingMutationKeyBoundToLocalDevice(localIdentity, key)
+                stateRepository.writeTransaction {
+                    stateRepository.loadPendingOutboundMutation(key)
+                }
+            }
+        }
+
+    fun listPendingOutboundMutations(): List<StoredSignalPendingOutboundMutation> =
+        synchronized(operationMonitor) {
+            classifiedOperation {
+                val localIdentity = requireBoundLocalIdentity()
+                stateRepository.writeTransaction {
+                    stateRepository.listPendingOutboundMutations(
+                        accountId = localIdentity.address.accountId,
+                        transportDeviceId = localIdentity.address.transportDeviceId,
+                    )
+                }
+            }
+        }
+
+    fun commitPendingOutboundWithoutPeerRatchet(mutation: StoredSignalPendingOutboundMutation): StoredSignalPendingOutboundMutation =
+        synchronized(operationMonitor) {
+            classifiedOperation {
+                val localIdentity = requireBoundLocalIdentity()
+                requirePendingMutationBoundToLocalDevice(localIdentity, mutation)
+                if (mutation.peerRecipients.isNotEmpty()) {
+                    throw SignalProtocolException(
+                        kind = SignalProtocolFailureKind.INVALID_INPUT,
+                        message = "A peer mutation must be committed with its Signal fan-out",
+                    )
+                }
+                stateRepository.writeTransaction {
+                    if (!stateRepository.insertPendingOutboundMutationIfAbsent(mutation)) {
+                        throw SignalProtocolException(
+                            kind = SignalProtocolFailureKind.STATE_CONFLICT,
+                            message = "A pending outbound mutation already uses this identifier",
+                        )
+                    }
+                    mutation.copyForStorage()
+                }
+            }
+        }
+
+    fun confirmPendingOutboundMutation(
+        key: SignalPendingOutboundMutationKey,
+        expectedOperationDigest: ByteArray,
+    ) {
+        synchronized(operationMonitor) {
+            classifiedOperation {
+                val localIdentity = requireBoundLocalIdentity()
+                requirePendingMutationKeyBoundToLocalDevice(localIdentity, key)
+                requireValidPendingOperationDigest(expectedOperationDigest)
+                stateRepository.writeTransaction {
+                    val pending =
+                        stateRepository.loadPendingOutboundMutation(key)
+                            ?: throw SignalProtocolException(
+                                kind = SignalProtocolFailureKind.STATE_CONFLICT,
+                                message = "Pending outbound mutation is unavailable",
+                            )
+                    if (!pending.operationDigest.contentEquals(expectedOperationDigest)) {
+                        throw SignalProtocolException(
+                            kind = SignalProtocolFailureKind.STATE_CONFLICT,
+                            message = "Pending outbound mutation digest changed",
+                        )
+                    }
+                    check(stateRepository.deletePendingOutboundMutation(key)) {
+                        "Pending outbound mutation disappeared during confirmation"
+                    }
+                }
+            }
+        }
+    }
+
+    fun discardPendingOutboundMutationAndResetPeerSessions(
+        key: SignalPendingOutboundMutationKey,
+        expectedOperationDigest: ByteArray,
+    ) {
+        synchronized(operationMonitor) {
+            classifiedOperation {
+                val localIdentity = requireBoundLocalIdentity()
+                requirePendingMutationKeyBoundToLocalDevice(localIdentity, key)
+                requireValidPendingOperationDigest(expectedOperationDigest)
+                stateRepository.writeTransaction {
+                    val pending =
+                        stateRepository.loadPendingOutboundMutation(key)
+                            ?: return@writeTransaction
+                    if (!pending.operationDigest.contentEquals(expectedOperationDigest)) {
+                        throw SignalProtocolException(
+                            kind = SignalProtocolFailureKind.STATE_CONFLICT,
+                            message = "Pending outbound mutation digest changed",
+                        )
+                    }
+                    pending.peerRecipients.forEach { recipient ->
+                        stateRepository.deleteSession(recipient.toStateAddress())
+                    }
+                    check(stateRepository.deletePendingOutboundMutation(key)) {
+                        "Pending outbound mutation disappeared during discard"
+                    }
+                }
+            }
+        }
+    }
+
+    fun clearPendingOutboundMutationsForSessionInvalidation(): Int =
+        synchronized(operationMonitor) {
+            classifiedOperation {
+                val localIdentity = requireBoundLocalIdentity()
+                stateRepository.writeTransaction {
+                    val pendingMutations =
+                        stateRepository.listPendingOutboundMutations(
+                            accountId = localIdentity.address.accountId,
+                            transportDeviceId = localIdentity.address.transportDeviceId,
+                        )
+                    pendingMutations
+                        .flatMap(StoredSignalPendingOutboundMutation::peerRecipients)
+                        .map(SignalProtocolStateAddress::fromDeviceAddress)
+                        .distinct()
+                        .forEach(stateRepository::deleteSession)
+                    pendingMutations.forEach { pending ->
+                        check(stateRepository.deletePendingOutboundMutation(pending.key)) {
+                            "Pending outbound mutation disappeared during session invalidation"
+                        }
+                    }
+                    pendingMutations.size
+                }
+            }
+        }
+
     fun decryptFromDevice(envelope: SignalEnvelope): ByteArray =
+        decryptFromDeviceWithDurableCommit(envelope) { plaintext -> plaintext.copyOf() }
+
+    /**
+     * Commits the inbound ratchet advance only after [commitDecryptedPayload] returns.
+     *
+     * The callback is non-suspending and runs while the Signal repository transaction is locked.
+     * It must durably cache the payload before returning and must not retain the provided array.
+     */
+    fun <Receipt> decryptFromDeviceWithDurableCommit(
+        envelope: SignalEnvelope,
+        commitDecryptedPayload: (ByteArray) -> Receipt,
+    ): Receipt =
         synchronized(operationMonitor) {
             if (envelope.recipient != localAddress) {
                 throw SignalProtocolException(
@@ -161,28 +370,12 @@ class SignalProtocolAdapter(
             classifiedOperation {
                 requireBoundLocalIdentity()
                 stateRepository.writeTransaction {
-                    val cipher = createSessionCipher(envelope.sender)
-                    val plaintext =
-                        when (envelope.ciphertextType) {
-                            SignalCiphertextType.PREKEY -> {
-                                val message = PreKeySignalMessage(envelope.serializedCiphertext)
-                                requireCurrentLibSignalVersion(message.messageVersion)
-                                cipher.decrypt(message)
-                            }
-
-                            SignalCiphertextType.WHISPER -> {
-                                val message = SignalMessage(envelope.serializedCiphertext)
-                                requireCurrentLibSignalVersion(message.messageVersion)
-                                cipher.decrypt(message)
-                            }
-                        }
-                    if (plaintext.isEmpty() || plaintext.size > SignalProtocolWireLimits.MAX_PLAINTEXT_BYTES) {
-                        throw SignalProtocolException(
-                            kind = SignalProtocolFailureKind.INVALID_INPUT,
-                            message = "Decrypted Signal plaintext violates the message size contract",
-                        )
+                    val plaintext = decryptFromDeviceWithinTransaction(envelope)
+                    try {
+                        commitDecryptedPayload(plaintext)
+                    } finally {
+                        plaintext.fill(0)
                     }
-                    plaintext
                 }
             }
         }
@@ -347,6 +540,32 @@ class SignalProtocolAdapter(
         )
     }
 
+    private fun decryptFromDeviceWithinTransaction(envelope: SignalEnvelope): ByteArray {
+        val cipher = createSessionCipher(envelope.sender)
+        val plaintext =
+            when (envelope.ciphertextType) {
+                SignalCiphertextType.PREKEY -> {
+                    val message = PreKeySignalMessage(envelope.serializedCiphertext)
+                    requireCurrentLibSignalVersion(message.messageVersion)
+                    cipher.decrypt(message)
+                }
+
+                SignalCiphertextType.WHISPER -> {
+                    val message = SignalMessage(envelope.serializedCiphertext)
+                    requireCurrentLibSignalVersion(message.messageVersion)
+                    cipher.decrypt(message)
+                }
+            }
+        if (plaintext.isEmpty() || plaintext.size > SignalProtocolWireLimits.MAX_PLAINTEXT_BYTES) {
+            plaintext.fill(0)
+            throw SignalProtocolException(
+                kind = SignalProtocolFailureKind.INVALID_INPUT,
+                message = "Decrypted Signal plaintext violates the message size contract",
+            )
+        }
+        return plaintext
+    }
+
     private fun validateSerializedCiphertext(
         ciphertextType: SignalCiphertextType,
         serializedCiphertext: ByteArray,
@@ -411,6 +630,38 @@ class SignalProtocolAdapter(
             throw SignalProtocolException(
                 kind = SignalProtocolFailureKind.INVALID_INPUT,
                 message = "Remote Signal address must differ from the local address",
+            )
+        }
+    }
+
+    private fun requirePendingMutationBoundToLocalDevice(
+        localIdentity: StoredLocalSignalIdentity,
+        mutation: StoredSignalPendingOutboundMutation,
+    ) {
+        requirePendingMutationKeyBoundToLocalDevice(localIdentity, mutation.key)
+        mutation.peerRecipients.forEach(::requireDistinctProtocolAddress)
+    }
+
+    private fun requirePendingMutationKeyBoundToLocalDevice(
+        localIdentity: StoredLocalSignalIdentity,
+        key: SignalPendingOutboundMutationKey,
+    ) {
+        if (
+            key.accountId != localIdentity.address.accountId ||
+            key.transportDeviceId != localIdentity.address.transportDeviceId
+        ) {
+            throw SignalProtocolException(
+                kind = SignalProtocolFailureKind.INVALID_INPUT,
+                message = "Pending outbound mutation belongs to a different local device",
+            )
+        }
+    }
+
+    private fun requireValidPendingOperationDigest(operationDigest: ByteArray) {
+        if (operationDigest.size != StoredSignalPendingOutboundMutation.OPERATION_DIGEST_BYTES) {
+            throw SignalProtocolException(
+                kind = SignalProtocolFailureKind.INVALID_INPUT,
+                message = "Pending outbound mutation digest size is invalid",
             )
         }
     }

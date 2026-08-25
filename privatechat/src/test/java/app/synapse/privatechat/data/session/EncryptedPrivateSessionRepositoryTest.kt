@@ -2,22 +2,31 @@ package app.synapse.privatechat.data.session
 
 import app.synapse.privatechat.crypto.SignalDeviceId
 import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
-import app.synapse.privatechat.security.storage.EncryptedStateFile
-import app.synapse.privatechat.security.storage.EncryptedStateKeyProvider
+import app.synapse.privatechat.security.storage.DeletableEncryptedStateFile
+import app.synapse.privatechat.security.storage.DestructibleEncryptedStateKeyProvider
+import app.synapse.privatechat.security.storage.RotatingAesGcmEncryptedStateKeySlot
+import app.synapse.privatechat.security.storage.RotatingAesGcmEncryptedStateStorage
+import app.synapse.privatechat.security.storage.RotatingEncryptedStateKeySlotId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.time.Instant
+import java.util.IdentityHashMap
 import java.util.UUID
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 
 class EncryptedPrivateSessionRepositoryTest {
+    private val secondaryKeyProviders =
+        IdentityHashMap<MemoryEncryptedStateKeyProvider, MemoryEncryptedStateKeyProvider>()
+
     @Test
     fun installationIdentityIsEncryptedStableAndGeneratedOnlyOnce() {
         val file = MemoryEncryptedStateFile()
@@ -98,6 +107,7 @@ class EncryptedPrivateSessionRepositoryTest {
         val ciphertext = requireNotNull(file.bytes)
         assertFalse(ciphertext.containsSubsequence(ACCESS_TOKEN.encodeToByteArray()))
         assertFalse(ciphertext.containsSubsequence(REFRESH_TOKEN.encodeToByteArray()))
+        assertFalse(ciphertext.containsSubsequence(USERNAME.encodeToByteArray()))
         assertFalse(ciphertext.containsSubsequence(DISPLAY_NAME.encodeToByteArray()))
 
         val reloaded = repository(file, keyProvider) { error("Persisted installation identity must be reused") }
@@ -109,6 +119,7 @@ class EncryptedPrivateSessionRepositoryTest {
         assertEquals(ACCESS_TOKEN, restored.accessTokenForAuthorization())
         assertEquals(REFRESH_TOKEN, restored.refreshTokenForRenewal())
         assertEquals(EXPIRES_AT, restored.expiresAt)
+        assertEquals(USERNAME, restored.authenticationUsername)
         assertEquals(DISPLAY_NAME, restored.pseudonymousDisplayName)
         assertEquals("RegisteredPrivateAccountSession([REDACTED])", restored.toString())
     }
@@ -134,6 +145,51 @@ class EncryptedPrivateSessionRepositoryTest {
     }
 
     @Test
+    fun registrationRefreshAndClearRotateSlotsAndDestroySupersededKeys() {
+        val file = MemoryEncryptedStateFile()
+        val primaryKeys = MemoryEncryptedStateKeyProvider()
+        val secondaryKeys = secondaryKeyProvider(primaryKeys)
+        val repository = repository(file, primaryKeys) { INSTALLATION_ID }
+
+        repository.loadOrCreateInstallationId()
+        val installationStateKey = requireNotNull(primaryKeys.existingKey)
+        assertNull(secondaryKeys.existingKey)
+
+        repository.persistAfterDeviceRegistration(registeredSession())
+        assertNull(primaryKeys.existingKey)
+        assertTrue(primaryKeys.deletionCount >= 1)
+        assertNotNull(secondaryKeys.existingKey)
+
+        repository.persistRefreshedSession(registeredSession(accessToken = REPLACEMENT_ACCESS_TOKEN))
+        val refreshedStateKey = requireNotNull(primaryKeys.existingKey)
+        assertFalse(installationStateKey == refreshedStateKey)
+        assertNull(secondaryKeys.existingKey)
+
+        repository.clearAuthenticatedSession()
+        assertNull(primaryKeys.existingKey)
+        assertNotNull(secondaryKeys.existingKey)
+        assertNull(repository.loadRegisteredSession())
+    }
+
+    @Test
+    fun legacyVaultWithoutUsernameIsAtomicallyMigratedToSignedOutState() {
+        val file = MemoryEncryptedStateFile()
+        val keyProvider = MemoryEncryptedStateKeyProvider(key(41))
+        val stateCipher = cipher(file, keyProvider, SESSION_CONTEXT)
+        file.replace(stateCipher.encrypt(encodeLegacyVault()))
+
+        val repository = repository(file, keyProvider) { error("Legacy identity must be preserved") }
+
+        assertEquals(INSTALLATION_ID, repository.loadOrCreateInstallationId())
+        assertNull(repository.loadRegisteredSession())
+        assertEquals(3, file.replaceCount)
+        assertTrue(keyProvider.deletionCount >= 2)
+        val reloaded = repository(file, keyProvider) { error("Migrated identity must be preserved") }
+        assertEquals(INSTALLATION_ID, reloaded.loadOrCreateInstallationId())
+        assertNull(reloaded.loadRegisteredSession())
+    }
+
+    @Test
     fun rejectsTamperedTruncatedWrongKeyAndWrongContextState() {
         val file = MemoryEncryptedStateFile()
         val keyProvider = MemoryEncryptedStateKeyProvider(key(5))
@@ -141,12 +197,17 @@ class EncryptedPrivateSessionRepositoryTest {
         repository.loadOrCreateInstallationId()
         repository.persistAfterDeviceRegistration(registeredSession())
         val valid = requireNotNull(file.bytes)
+        val secondaryKey = requireNotNull(secondaryKeyProvider(keyProvider).existingKey)
 
         val tampered = valid.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
-        assertStateCannotLoad(tampered, key(5), SESSION_CONTEXT)
-        assertStateCannotLoad(valid.copyOf(7), key(5), SESSION_CONTEXT)
-        assertStateCannotLoad(valid, key(6), SESSION_CONTEXT)
-        assertStateCannotLoad(valid, key(5), "synapse.private.different-state.v1")
+        assertStateCannotLoad(tampered, secondaryKey = secondaryKey)
+        assertStateCannotLoad(valid.copyOf(7), secondaryKey = secondaryKey)
+        assertStateCannotLoad(valid, secondaryKey = key(6))
+        assertStateCannotLoad(
+            valid,
+            secondaryKey = secondaryKey,
+            secondaryContext = "synapse.private.different-state.v1",
+        )
     }
 
     @Test
@@ -155,14 +216,21 @@ class EncryptedPrivateSessionRepositoryTest {
         val keyProvider = MemoryEncryptedStateKeyProvider(key(7))
         val repository = repository(file, keyProvider) { INSTALLATION_ID }
         repository.loadOrCreateInstallationId()
+        val creationCountBeforeMissingKey = keyProvider.creationCount
         keyProvider.existingKey = null
 
         assertStateUnavailable { repository(file, keyProvider) { OTHER_INSTALLATION_ID } }
-        assertEquals(0, keyProvider.creationCount)
+        assertEquals(creationCountBeforeMissingKey, keyProvider.creationCount)
+        assertNull(file.bytes)
 
-        keyProvider.loadFailure = IllegalStateException("simulated invalidated key")
-        assertStateUnavailable { repository(file, keyProvider) { OTHER_INSTALLATION_ID } }
-        assertEquals(0, keyProvider.creationCount)
+        val invalidatedFile = MemoryEncryptedStateFile()
+        val invalidatedKeyProvider = MemoryEncryptedStateKeyProvider(key(71))
+        repository(invalidatedFile, invalidatedKeyProvider) { INSTALLATION_ID }.loadOrCreateInstallationId()
+        val creationCountBeforeInvalidation = invalidatedKeyProvider.creationCount
+        invalidatedKeyProvider.loadFailure = IllegalStateException("simulated invalidated key")
+        assertStateUnavailable { repository(invalidatedFile, invalidatedKeyProvider) { OTHER_INSTALLATION_ID } }
+        assertEquals(creationCountBeforeInvalidation, invalidatedKeyProvider.creationCount)
+        assertNull(invalidatedFile.bytes)
     }
 
     @Test
@@ -178,7 +246,7 @@ class EncryptedPrivateSessionRepositoryTest {
 
         generatedId = INSTALLATION_ID
         assertEquals(INSTALLATION_ID, repository.loadOrCreateInstallationId())
-        assertEquals(1, keyProvider.creationCount)
+        assertEquals(2, keyProvider.creationCount)
         assertEquals(1, file.replaceCount)
     }
 
@@ -243,12 +311,24 @@ class EncryptedPrivateSessionRepositoryTest {
         assertThrows(IllegalArgumentException::class.java) {
             registeredSession(displayName = " display name ")
         }
+        assertThrows(IllegalArgumentException::class.java) {
+            registeredSession(authenticationUsername = "Not_Normalized")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            registeredSession().withRefreshedTokens(
+                receiptAccountId = OTHER_ACCOUNT_ID,
+                accessToken = REPLACEMENT_ACCESS_TOKEN,
+                refreshToken = REFRESH_TOKEN,
+                expiresAt = EXPIRES_AT,
+            )
+        }
     }
 
     private fun registeredSession(
         accessToken: String = ACCESS_TOKEN,
         refreshToken: String = REFRESH_TOKEN,
         expiresAt: Instant = EXPIRES_AT,
+        authenticationUsername: String = USERNAME,
         displayName: String = DISPLAY_NAME,
     ): RegisteredPrivateAccountSession =
         RegisteredPrivateAccountSession.afterDeviceRegistration(
@@ -256,6 +336,7 @@ class EncryptedPrivateSessionRepositoryTest {
             accessToken = accessToken,
             refreshToken = refreshToken,
             expiresAt = expiresAt,
+            authenticationUsername = authenticationUsername,
             pseudonymousDisplayName = displayName,
         )
 
@@ -274,11 +355,19 @@ class EncryptedPrivateSessionRepositoryTest {
         keyProvider: MemoryEncryptedStateKeyProvider,
         installationIdGenerator: () -> PrivateInstallationId,
     ): EncryptedPrivateSessionRepository =
-        EncryptedPrivateSessionRepository(
-            encryptedStateFile = file,
-            stateCipher = cipher(file, keyProvider, SESSION_CONTEXT),
+        repository(
+            file = file,
+            primaryKeyProvider = keyProvider,
+            secondaryKeyProvider = secondaryKeyProvider(keyProvider),
             installationIdGenerator = installationIdGenerator,
+            primaryContext = SESSION_CONTEXT,
+            secondaryContext = SECONDARY_SESSION_CONTEXT,
         )
+
+    private fun secondaryKeyProvider(primaryKeyProvider: MemoryEncryptedStateKeyProvider): MemoryEncryptedStateKeyProvider =
+        secondaryKeyProviders.getOrPut(primaryKeyProvider) {
+            MemoryEncryptedStateKeyProvider(creationSeedBase = 199)
+        }
 
     private fun cipher(
         file: MemoryEncryptedStateFile,
@@ -293,29 +382,50 @@ class EncryptedPrivateSessionRepositoryTest {
 
     private fun assertStateCannotLoad(
         bytes: ByteArray,
-        key: SecretKey,
-        context: String,
+        primaryKey: SecretKey? = null,
+        secondaryKey: SecretKey? = null,
+        primaryContext: String = SESSION_CONTEXT,
+        secondaryContext: String = SECONDARY_SESSION_CONTEXT,
     ) {
         val file = MemoryEncryptedStateFile(bytes)
         assertStateUnavailable {
             repository(
                 file = file,
-                keyProvider = MemoryEncryptedStateKeyProvider(key),
+                primaryKeyProvider = MemoryEncryptedStateKeyProvider(primaryKey),
+                secondaryKeyProvider = MemoryEncryptedStateKeyProvider(secondaryKey),
                 installationIdGenerator = { OTHER_INSTALLATION_ID },
-                context = context,
+                primaryContext = primaryContext,
+                secondaryContext = secondaryContext,
             )
         }
+        assertNull(file.bytes)
     }
 
     private fun repository(
         file: MemoryEncryptedStateFile,
-        keyProvider: MemoryEncryptedStateKeyProvider,
+        primaryKeyProvider: MemoryEncryptedStateKeyProvider,
+        secondaryKeyProvider: MemoryEncryptedStateKeyProvider,
         installationIdGenerator: () -> PrivateInstallationId,
-        context: String,
+        primaryContext: String,
+        secondaryContext: String,
     ): EncryptedPrivateSessionRepository =
         EncryptedPrivateSessionRepository(
-            encryptedStateFile = file,
-            stateCipher = cipher(file, keyProvider, context),
+            encryptedStateStorage =
+                RotatingAesGcmEncryptedStateStorage(
+                    encryptedStateFile = file,
+                    primaryKeySlot =
+                        RotatingAesGcmEncryptedStateKeySlot(
+                            keyProvider = primaryKeyProvider,
+                            authenticatedContext = primaryContext,
+                        ),
+                    secondaryKeySlot =
+                        RotatingAesGcmEncryptedStateKeySlot(
+                            keyProvider = secondaryKeyProvider,
+                            authenticatedContext = secondaryContext,
+                        ),
+                    maximumPlaintextBytes = PrivateSessionVaultCodec.MAX_PLAINTEXT_BYTES,
+                    legacySingleSlot = RotatingEncryptedStateKeySlotId.PRIMARY,
+                ),
             installationIdGenerator = installationIdGenerator,
         )
 
@@ -338,6 +448,30 @@ class EncryptedPrivateSessionRepositoryTest {
             output.toByteArray()
         }
 
+    private fun encodeLegacyVault(): ByteArray =
+        ByteArrayOutputStream().use { output ->
+            DataOutputStream(output).use { encoded ->
+                encoded.writeInt(0x53504131)
+                encoded.writeInt(1)
+                encoded.writeUuid(INSTALLATION_ID.uuid)
+                encoded.writeBoolean(true)
+                encoded.writeUuid(ACCOUNT_ID)
+                encoded.writeInt(SIGNAL_DEVICE_ID.raw)
+                encoded.writeLong(EXPIRES_AT.epochSecond)
+                encoded.writeLegacyUtf8(ACCESS_TOKEN)
+                encoded.writeLegacyUtf8(REFRESH_TOKEN)
+                encoded.writeLegacyUtf8(DISPLAY_NAME)
+            }
+            output.toByteArray()
+        }
+
+    private fun DataOutputStream.writeLegacyUtf8(text: String) {
+        val bytes = text.encodeToByteArray()
+        writeInt(bytes.size)
+        write(bytes)
+        bytes.fill(0)
+    }
+
     private fun DataOutputStream.writeUuid(uuid: UUID) {
         writeLong(uuid.mostSignificantBits)
         writeLong(uuid.leastSignificantBits)
@@ -347,7 +481,7 @@ class EncryptedPrivateSessionRepositoryTest {
 
     private class MemoryEncryptedStateFile(
         initialBytes: ByteArray? = null,
-    ) : EncryptedStateFile {
+    ) : DeletableEncryptedStateFile {
         var bytes: ByteArray? = initialBytes?.copyOf()
             private set
         var failNextReplace = false
@@ -374,13 +508,21 @@ class EncryptedPrivateSessionRepositoryTest {
             replaceCount += 1
         }
 
+        override fun deletePhysically() {
+            bytes = null
+            encryptedStateMayExist = false
+        }
+
         fun permitsEncryptionKeyCreation(): Boolean = !encryptedStateMayExist
     }
 
     private class MemoryEncryptedStateKeyProvider(
         var existingKey: SecretKey? = null,
-    ) : EncryptedStateKeyProvider {
+        private val creationSeedBase: Int = 99,
+    ) : DestructibleEncryptedStateKeyProvider {
         var creationCount = 0
+            private set
+        var deletionCount = 0
             private set
         var loadFailure: Exception? = null
 
@@ -392,7 +534,12 @@ class EncryptedPrivateSessionRepositoryTest {
         override fun createKeyIfAbsent(): SecretKey {
             existingKey?.let { return it }
             creationCount += 1
-            return key(99).also { existingKey = it }
+            return key(creationSeedBase + creationCount).also { existingKey = it }
+        }
+
+        override fun deleteKey() {
+            deletionCount += 1
+            existingKey = null
         }
 
         private fun key(seed: Int): SecretKey = SecretKeySpec(ByteArray(32) { (it + seed).toByte() }, "AES")
@@ -419,7 +566,9 @@ class EncryptedPrivateSessionRepositoryTest {
         const val ACCESS_TOKEN = "header.payload.signature-material"
         const val REPLACEMENT_ACCESS_TOKEN = "header.payload.replacement-material"
         const val REFRESH_TOKEN = "refresh_token_material_1234567890"
+        const val USERNAME = "peter_01"
         const val DISPLAY_NAME = "Private Person"
         const val SESSION_CONTEXT = "synapse.private.account-session.v1"
+        const val SECONDARY_SESSION_CONTEXT = "synapse.private.account-session.slot-b.v1"
     }
 }

@@ -73,11 +73,33 @@ internal class RegisteredPrivateAccountSession private constructor(
     private val accessToken: String,
     private val refreshToken: String,
     val expiresAt: Instant,
+    val authenticationUsername: String,
     val pseudonymousDisplayName: String,
 ) {
     fun accessTokenForAuthorization(): String = accessToken
 
     fun refreshTokenForRenewal(): String = refreshToken
+
+    fun withRefreshedTokens(
+        receiptAccountId: UUID,
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: Instant,
+    ): RegisteredPrivateAccountSession {
+        require(receiptAccountId == accountId) {
+            "Refreshed session belongs to a different account"
+        }
+        return validatedSession(
+            accountId = accountId,
+            installationId = installationId,
+            signalDeviceId = signalDeviceId,
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            expiresAt = expiresAt,
+            authenticationUsername = authenticationUsername,
+            pseudonymousDisplayName = pseudonymousDisplayName,
+        )
+    }
 
     override fun toString(): String = "RegisteredPrivateAccountSession([REDACTED])"
 
@@ -89,6 +111,7 @@ internal class RegisteredPrivateAccountSession private constructor(
             accessToken = accessToken,
             refreshToken = refreshToken,
             expiresAt = expiresAt,
+            authenticationUsername = authenticationUsername,
             pseudonymousDisplayName = pseudonymousDisplayName,
         )
 
@@ -98,6 +121,7 @@ internal class RegisteredPrivateAccountSession private constructor(
             accessToken: String,
             refreshToken: String,
             expiresAt: Instant,
+            authenticationUsername: String,
             pseudonymousDisplayName: String,
         ): RegisteredPrivateAccountSession =
             validatedSession(
@@ -107,6 +131,7 @@ internal class RegisteredPrivateAccountSession private constructor(
                 accessToken = accessToken,
                 refreshToken = refreshToken,
                 expiresAt = expiresAt,
+                authenticationUsername = authenticationUsername,
                 pseudonymousDisplayName = pseudonymousDisplayName,
             )
 
@@ -117,6 +142,7 @@ internal class RegisteredPrivateAccountSession private constructor(
             accessToken: String,
             refreshToken: String,
             expiresAt: Instant,
+            authenticationUsername: String,
             pseudonymousDisplayName: String,
         ): RegisteredPrivateAccountSession =
             validatedSession(
@@ -126,8 +152,30 @@ internal class RegisteredPrivateAccountSession private constructor(
                 accessToken = accessToken,
                 refreshToken = refreshToken,
                 expiresAt = expiresAt,
+                authenticationUsername = authenticationUsername,
                 pseudonymousDisplayName = pseudonymousDisplayName,
             )
+
+        internal fun validateLegacyPersistence(
+            accountId: UUID,
+            installationId: PrivateInstallationId,
+            signalDeviceId: SignalDeviceId,
+            accessToken: String,
+            refreshToken: String,
+            expiresAt: Instant,
+            pseudonymousDisplayName: String,
+        ) {
+            validatedSession(
+                accountId = accountId,
+                installationId = installationId,
+                signalDeviceId = signalDeviceId,
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                expiresAt = expiresAt,
+                authenticationUsername = LEGACY_VALIDATION_USERNAME,
+                pseudonymousDisplayName = pseudonymousDisplayName,
+            )
+        }
 
         private fun validatedSession(
             accountId: UUID,
@@ -136,6 +184,7 @@ internal class RegisteredPrivateAccountSession private constructor(
             accessToken: String,
             refreshToken: String,
             expiresAt: Instant,
+            authenticationUsername: String,
             pseudonymousDisplayName: String,
         ): RegisteredPrivateAccountSession {
             require(accountId != NIL_UUID) { "Account ID must not be nil" }
@@ -147,6 +196,9 @@ internal class RegisteredPrivateAccountSession private constructor(
             }
             require(expiresAt.nano == 0 && expiresAt.epochSecond in 1..MAX_EXPIRY_EPOCH_SECONDS) {
                 "Session expiry is outside the supported range"
+            }
+            require(AUTHENTICATION_USERNAME_PATTERN.matches(authenticationUsername)) {
+                "Authentication username is malformed"
             }
             require(
                 pseudonymousDisplayName ==
@@ -168,6 +220,7 @@ internal class RegisteredPrivateAccountSession private constructor(
                 accessToken = accessToken,
                 refreshToken = refreshToken,
                 expiresAt = expiresAt,
+                authenticationUsername = authenticationUsername,
                 pseudonymousDisplayName = pseudonymousDisplayName,
             )
         }
@@ -176,6 +229,8 @@ internal class RegisteredPrivateAccountSession private constructor(
         private val TOKEN_LENGTH_RANGE = 20..8_192
         private val ACCESS_TOKEN_PATTERN = Regex("^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$")
         private val REFRESH_TOKEN_PATTERN = Regex("^[A-Za-z0-9._~-]+$")
+        private val AUTHENTICATION_USERNAME_PATTERN = Regex("^[a-z][a-z0-9_]{2,31}$")
+        private const val LEGACY_VALIDATION_USERNAME = "legacy_session"
         private const val MAX_DISPLAY_NAME_CHARACTERS = 64
         private const val MAX_EXPIRY_EPOCH_SECONDS = 253_402_300_799L
     }

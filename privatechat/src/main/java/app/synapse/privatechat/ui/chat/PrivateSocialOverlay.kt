@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 @Composable
 internal fun PrivateSocialOverlay(
     state: PrivateChatUiState,
+    accountSessionActions: PrivateAccountSessionUiActions,
     navigationActions: PrivateChatNavigationActions,
     socialActions: PrivateSocialUiActions,
 ) {
@@ -16,6 +17,7 @@ internal fun PrivateSocialOverlay(
                 presencePublication = state.presencePublication,
                 accountInvitation = state.accountInvitation,
                 operation = state.operation,
+                accountSessionActions = accountSessionActions,
                 onSaveProfile = socialActions.saveProfile,
                 onChangePresenceSharing = socialActions.changePresenceSharing,
                 onCreateAccountInvitation = {
@@ -29,6 +31,7 @@ internal fun PrivateSocialOverlay(
             PrivateCreateConversationDialog(
                 operation = state.operation,
                 onCreateRoom = socialActions.createRoom,
+                onRedeemRoomInvitation = socialActions.redeemRoomInvitation,
                 onDismiss = navigationActions.dismissOverlay,
             )
 

@@ -58,7 +58,6 @@ class PrivateChatViewModel(
         PrivatePresencePublisher(
             gateway = socialGateway,
             mutationIdFactory = mutationIdFactory,
-            clock = clock,
             coroutineScope = viewModelScope,
             stateStore = stateStore,
         )
@@ -124,8 +123,10 @@ class PrivateChatViewModel(
     }
 
     fun leaveForeground() {
-        expiringContentCoordinator.leaveForeground()
+        roomActions.cancelPendingInvitation()
         socialCoordinator.leaveForeground()
+        stateStore.update(PrivateChatSnapshotPolicy::clearInvitationSecretsForBackground)
+        expiringContentCoordinator.leaveForeground()
     }
 
     fun selectRoom(roomId: PrivateRoomId) {
@@ -223,6 +224,8 @@ class PrivateChatViewModel(
         titleInput: String,
         retention: PrivateMessageRetention,
     ) = socialCoordinator.createRoom(kind, titleInput, retention)
+
+    fun redeemRoomInvitation(invitationCodeInput: String) = socialCoordinator.redeemRoomInvitation(invitationCodeInput)
 
     fun changeGroupMemberRole(
         member: PrivateRoomMemberSnapshot,

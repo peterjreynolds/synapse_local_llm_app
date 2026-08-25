@@ -17,6 +17,11 @@ internal interface EncryptedStateKeyProvider {
     fun createKeyIfAbsent(): SecretKey
 }
 
+internal interface DestructibleEncryptedStateKeyProvider : EncryptedStateKeyProvider {
+    /** Irreversibly removes the key and verifies that its alias is no longer present. */
+    fun deleteKey()
+}
+
 internal interface EncryptedStateCipher {
     fun encrypt(plaintext: ByteArray): ByteArray
 

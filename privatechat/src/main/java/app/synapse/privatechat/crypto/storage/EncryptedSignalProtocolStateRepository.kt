@@ -2,12 +2,14 @@ package app.synapse.privatechat.crypto.storage
 
 import app.synapse.privatechat.crypto.RemoteIdentityWriteOutcome
 import app.synapse.privatechat.crypto.SignalDeviceId
+import app.synapse.privatechat.crypto.SignalPendingOutboundMutationKey
 import app.synapse.privatechat.crypto.SignalPreKeyId
 import app.synapse.privatechat.crypto.SignalProtocolStateAddress
 import app.synapse.privatechat.crypto.SignalProtocolStateCorruptedException
 import app.synapse.privatechat.crypto.SignalProtocolStateLimits
 import app.synapse.privatechat.crypto.SignalProtocolStateRepository
 import app.synapse.privatechat.crypto.StoredLocalSignalIdentity
+import app.synapse.privatechat.crypto.StoredSignalPendingOutboundMutation
 import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
 import app.synapse.privatechat.security.storage.EncryptedStateCipher
 import app.synapse.privatechat.security.storage.EncryptedStateFile
@@ -125,6 +127,39 @@ class EncryptedSignalProtocolStateRepository internal constructor(
             matching.forEach(sessions::remove)
             matching.size
         }
+
+    override fun loadPendingOutboundMutation(key: SignalPendingOutboundMutationKey): StoredSignalPendingOutboundMutation? =
+        synchronized(monitor) { state.pendingOutboundMutations[key]?.copyForStorage() }
+
+    override fun listPendingOutboundMutations(
+        accountId: UUID,
+        transportDeviceId: UUID,
+    ): List<StoredSignalPendingOutboundMutation> =
+        synchronized(monitor) {
+            state.pendingOutboundMutations.values
+                .asSequence()
+                .filter { mutation ->
+                    mutation.key.accountId == accountId && mutation.key.transportDeviceId == transportDeviceId
+                }.sortedBy { mutation -> mutation.createdAt }
+                .map(StoredSignalPendingOutboundMutation::copyForStorage)
+                .toList()
+        }
+
+    override fun insertPendingOutboundMutationIfAbsent(mutation: StoredSignalPendingOutboundMutation): Boolean =
+        mutate {
+            require(pendingOutboundMutations.size < MAX_PENDING_OUTBOUND_MUTATIONS) {
+                "Pending outbound mutation limit is reached"
+            }
+            if (pendingOutboundMutations.containsKey(mutation.key)) {
+                false
+            } else {
+                pendingOutboundMutations[mutation.key] = mutation.copyForStorage()
+                true
+            }
+        }
+
+    override fun deletePendingOutboundMutation(key: SignalPendingOutboundMutationKey): Boolean =
+        mutate { pendingOutboundMutations.remove(key) != null }
 
     override fun loadPreKey(preKeyId: SignalPreKeyId): ByteArray? = synchronized(monitor) { state.preKeys[preKeyId]?.copyOf() }
 
@@ -274,6 +309,7 @@ class EncryptedSignalProtocolStateRepository internal constructor(
     private companion object {
         const val MAX_REMOTE_IDENTITY_BYTES = 256
         const val MAX_BASE_KEY_BYTES = 256
+        const val MAX_PENDING_OUTBOUND_MUTATIONS = 4
         const val MAX_ENCRYPTED_STATE_BYTES =
             SignalStateCodec.MAX_TOTAL_PLAINTEXT_BYTES + Aes256GcmEncryptedStateCipher.MAX_ENVELOPE_OVERHEAD_BYTES
     }
@@ -287,6 +323,8 @@ internal data class MutableSignalState(
     val signedPreKeys: MutableMap<SignalPreKeyId, ByteArray> = mutableMapOf(),
     val kyberPreKeys: MutableMap<SignalPreKeyId, ByteArray> = mutableMapOf(),
     val consumedKyberBaseKeys: MutableSet<ConsumedKyberBaseKey> = mutableSetOf(),
+    val pendingOutboundMutations: MutableMap<SignalPendingOutboundMutationKey, StoredSignalPendingOutboundMutation> =
+        mutableMapOf(),
 ) {
     fun hasSameContentAs(other: MutableSignalState): Boolean =
         localIdentity.hasSameContentAs(other.localIdentity) &&
@@ -295,7 +333,8 @@ internal data class MutableSignalState(
             preKeys.hasSameArrayContentAs(other.preKeys) &&
             signedPreKeys.hasSameArrayContentAs(other.signedPreKeys) &&
             kyberPreKeys.hasSameArrayContentAs(other.kyberPreKeys) &&
-            consumedKyberBaseKeys == other.consumedKyberBaseKeys
+            consumedKyberBaseKeys == other.consumedKyberBaseKeys &&
+            pendingOutboundMutations.hasSamePendingMutationContentAs(other.pendingOutboundMutations)
 
     fun deepCopy(): MutableSignalState =
         MutableSignalState(
@@ -309,6 +348,10 @@ internal data class MutableSignalState(
             signedPreKeys = signedPreKeys.copyArrays(),
             kyberPreKeys = kyberPreKeys.copyArrays(),
             consumedKyberBaseKeys = consumedKyberBaseKeys.toMutableSet(),
+            pendingOutboundMutations =
+                pendingOutboundMutations.entries.associateTo(mutableMapOf()) { (key, mutation) ->
+                    key to mutation.copyForStorage()
+                },
         )
 
     private fun <K> Map<K, ByteArray>.copyArrays(): MutableMap<K, ByteArray> =
@@ -325,6 +368,12 @@ internal data class MutableSignalState(
 
     private fun <K> Map<K, ByteArray>.hasSameArrayContentAs(other: Map<K, ByteArray>): Boolean =
         size == other.size && all { (key, bytes) -> other[key]?.contentEquals(bytes) == true }
+
+    private fun Map<SignalPendingOutboundMutationKey, StoredSignalPendingOutboundMutation>.hasSamePendingMutationContentAs(
+        other: Map<SignalPendingOutboundMutationKey, StoredSignalPendingOutboundMutation>,
+    ): Boolean =
+        size == other.size &&
+            all { (key, mutation) -> other[key]?.let(mutation::hasSameContentAs) == true }
 }
 
 internal data class ConsumedKyberBaseKey(

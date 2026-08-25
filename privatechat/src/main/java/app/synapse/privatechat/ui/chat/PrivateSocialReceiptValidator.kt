@@ -4,8 +4,10 @@ import app.synapse.privatechat.domain.chat.ChangePrivateGroupMemberRoleCommand
 import app.synapse.privatechat.domain.chat.ChangePrivatePresenceSharingCommand
 import app.synapse.privatechat.domain.chat.CreatePrivateOneUseAccountInvitationCommand
 import app.synapse.privatechat.domain.chat.CreatePrivateRoomCommand
+import app.synapse.privatechat.domain.chat.PRIVATE_PRESENCE_MAX_TTL_SECONDS
 import app.synapse.privatechat.domain.chat.PrivateSocialMutationReceipt
 import app.synapse.privatechat.domain.chat.PublishPrivatePresenceCommand
+import app.synapse.privatechat.domain.chat.RedeemPrivateRoomInvitationCommand
 import app.synapse.privatechat.domain.chat.RemovePrivateGroupMemberCommand
 import app.synapse.privatechat.domain.chat.UpdatePrivateProfileCommand
 
@@ -54,6 +56,14 @@ internal object PrivateSocialReceiptValidator {
             receipt.mutationId == command.mutationId
 
     fun matches(
+        receipt: PrivateSocialMutationReceipt.RoomInvitationRedeemed,
+        command: RedeemPrivateRoomInvitationCommand,
+    ): Boolean =
+        receipt.accountId == command.accountId &&
+            receipt.mutationId == command.mutationId &&
+            receipt.membershipEpoch > 0
+
+    fun matches(
         receipt: PrivateSocialMutationReceipt.PresenceSharingChanged,
         command: ChangePrivatePresenceSharingCommand,
     ): Boolean =
@@ -67,5 +77,6 @@ internal object PrivateSocialReceiptValidator {
     ): Boolean =
         receipt.accountId == command.accountId &&
             receipt.mutationId == command.mutationId &&
-            receipt.expiresAt == command.expiresAt
+            receipt.expiresAt.isAfter(receipt.publishedAt) &&
+            receipt.expiresAt <= receipt.publishedAt.plusSeconds(PRIVATE_PRESENCE_MAX_TTL_SECONDS)
 }

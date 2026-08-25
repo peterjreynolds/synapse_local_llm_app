@@ -28,12 +28,19 @@ internal data class PrivateSessionVaultState(
         )
 }
 
+internal data class PrivateSessionVaultDecodeResult(
+    val state: PrivateSessionVaultState,
+    val migrationRequired: Boolean,
+)
+
 internal object PrivateSessionVaultCodec {
     internal const val MAX_PLAINTEXT_BYTES = 20 * 1_024
     private const val MAGIC = 0x53504131
-    private const val VERSION = 1
+    private const val VERSION = 2
+    private const val LEGACY_VERSION_WITHOUT_USERNAME = 1
     private const val MAX_ACCESS_TOKEN_BYTES = 8_192
     private const val MAX_REFRESH_TOKEN_BYTES = 8_192
+    private const val MAX_AUTHENTICATION_USERNAME_BYTES = 32
     private const val MAX_DISPLAY_NAME_BYTES = 512
 
     fun encode(state: PrivateSessionVaultState): ByteArray {
@@ -49,41 +56,75 @@ internal object PrivateSessionVaultCodec {
                 encoded.writeLong(session.expiresAt.epochSecond)
                 encoded.writeBoundedUtf8(session.accessTokenForAuthorization(), MAX_ACCESS_TOKEN_BYTES)
                 encoded.writeBoundedUtf8(session.refreshTokenForRenewal(), MAX_REFRESH_TOKEN_BYTES)
+                encoded.writeBoundedUtf8(session.authenticationUsername, MAX_AUTHENTICATION_USERNAME_BYTES)
                 encoded.writeBoundedUtf8(session.pseudonymousDisplayName, MAX_DISPLAY_NAME_BYTES)
             }
         }
         return output.toByteArray()
     }
 
-    fun decode(bytes: ByteArray): PrivateSessionVaultState {
+    fun decode(bytes: ByteArray): PrivateSessionVaultState = decodeVersioned(bytes).state
+
+    fun decodeVersioned(bytes: ByteArray): PrivateSessionVaultDecodeResult {
         if (bytes.size > MAX_PLAINTEXT_BYTES) corrupt("Private session state exceeds the size limit")
         try {
             val input = ByteArrayInputStream(bytes)
             val encoded = DataInputStream(input)
             if (encoded.readInt() != MAGIC) corrupt("Private session state header is invalid")
-            if (encoded.readInt() != VERSION) corrupt("Private session state version is unsupported")
-            val installationId = PrivateInstallationId.fromPersistence(encoded.readUuid())
-            val registeredSession =
-                if (encoded.readBoolean()) {
-                    RegisteredPrivateAccountSession.fromPersistence(
-                        accountId = encoded.readUuid(),
-                        installationId = installationId,
-                        signalDeviceId = SignalDeviceId.fromWire(encoded.readInt()),
-                        expiresAt = Instant.ofEpochSecond(encoded.readLong()),
-                        accessToken = encoded.readBoundedUtf8(MAX_ACCESS_TOKEN_BYTES),
-                        refreshToken = encoded.readBoundedUtf8(MAX_REFRESH_TOKEN_BYTES),
-                        pseudonymousDisplayName = encoded.readBoundedUtf8(MAX_DISPLAY_NAME_BYTES),
-                    )
-                } else {
-                    null
+            val result =
+                when (encoded.readInt()) {
+                    VERSION -> PrivateSessionVaultDecodeResult(readCurrentState(encoded), migrationRequired = false)
+                    LEGACY_VERSION_WITHOUT_USERNAME ->
+                        PrivateSessionVaultDecodeResult(
+                            state = readLegacyStateWithoutUsername(encoded),
+                            migrationRequired = true,
+                        )
+
+                    else -> corrupt("Private session state version is unsupported")
                 }
             if (input.available() != 0) corrupt("Private session state contains trailing bytes")
-            return PrivateSessionVaultState(installationId, registeredSession)
+            return result
         } catch (error: PrivateSessionStateUnavailableException) {
             throw error
         } catch (error: Exception) {
             throw PrivateSessionStateUnavailableException("Private session state is malformed", error)
         }
+    }
+
+    private fun readCurrentState(encoded: DataInputStream): PrivateSessionVaultState {
+        val installationId = PrivateInstallationId.fromPersistence(encoded.readUuid())
+        val registeredSession =
+            if (encoded.readBoolean()) {
+                RegisteredPrivateAccountSession.fromPersistence(
+                    accountId = encoded.readUuid(),
+                    installationId = installationId,
+                    signalDeviceId = SignalDeviceId.fromWire(encoded.readInt()),
+                    expiresAt = Instant.ofEpochSecond(encoded.readLong()),
+                    accessToken = encoded.readBoundedUtf8(MAX_ACCESS_TOKEN_BYTES),
+                    refreshToken = encoded.readBoundedUtf8(MAX_REFRESH_TOKEN_BYTES),
+                    authenticationUsername = encoded.readBoundedUtf8(MAX_AUTHENTICATION_USERNAME_BYTES),
+                    pseudonymousDisplayName = encoded.readBoundedUtf8(MAX_DISPLAY_NAME_BYTES),
+                )
+            } else {
+                null
+            }
+        return PrivateSessionVaultState(installationId, registeredSession)
+    }
+
+    private fun readLegacyStateWithoutUsername(encoded: DataInputStream): PrivateSessionVaultState {
+        val installationId = PrivateInstallationId.fromPersistence(encoded.readUuid())
+        if (encoded.readBoolean()) {
+            RegisteredPrivateAccountSession.validateLegacyPersistence(
+                accountId = encoded.readUuid(),
+                installationId = installationId,
+                signalDeviceId = SignalDeviceId.fromWire(encoded.readInt()),
+                expiresAt = Instant.ofEpochSecond(encoded.readLong()),
+                accessToken = encoded.readBoundedUtf8(MAX_ACCESS_TOKEN_BYTES),
+                refreshToken = encoded.readBoundedUtf8(MAX_REFRESH_TOKEN_BYTES),
+                pseudonymousDisplayName = encoded.readBoundedUtf8(MAX_DISPLAY_NAME_BYTES),
+            )
+        }
+        return PrivateSessionVaultState(installationId, registeredSession = null)
     }
 
     private fun DataOutputStream.writeUuid(uuid: UUID) {

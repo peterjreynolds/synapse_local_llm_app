@@ -6,7 +6,10 @@ import app.synapse.privatechat.domain.chat.PrivateMutationReceipt
 import app.synapse.privatechat.domain.chat.PrivateSocialInputField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -16,6 +19,7 @@ internal class PrivateConfirmedMutationCoordinator(
 ) {
     private val mutationInFlight = AtomicBoolean(false)
     private var mutationJob: Job? = null
+    private var mutationKind: PrivateChatOperationKind? = null
 
     fun rejectChatInput(
         field: PrivateChatInputField,
@@ -54,10 +58,19 @@ internal class PrivateConfirmedMutationCoordinator(
         stateStore.update { state -> state.copy(operation = PrivateChatOperationUiState.Idle) }
     }
 
-    fun cancelPendingMutation() {
+    fun cancelPendingMutation(expectedKind: PrivateChatOperationKind? = null) {
+        if (expectedKind != null && mutationKind != expectedKind) return
+        val cancelledKind = mutationKind
         mutationJob?.cancel()
         mutationJob = null
+        mutationKind = null
         mutationInFlight.set(false)
+        if (cancelledKind != null) {
+            stateStore.update { state ->
+                val running = state.operation as? PrivateChatOperationUiState.Running
+                if (running?.kind == cancelledKind) state.copy(operation = PrivateChatOperationUiState.Idle) else state
+            }
+        }
     }
 
     fun <Receipt : PrivateMutationReceipt> requestConfirmedMutation(
@@ -68,8 +81,9 @@ internal class PrivateConfirmedMutationCoordinator(
     ) {
         if (!mutationInFlight.compareAndSet(false, true)) return
         stateStore.update { state -> state.copy(operation = PrivateChatOperationUiState.Running(kind)) }
-        mutationJob =
-            coroutineScope.launch {
+        val launchedJob =
+            coroutineScope.launch(start = CoroutineStart.LAZY) {
+                val ownedJob = currentCoroutineContext().job
                 val operationState =
                     try {
                         when (val outcome = request()) {
@@ -93,9 +107,16 @@ internal class PrivateConfirmedMutationCoordinator(
                     } catch (_: Exception) {
                         PrivateChatOperationUiState.UnexpectedFailure
                     } finally {
-                        mutationInFlight.set(false)
+                        if (mutationJob === ownedJob) {
+                            mutationJob = null
+                            mutationKind = null
+                            mutationInFlight.set(false)
+                        }
                     }
                 stateStore.update { state -> state.copy(operation = operationState) }
             }
+        mutationJob = launchedJob
+        mutationKind = kind
+        launchedJob.start()
     }
 }

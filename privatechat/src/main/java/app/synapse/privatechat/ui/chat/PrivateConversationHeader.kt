@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import app.synapse.privatechat.domain.chat.PrivateMessageRetention
 import app.synapse.privatechat.domain.chat.PrivateRoomArchiveState
 import app.synapse.privatechat.domain.chat.PrivateRoomKind
+import app.synapse.privatechat.domain.chat.PrivateRoomMetadataState
 import app.synapse.privatechat.domain.chat.PrivateRoomMuteState
 import app.synapse.privatechat.domain.chat.PrivateRoomPinState
 import app.synapse.privatechat.domain.chat.PrivateRoomSummary
@@ -59,7 +60,12 @@ internal fun PrivateConversationHeader(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = privateRoomMembershipLabel(room),
+                    text =
+                        if (room.metadataState == PrivateRoomMetadataState.PENDING) {
+                            "Encrypted title pending · ${privateRoomMembershipLabel(room)}"
+                        } else {
+                            privateRoomMembershipLabel(room)
+                        },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

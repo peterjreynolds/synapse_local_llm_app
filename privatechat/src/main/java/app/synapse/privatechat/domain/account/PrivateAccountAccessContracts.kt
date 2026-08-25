@@ -1,6 +1,7 @@
 package app.synapse.privatechat.domain.account
 
 import java.text.Normalizer
+import java.time.Instant
 import java.util.Locale
 
 enum class PrivateAccountAccessMode {
@@ -106,6 +107,7 @@ sealed interface PrivateAccountSessionReceipt {
     data class Active(
         override val accountId: PrivateAccountId,
         override val displayName: PrivateDisplayName,
+        val expiresAt: Instant,
     ) : PrivateAccountSessionReceipt
 
     data class AwaitingApproval(
@@ -123,21 +125,87 @@ sealed interface PrivateAccountAccessOutcome {
         val userMessage: String,
     ) : PrivateAccountAccessOutcome {
         init {
-            require(
-                userMessage.isNotBlank() &&
-                    userMessage.length <= PRIVATE_ACCOUNT_DENIAL_MESSAGE_LIMIT &&
-                    userMessage.none(Char::isISOControl),
-            ) {
-                "Account denial requires a bounded user-facing reason."
-            }
+            requireSafePrivateAccountMessage(userMessage, "Account denial")
         }
     }
 
     data object TransportUnavailable : PrivateAccountAccessOutcome
+
+    data object LocalStateUnavailable : PrivateAccountAccessOutcome
+
+    data object VerificationFailed : PrivateAccountAccessOutcome
+}
+
+sealed interface PrivateAccountSessionOutcome {
+    data class Active(
+        val receipt: PrivateAccountSessionReceipt.Active,
+    ) : PrivateAccountSessionOutcome
+
+    data object SignedOut : PrivateAccountSessionOutcome
+
+    data class VerificationRejected(
+        val userMessage: String,
+    ) : PrivateAccountSessionOutcome {
+        init {
+            requireSafePrivateAccountMessage(userMessage, "Session rejection")
+        }
+    }
+
+    data object TransportUnavailable : PrivateAccountSessionOutcome
+
+    data object LocalStateUnavailable : PrivateAccountSessionOutcome
+
+    data object VerificationFailed : PrivateAccountSessionOutcome
+}
+
+sealed interface PrivateAccountSignOutOutcome {
+    data class LocallySignedOut(
+        val remoteRevocation: PrivateRemoteSessionRevocationStatus,
+    ) : PrivateAccountSignOutOutcome
+
+    data object AlreadySignedOut : PrivateAccountSignOutOutcome
+
+    data class Rejected(
+        val userMessage: String,
+    ) : PrivateAccountSignOutOutcome {
+        init {
+            requireSafePrivateAccountMessage(userMessage, "Sign-out rejection")
+        }
+    }
+
+    data object TransportUnavailable : PrivateAccountSignOutOutcome
+
+    data object LocalStateUnavailable : PrivateAccountSignOutOutcome
+
+    data object VerificationFailed : PrivateAccountSignOutOutcome
+}
+
+sealed interface PrivateRemoteSessionRevocationStatus {
+    data object Confirmed : PrivateRemoteSessionRevocationStatus
+
+    data object AlreadyInactive : PrivateRemoteSessionRevocationStatus
+
+    data object TransportUnavailable : PrivateRemoteSessionRevocationStatus
+
+    data class Rejected(
+        val userMessage: String,
+    ) : PrivateRemoteSessionRevocationStatus {
+        init {
+            requireSafePrivateAccountMessage(userMessage, "Remote session revocation rejection")
+        }
+    }
+
+    data object VerificationFailed : PrivateRemoteSessionRevocationStatus
 }
 
 interface PrivateAccountGateway {
     suspend fun requestPrivateAccountAccess(command: PrivateAccountAccessCommand): PrivateAccountAccessOutcome
+
+    suspend fun restorePrivateAccountSession(): PrivateAccountSessionOutcome
+
+    suspend fun refreshPrivateAccountSession(): PrivateAccountSessionOutcome
+
+    suspend fun signOutPrivateAccount(): PrivateAccountSignOutOutcome
 }
 
 fun validatePrivateAccountAccessDraft(draft: PrivateAccountAccessDraft): PrivateAccountAccessValidation {
@@ -251,3 +319,16 @@ private val PRIVATE_PASSWORD_LENGTH_RANGE = 12..128
 private val PRIVATE_USERNAME_PATTERN = Regex("^[a-z][a-z0-9_]{2,31}$")
 private val PRIVATE_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{32,128}$")
 private const val PRIVATE_ACCOUNT_DENIAL_MESSAGE_LIMIT = 200
+
+private fun requireSafePrivateAccountMessage(
+    userMessage: String,
+    messageOwner: String,
+) {
+    require(
+        userMessage.isNotBlank() &&
+            userMessage.length <= PRIVATE_ACCOUNT_DENIAL_MESSAGE_LIMIT &&
+            userMessage.none(Char::isISOControl),
+    ) {
+        "$messageOwner requires a bounded user-facing reason."
+    }
+}

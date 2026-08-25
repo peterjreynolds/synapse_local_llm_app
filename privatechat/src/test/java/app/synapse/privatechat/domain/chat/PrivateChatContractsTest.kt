@@ -38,11 +38,26 @@ class PrivateChatContractsTest {
         assertFalse(invitation.toString().contains(invitation.secret))
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun `presence rejects tracking windows longer than two minutes`() {
+    @Test
+    fun `presence publication receipt accepts a server owned short interval`() {
         val publishedAt = Instant.parse("2026-08-20T18:00:00Z")
 
-        PublishPrivatePresenceCommand(
+        val receipt =
+            PrivateSocialMutationReceipt.PresencePublished(
+                accountId = PrivateAccountId("current"),
+                mutationId = PrivateClientMutationId("mutation"),
+                publishedAt = publishedAt,
+                expiresAt = publishedAt.plusSeconds(60),
+            )
+
+        assertEquals(publishedAt.plusSeconds(60), receipt.expiresAt)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `presence publication receipt rejects server intervals longer than two minutes`() {
+        val publishedAt = Instant.parse("2026-08-20T18:00:00Z")
+
+        PrivateSocialMutationReceipt.PresencePublished(
             accountId = PrivateAccountId("current"),
             mutationId = PrivateClientMutationId("mutation"),
             publishedAt = publishedAt,
