@@ -106,6 +106,35 @@ class PrivateChatModuleBoundaryTest {
     }
 
     @Test
+    fun `Android sources never contain a Supabase server credential`() {
+        val inspectedFiles =
+            sequenceOf(
+                moduleDirectory.resolve("build.gradle.kts"),
+                moduleDirectory.resolve("src/main/AndroidManifest.xml"),
+            ) +
+                moduleDirectory
+                    .resolve("src/main")
+                    .walkTopDown()
+                    .filter(File::isFile)
+                    .filter { sourceFile -> sourceFile.extension in setOf("kt", "java", "xml") }
+        val forbiddenCredentialPatterns =
+            listOf(
+                Regex("sb" + "_secret_", RegexOption.IGNORE_CASE),
+                Regex("service" + "[_-]?role", RegexOption.IGNORE_CASE),
+            )
+        val violations =
+            inspectedFiles
+                .flatMap { sourceFile ->
+                    val sourceText = sourceFile.readText()
+                    forbiddenCredentialPatterns
+                        .filter { pattern -> pattern.containsMatchIn(sourceText) }
+                        .map { pattern -> "${sourceFile.relativeTo(moduleDirectory)} matched ${pattern.pattern}" }
+                }.toList()
+
+        assertTrue("Supabase server credentials must not ship in Android: $violations", violations.isEmpty())
+    }
+
+    @Test
     fun `manifest excludes SMS runtime and package installation permissions`() {
         val sourceManifest = moduleDirectory.resolve("src/main/AndroidManifest.xml").readText()
         val mergedManifestFile =

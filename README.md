@@ -121,7 +121,7 @@ For a fresh shell on this machine:
 
 ```sh
 export TOOLCHAIN_ROOT="$HOME/.local/share/synapse-android-toolchain"
-export JAVA_HOME="$TOOLCHAIN_ROOT/jdk-17"
+export JAVA_HOME="$TOOLCHAIN_ROOT/jdk-21"
 export ANDROID_SDK_ROOT="$TOOLCHAIN_ROOT/android-sdk"
 export ANDROID_HOME="$ANDROID_SDK_ROOT"
 export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"

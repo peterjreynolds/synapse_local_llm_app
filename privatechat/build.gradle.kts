@@ -1,8 +1,11 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jlleitschuh.gradle.ktlint")
 }
+
+fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 fun resolvePrivateChatVersionCode(rawVersionCode: String?): Int {
     if (rawVersionCode == null) return 2031
@@ -20,6 +23,19 @@ val privateChatVersionCode =
 val privateChatVersionName =
     providers.environmentVariable("SYNAPSE_VERSION_NAME").orNull
         ?: "0.1.$privateChatVersionCode"
+val privateChatSupabaseProjectUrl =
+    providers.environmentVariable("SYNAPSE_SUPABASE_URL").orNull
+        ?: "https://xqifnldqcsgefeisscgu.supabase.co"
+val privateChatSupabasePublishableKey =
+    providers.environmentVariable("SYNAPSE_SUPABASE_PUBLISHABLE_KEY").orNull
+        ?: "sb_publishable_fLS2Qi8Dp_rG6EDMDhIoRg_R9Ky8vUk"
+
+require(Regex("^https://[a-z0-9]+[.]supabase[.]co$").matches(privateChatSupabaseProjectUrl)) {
+    "SYNAPSE_SUPABASE_URL must be a canonical HTTPS Supabase project URL"
+}
+require(Regex("^sb_publishable_[A-Za-z0-9_-]{20,}$").matches(privateChatSupabasePublishableKey)) {
+    "SYNAPSE_SUPABASE_PUBLISHABLE_KEY must be a Supabase publishable key"
+}
 
 android {
     namespace = "app.synapse.privatechat"
@@ -31,6 +47,17 @@ android {
         targetSdk = 36
         versionCode = privateChatVersionCode
         versionName = privateChatVersionName
+
+        buildConfigField(
+            "String",
+            "SUPABASE_PROJECT_URL",
+            privateChatSupabaseProjectUrl.asBuildConfigString(),
+        )
+        buildConfigField(
+            "String",
+            "SUPABASE_PUBLISHABLE_KEY",
+            privateChatSupabasePublishableKey.asBuildConfigString(),
+        )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -66,6 +93,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 
@@ -184,6 +212,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     implementation("org.signal:libsignal-android:0.101.0")
     implementation("org.signal:libsignal-client:0.101.0")
 
