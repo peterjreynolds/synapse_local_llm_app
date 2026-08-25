@@ -38,10 +38,12 @@ export interface RegisterDeviceRequest {
 export type IssueInviteRequest =
   | {
     readonly kind: "ACCOUNT_REGISTRATION";
+    readonly clientMutationId: string;
     readonly expiresInSeconds: number;
   }
   | {
     readonly kind: "ROOM_MEMBERSHIP";
+    readonly clientMutationId: string;
     readonly roomId: string;
     readonly expiresInSeconds: number;
   };
@@ -230,16 +232,21 @@ export function parseRegisterDeviceRequest(input: unknown): RegisterDeviceReques
 }
 
 export function parseIssueInviteRequest(input: unknown): IssueInviteRequest {
-  const object = parseObject(input, ["kind"], ["room_id", "expires_in_seconds"]);
+  const object = parseObject(
+    input,
+    ["kind", "client_mutation_id"],
+    ["room_id", "expires_in_seconds"],
+  );
   const kind = parseString(object.kind, 1, 32);
+  const clientMutationId = parseUuid(object.client_mutation_id);
   const expiresInSeconds = Object.hasOwn(object, "expires_in_seconds")
     ? parseInteger(object.expires_in_seconds, 60, 86400)
     : 86400;
   if (kind === "ACCOUNT_REGISTRATION" && !Object.hasOwn(object, "room_id")) {
-    return { kind, expiresInSeconds };
+    return { kind, clientMutationId, expiresInSeconds };
   }
   if (kind === "ROOM_MEMBERSHIP" && Object.hasOwn(object, "room_id")) {
-    return { kind, roomId: parseUuid(object.room_id), expiresInSeconds };
+    return { kind, clientMutationId, roomId: parseUuid(object.room_id), expiresInSeconds };
   }
   throw new HttpError(400, "The request body is invalid.");
 }

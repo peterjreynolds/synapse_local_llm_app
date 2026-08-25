@@ -28,11 +28,30 @@ export async function hmacSha256Hex(secret: string, value: string): Promise<stri
   return bytesToHex(new Uint8Array(digest));
 }
 
-export function generateInviteCode(): string {
-  const randomBytes = crypto.getRandomValues(new Uint8Array(32));
+function base64UrlFromHex(hex: string): string {
+  if (!/^[0-9a-f]{64}$/u.test(hex)) throw new Error("Expected a 32-byte hex value");
   let binary = "";
-  for (const byte of randomBytes) binary += String.fromCharCode(byte);
+  for (let index = 0; index < hex.length; index += 2) {
+    binary += String.fromCharCode(Number.parseInt(hex.slice(index, index + 2), 16));
+  }
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
+export async function deriveInviteCode(
+  inviteDerivationKey: string,
+  actorUserId: string,
+  inviteKind: "ACCOUNT_REGISTRATION" | "ROOM_MEMBERSHIP",
+  roomId: string | null,
+  clientMutationId: string,
+): Promise<string> {
+  const domain = [
+    "synapse-private/invite/v1",
+    actorUserId,
+    inviteKind,
+    roomId ?? "NO_ROOM",
+    clientMutationId,
+  ].join("\u001f");
+  return base64UrlFromHex(await hmacSha256Hex(inviteDerivationKey, domain));
 }
 
 export async function timingSafeSecretEquals(supplied: string, expected: string): Promise<boolean> {

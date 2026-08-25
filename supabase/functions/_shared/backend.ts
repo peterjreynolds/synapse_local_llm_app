@@ -23,6 +23,7 @@ export interface RuntimeSecrets {
   readonly serviceRoleKey: string;
   readonly usernamePepper: string;
   readonly rateLimitPepper: string;
+  readonly inviteDerivationKey: string;
   readonly purgeSecret: string;
 }
 
@@ -124,6 +125,7 @@ export async function readRuntimeSecrets(): Promise<RuntimeSecrets> {
     ...connection,
     usernamePepper: expectHexSecret(row, "username_hmac_pepper"),
     rateLimitPepper: expectHexSecret(row, "rate_limit_hmac_pepper"),
+    inviteDerivationKey: expectHexSecret(row, "invite_derivation_key"),
     purgeSecret,
   };
 }

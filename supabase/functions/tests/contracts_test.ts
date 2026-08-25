@@ -3,10 +3,12 @@ import {
   assertEmptyObject,
   normalizeUsername,
   parseInviteCode,
+  parseIssueInviteRequest,
   parseRedeemAccountInviteRequest,
   parseRegisterDeviceRequest,
   parseSignInRequest,
 } from "../_shared/contracts.ts";
+import { deriveInviteCode } from "../_shared/crypto.ts";
 import { HttpError } from "../_shared/http.ts";
 
 const UUID = "018f1d9e-7b2a-7000-8000-000000000001";
@@ -50,6 +52,42 @@ Deno.test("requires a 32-byte URL-safe invite capability", () => {
   assertEquals(parseInviteCode("A".repeat(43)), "A".repeat(43));
   assertThrows(() => parseInviteCode("A".repeat(42)), HttpError);
   assertThrows(() => parseInviteCode(`${"A".repeat(42)}+`), HttpError);
+});
+
+Deno.test("invite issuance requires a mutation id and exact kind-specific shape", () => {
+  assertEquals(
+    parseIssueInviteRequest({ kind: "ACCOUNT_REGISTRATION", client_mutation_id: UUID }),
+    { kind: "ACCOUNT_REGISTRATION", clientMutationId: UUID, expiresInSeconds: 86400 },
+  );
+  assertEquals(
+    parseIssueInviteRequest({
+      kind: "ROOM_MEMBERSHIP",
+      client_mutation_id: UUID,
+      room_id: UUID,
+      expires_in_seconds: 300,
+    }),
+    {
+      kind: "ROOM_MEMBERSHIP",
+      clientMutationId: UUID,
+      roomId: UUID,
+      expiresInSeconds: 300,
+    },
+  );
+  assertThrows(
+    () => parseIssueInviteRequest({ kind: "ACCOUNT_REGISTRATION" }),
+    HttpError,
+  );
+});
+
+Deno.test("invite derivation is deterministic and domain separated", async () => {
+  const key = "ab".repeat(32);
+  const first = await deriveInviteCode(key, UUID, "ACCOUNT_REGISTRATION", null, UUID);
+  const retry = await deriveInviteCode(key, UUID, "ACCOUNT_REGISTRATION", null, UUID);
+  const roomInvite = await deriveInviteCode(key, UUID, "ROOM_MEMBERSHIP", UUID, UUID);
+  assertEquals(first, retry);
+  assertEquals(first, "6FauAKr3dNIKKgx31fi9RUmhXPsX_bkpkVk2olhMN_E");
+  assertEquals(first.length, 43);
+  assertEquals(first === roomInvite, false);
 });
 
 Deno.test("phase-one account access accepts a transport UUID but no Signal bundle", () => {

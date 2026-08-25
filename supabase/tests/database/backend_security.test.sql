@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(52);
+select plan(83);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -31,7 +31,9 @@ select ok(
    where nspname = 'public' and relname in (
      'profiles', 'devices', 'device_one_time_prekeys', 'rooms', 'room_members', 'messages',
      'message_envelopes', 'message_reply_links', 'reactions', 'reaction_envelopes',
-     'message_receipts', 'typing_state', 'presence_state', 'attachments'
+     'message_receipts', 'typing_state', 'presence_state', 'attachments',
+     'room_metadata_envelopes', 'message_revisions', 'message_revision_envelopes',
+     'room_member_preferences'
    )),
   'every exposed Synapse Private table enables RLS'
 );
@@ -83,7 +85,8 @@ select ok(
       and tablename in (
         'profiles', 'devices', 'rooms', 'room_members', 'messages', 'message_envelopes',
         'message_reply_links', 'reactions', 'reaction_envelopes', 'message_receipts',
-        'typing_state', 'presence_state', 'attachments'
+        'typing_state', 'presence_state', 'attachments', 'room_metadata_envelopes',
+        'message_revisions', 'message_revision_envelopes', 'room_member_preferences'
       )
   ),
   'sensitive tables are absent from Postgres Changes'
@@ -147,44 +150,48 @@ select ok(
   ),
   'the Auth insert guard is security-definer with an empty search path'
 );
-select like(
-  pg_get_functiondef('private.authorize_synapse_private_user_creation(jsonb)'::regprocedure),
-  '%app_metadata%synapse_private_registration_authority%',
+select ok(
+  pg_get_functiondef('private.authorize_synapse_private_user_creation(jsonb)'::regprocedure)
+    like '%app_metadata%synapse_private_registration_authority%',
   'registration authority comes from server-controlled app metadata'
 );
-select like(
-  pg_get_functiondef('private.assert_complete_signal_envelopes(uuid,uuid,jsonb,integer)'::regprocedure),
-  '%jsonb_array_length(p_envelopes) not between 1 and 128%',
-  'fan-out is bounded to exactly 128 recipients'
+select ok(
+  pg_get_functiondef('private.assert_complete_signal_envelopes(uuid,uuid,jsonb,integer)'::regprocedure)
+    like '%jsonb_array_length(p_envelopes) not between 1 and 129%'
+  and pg_get_functiondef('private.assert_complete_signal_envelopes(uuid,uuid,jsonb,integer)'::regprocedure)
+    like '%sender device requires a LOCAL_AEAD envelope%'
+  and pg_get_functiondef('private.assert_complete_signal_envelopes(uuid,uuid,jsonb,integer)'::regprocedure)
+    like '%more than 128 peer envelopes%',
+  'fan-out contains one durable self envelope and at most 128 peer envelopes'
 );
-select like(
-  pg_get_functiondef('private.assert_reply_link_invariant()'::regprocedure),
-  '%source_room_id <> target_room_id%',
+select ok(
+  pg_get_functiondef('private.assert_reply_link_invariant()'::regprocedure)
+    like '%source_room_id <> target_room_id%',
   'reply links fail closed across rooms'
 );
-select like(
-  pg_get_functiondef('private.register_device_session(uuid,uuid,uuid,smallint,integer,smallint,bytea,integer,bytea,bytea,integer,bytea,bytea,integer,bytea)'::regprocedure),
-  '%active device registration reservation is required%',
+select ok(
+  pg_get_functiondef('private.register_device_session(uuid,uuid,uuid,smallint,integer,smallint,bytea,integer,bytea,bytea,integer,bytea,bytea,integer,bytea)'::regprocedure)
+    like '%active device registration reservation is required%',
   'device registration consumes a server allocation before binding RLS'
 );
-select like(
-  pg_get_functiondef('private.register_device_session(uuid,uuid,uuid,smallint,integer,smallint,bytea,integer,bytea,bytea,integer,bytea,bytea,integer,bytea)'::regprocedure),
-  '%for update of room%',
+select ok(
+  pg_get_functiondef('private.register_device_session(uuid,uuid,uuid,smallint,integer,smallint,bytea,integer,bytea,bytea,integer,bytea,bytea,integer,bytea)'::regprocedure)
+    like '%for update of room%',
   'device registration locks affected rooms deterministically'
 );
-select like(
-  pg_get_functiondef('private.redeem_room_membership_invite(uuid,uuid,bytea,uuid)'::regprocedure),
-  '%for update%',
+select ok(
+  pg_get_functiondef('private.redeem_room_membership_invite(uuid,uuid,bytea,uuid)'::regprocedure)
+    like '%for update%',
   'room invite redemption serializes membership changes'
 );
-select like(
-  pg_get_functiondef('private.claim_device_prekey(uuid)'::regprocedure),
-  '%target_device.user_id = actor_user_id%',
+select ok(
+  pg_get_functiondef('private.claim_device_prekey(uuid)'::regprocedure)
+    like '%target_device.user_id = actor_user_id%',
   'same-account secondary devices may claim prekeys'
 );
-select like(
-  pg_get_functiondef('private.current_device_id()'::regprocedure),
-  '%device.revoked_at is null%',
+select ok(
+  pg_get_functiondef('private.current_device_id()'::regprocedure)
+    like '%device.revoked_at is null%',
   'revoked devices cannot authenticate through RLS helpers'
 );
 select ok(
@@ -214,6 +221,7 @@ select ok(
   (
     select octet_length(username_hmac_pepper) = 32
       and octet_length(rate_limit_hmac_pepper) = 32
+      and octet_length(invite_derivation_key) = 32
       and octet_length(purge_capability) = 32
     from private.runtime_configuration
     where singleton
@@ -227,14 +235,14 @@ select ok(
   ),
   'device records do not retain durable last-seen tracking'
 );
-select like(
-  pg_get_functiondef('private.set_presence_expiry()'::regprocedure),
-  '%interval ''60 seconds''%',
+select ok(
+  pg_get_functiondef('private.set_presence_expiry()'::regprocedure)
+    like '%interval ''60 seconds''%',
   'presence is server-expired after 60 seconds'
 );
-select like(
-  pg_get_functiondef('private.set_typing_expiry()'::regprocedure),
-  '%profile.typing_indicators_enabled%',
+select ok(
+  pg_get_functiondef('private.set_typing_expiry()'::regprocedure)
+    like '%profile.typing_indicators_enabled%',
   'typing indicators require explicit profile opt-in'
 );
 select ok(
@@ -305,44 +313,44 @@ select ok(
   ),
   'credential-backed tokens retain identity claims but strip mutable metadata'
 );
-select like(
+select ok(
   (select qual from pg_policies
    where schemaname = 'public'
      and tablename = 'presence_state'
-     and policyname = 'presence_state_select_room_peer_before_expiry'),
-  '%viewer_membership.room_id = present_membership.room_id%',
+     and policyname = 'presence_state_select_room_peer_before_expiry')
+    like '%viewer_membership.room_id = present_membership.room_id%',
   'presence visibility is restricted to users sharing a current room'
 );
-select like(
+select ok(
   (select qual from pg_policies
    where schemaname = 'public'
      and tablename = 'presence_state'
-     and policyname = 'presence_state_select_room_peer_before_expiry'),
-  '%presence_sharing_enabled%',
+     and policyname = 'presence_state_select_room_peer_before_expiry')
+    like '%presence_sharing_enabled%',
   'presence becomes unreadable immediately when its owner opts out'
 );
-select like(
+select ok(
   (select qual from pg_policies
    where schemaname = 'public'
      and tablename = 'typing_state'
-     and policyname = 'typing_state_select_member_before_expiry'),
-  '%typing_indicators_enabled%',
+     and policyname = 'typing_state_select_member_before_expiry')
+    like '%typing_indicators_enabled%',
   'typing state becomes unreadable immediately when its owner opts out'
 );
-select like(
+select ok(
   (select qual from pg_policies
    where schemaname = 'public'
      and tablename = 'message_receipts'
-     and policyname = 'message_receipts_select_member'),
-  '%read_receipts_enabled%',
+     and policyname = 'message_receipts_select_member')
+    like '%read_receipts_enabled%',
   'read receipts become unreadable immediately when their owner opts out'
 );
-select like(
+select ok(
   (select qual from pg_policies
    where schemaname = 'public'
      and tablename = 'messages'
-     and policyname = 'messages_select_member_before_expiry'),
-  '%can_access_message(id)%',
+     and policyname = 'messages_select_member_before_expiry')
+    like '%can_access_message(id)%',
   'message RLS applies expiry and delete-for-everyone in one private predicate'
 );
 select ok(
@@ -358,6 +366,439 @@ select ok(
       )
   ),
   'content deletion is exposed only through checked RPCs'
+);
+
+select ok(
+  (
+    select bool_and(has_table_privilege('authenticated', table_schema || '.' || table_name, 'SELECT'))
+    from information_schema.tables
+    where table_schema = 'public'
+      and table_name in (
+        'room_metadata_envelopes', 'message_revisions',
+        'message_revision_envelopes', 'room_member_preferences'
+      )
+  ),
+  'authenticated devices receive read-only Data API grants for new encrypted state'
+);
+select ok(
+  not exists (
+    select 1
+    from information_schema.role_table_grants
+    where table_schema = 'public'
+      and grantee = 'authenticated'
+      and table_name in (
+        'room_metadata_envelopes', 'message_revisions',
+        'message_revision_envelopes', 'room_member_preferences'
+      )
+      and privilege_type in ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'TRIGGER', 'REFERENCES')
+  ),
+  'new encrypted state mutates only through checked RPCs'
+);
+select ok(
+  not has_function_privilege('authenticated', 'public.create_room(text,integer)', 'EXECUTE'),
+  'legacy non-atomic room creation is unavailable to authenticated clients'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.create_room_with_metadata(text,uuid,jsonb,integer)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.set_room_metadata(uuid,uuid,integer,jsonb)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.edit_message(uuid,uuid,integer,jsonb)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.remove_reaction(uuid,uuid)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.set_room_preferences(uuid,uuid,text,text,text,timestamptz)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.list_room_recipient_devices(uuid)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.list_current_account_recipient_devices()', 'EXECUTE'),
+  'authenticated clients can execute each narrow checked mutation contract'
+);
+select ok(
+  not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name in (
+        'rooms', 'room_metadata_envelopes', 'messages',
+        'message_revisions', 'message_revision_envelopes'
+      )
+      and column_name ~ '(title|body|plaintext|content)'
+  ),
+  'room titles and edited message content have no plaintext column'
+);
+select is(
+  (
+    select count(distinct constraint_table.oid)::integer
+    from pg_constraint as constraint_definition
+    join pg_class as constraint_table on constraint_table.oid = constraint_definition.conrelid
+    join pg_namespace as table_schema on table_schema.oid = constraint_table.relnamespace
+    where table_schema.nspname = 'public'
+      and constraint_table.relname in (
+        'message_envelopes', 'reaction_envelopes',
+        'room_metadata_envelopes', 'message_revision_envelopes'
+      )
+      and pg_get_constraintdef(constraint_definition.oid) like '%LOCAL_AEAD%'
+  ),
+  4,
+  'every encrypted fan-out table constrains the durable self-envelope type'
+);
+select ok(
+  pg_get_functiondef('private.edit_message(uuid,uuid,integer,jsonb)'::regprocedure)
+    like '%delete from public.message_envelopes%'
+  and pg_get_functiondef('private.edit_message(uuid,uuid,integer,jsonb)'::regprocedure)
+    like '%delete from public.message_revisions%',
+  'confirmed edits physically remove initial and prior revision ciphertext'
+);
+select ok(
+  pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure)
+    like '%target_device.revoked_at IS NULL%'
+  and pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure)
+    like '%revision.expires_at > statement_timestamp()%'
+  and pg_get_functiondef('private.can_read_device_bundle(uuid)'::regprocedure)
+    like '%private.can_access_message%',
+  'revoked sender crypto context remains visible only while accessible ciphertext requires it'
+);
+select ok(
+  pg_get_functiondef('private.list_room_recipient_devices(uuid)'::regprocedure)
+    like '%device.revoked_at IS NULL%'
+  and pg_get_functiondef('private.list_room_recipient_devices(uuid)'::regprocedure)
+    like '%recipient_count NOT BETWEEN 1 AND 129%',
+  'recipient enumeration excludes revoked devices and enforces the 129-device total cap'
+);
+select ok(
+  (
+    select lower(qual) like '%select auth.uid()%'
+      and qual like '%private.current_device_id()%'
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'room_member_preferences'
+      and policyname = 'room_member_preferences_select_self'
+  ),
+  'room preferences are visible only to the bound owning member with initplan auth lookup'
+);
+select ok(
+  pg_get_functiondef(
+    'private.purge_expired_relational_data_without_core_mutation_receipts(integer,uuid)'::regprocedure
+  )
+    like '%expired_room_creation_receipts%'
+  and pg_get_functiondef(
+    'private.purge_expired_relational_data_without_core_mutation_receipts(integer,uuid)'::regprocedure
+  )
+    like '%expired_room_metadata_receipts%'
+  and pg_get_functiondef(
+    'private.purge_expired_relational_data_without_core_mutation_receipts(integer,uuid)'::regprocedure
+  )
+    like '%expired_message_revision_receipts%'
+  and pg_get_functiondef(
+    'private.purge_expired_relational_data_without_core_mutation_receipts(integer,uuid)'::regprocedure
+  )
+    like '%expired_reaction_removal_receipts%'
+  and pg_get_functiondef(
+    'private.purge_expired_relational_data_without_core_mutation_receipts(integer,uuid)'::regprocedure
+  )
+    like '%expired_room_preference_receipts%'
+  and pg_get_functiondef('private.purge_expired_relational_data(integer,uuid)'::regprocedure)
+    like '%expired_invite_issuance_receipts%'
+  and pg_get_functiondef('private.purge_expired_relational_data(integer,uuid)'::regprocedure)
+    like '%expired_room_member_removal_receipts%'
+  and pg_get_functiondef('private.purge_expired_relational_data(integer,uuid)'::regprocedure)
+    like '%expired_message_deletion_receipts%'
+  and pg_get_function_result('private.purge_expired_relational_data(integer,uuid)'::regprocedure)
+    like '%mutation_receipts_deleted integer%',
+  'retention purges bounded non-content mutation receipts and reports the count'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_indexes
+    where schemaname in ('public', 'private')
+      and indexname in (
+        'rooms_owner_user_id_idx', 'messages_sender_device_id_idx',
+        'reactions_sender_device_id_idx', 'message_reply_links_replied_to_message_id_idx',
+        'message_receipts_recipient_device_id_idx', 'typing_state_device_id_idx',
+        'attachments_uploader_device_id_idx',
+        'account_registration_invites_issued_by_user_id_idx',
+        'account_registration_receipts_user_id_idx',
+        'room_membership_invites_room_id_idx',
+        'room_membership_invites_issued_by_user_id_idx',
+        'room_membership_invite_receipts_room_id_idx',
+        'room_membership_invite_receipts_user_id_idx',
+        'message_deletion_requests_requested_by_user_id_idx'
+      )
+  ),
+  14,
+  'advisor-identified foreign keys have covering indexes'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_policies
+    where schemaname = 'public'
+      and policyname in (
+        'profiles_update_self', 'message_receipts_insert_recipient',
+        'presence_state_select_room_peer_before_expiry', 'attachments_insert_sender'
+      )
+      and lower(coalesce(qual, '') || coalesce(with_check, '')) like '%select auth.uid()%'
+  ),
+  4,
+  'advisor-identified RLS policies use initplan auth lookups'
+);
+select ok(
+  (
+    select count(*) = 11
+      and bool_and(prosecdef)
+      and bool_and(proconfig @> array['search_path=""']::text[])
+    from pg_proc
+    join pg_namespace on pg_namespace.oid = pronamespace
+    where nspname = 'private'
+      and proname in (
+        'can_read_device_bundle', 'set_room_metadata', 'edit_message',
+        'remove_reaction', 'set_room_preferences', 'list_room_recipient_devices',
+        'list_current_account_recipient_devices',
+        'create_room_with_metadata', 'send_message', 'send_reaction',
+        'purge_expired_relational_data'
+      )
+  ),
+  'new privileged functions are security-definer with empty search paths'
+);
+select ok(
+  (
+    select count(*) = 7
+      and bool_and(not prosecdef)
+      and bool_and(proconfig @> array['search_path=""']::text[])
+    from pg_proc
+    join pg_namespace on pg_namespace.oid = pronamespace
+    where nspname = 'public'
+      and proname in (
+        'create_room_with_metadata', 'set_room_metadata', 'edit_message',
+        'remove_reaction', 'set_room_preferences', 'list_room_recipient_devices',
+        'list_current_account_recipient_devices'
+      )
+  ),
+  'public mutation wrappers are security-invoker with empty search paths'
+);
+select ok(
+  (select qual from pg_policies
+   where schemaname = 'public'
+     and tablename = 'room_metadata_envelopes'
+     and policyname = 'room_metadata_envelopes_select_recipient')
+    like '%room.metadata_revision = room_metadata_envelopes.metadata_revision%',
+  'room metadata RLS exposes only the current encrypted revision'
+);
+select ok(
+  (select qual from pg_policies
+   where schemaname = 'public'
+     and tablename = 'message_revisions'
+     and policyname = 'message_revisions_select_current_member')
+    like '%message.current_revision = message_revisions.revision_number%',
+  'message revision RLS exposes only the current unexpired encrypted revision'
+);
+select ok(
+  lower(pg_get_functiondef('private.can_access_message(uuid)'::regprocedure))
+    like '%message.created_at >= room_member.joined_at%'
+  and lower(pg_get_functiondef('private.can_access_message(uuid)'::regprocedure))
+    like '%from public.message_envelopes%'
+  and lower(pg_get_functiondef('private.can_access_message(uuid)'::regprocedure))
+    like '%from public.message_revisions%'
+  and lower(pg_get_functiondef('private.can_access_message(uuid)'::regprocedure))
+    like '%join public.message_revision_envelopes%'
+  and lower(pg_get_functiondef('private.can_access_message(uuid)'::regprocedure))
+    like '%recipient_device_id = private.current_device_id()%'
+  and lower(pg_get_functiondef('private.can_access_message(uuid)'::regprocedure))
+    like '%private.message_deletion_requests%',
+  'message access requires current-device ciphertext after the current membership began'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_policies
+    where schemaname = 'public'
+      and policyname in (
+        'message_reply_links_select_member', 'reactions_select_member',
+        'message_receipts_select_member', 'attachments_select_member_before_message_expiry',
+        'message_revisions_select_current_member'
+      )
+      and lower(coalesce(qual, '')) like '%can_access_message%'
+  ),
+  5,
+  'reply, reaction, receipt, attachment, and revision graphs inherit device-envelope access'
+);
+select ok(
+  lower(pg_get_functiondef('private.send_message(uuid,uuid,uuid,jsonb)'::regprocedure))
+    like '%private.can_access_message(replied_to.id)%'
+  and lower(pg_get_functiondef('private.send_reaction(uuid,uuid,jsonb)'::regprocedure))
+    like '%not private.can_access_message(p_message_id)%',
+  'reply and reaction mutations reject parent messages unavailable to the current device'
+);
+
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public._edge_issue_account_registration_invite(uuid,uuid,uuid,bytea,integer)',
+    'EXECUTE'
+  )
+  and has_function_privilege(
+    'service_role',
+    'public._edge_issue_room_membership_invite(uuid,uuid,uuid,uuid,bytea,integer)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public._edge_issue_account_registration_invite(uuid,uuid,uuid,bytea,integer)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public._edge_issue_room_membership_invite(uuid,uuid,uuid,uuid,bytea,integer)',
+    'EXECUTE'
+  ),
+  'deterministic invite issuance remains service-role only'
+);
+select ok(
+  to_regprocedure(
+    'public._edge_issue_account_registration_invite(uuid,uuid,bytea,integer)'
+  ) is null
+  and to_regprocedure(
+    'public._edge_issue_room_membership_invite(uuid,uuid,uuid,bytea,integer)'
+  ) is null,
+  'receiptless Edge invite signatures are removed'
+);
+select ok(
+  has_function_privilege(
+    'authenticated', 'public.update_room_retention(uuid,uuid,integer)', 'EXECUTE'
+  )
+  and has_function_privilege(
+    'authenticated', 'public.update_room_member_role(uuid,uuid,uuid,text)', 'EXECUTE'
+  )
+  and has_function_privilege(
+    'authenticated', 'public.remove_room_member(uuid,uuid,uuid)', 'EXECUTE'
+  )
+  and has_function_privilege(
+    'authenticated', 'public.delete_message_for_everyone(uuid,uuid,integer)', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon', 'public.update_room_retention(uuid,uuid,integer)', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon', 'public.update_room_member_role(uuid,uuid,uuid,text)', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon', 'public.remove_room_member(uuid,uuid,uuid)', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon', 'public.delete_message_for_everyone(uuid,uuid,integer)', 'EXECUTE'
+  ),
+  'bound authenticated devices alone receive the idempotent core mutation RPCs'
+);
+select ok(
+  to_regprocedure('public.update_room_retention(uuid,integer)') is null
+  and to_regprocedure('public.update_room_member_role(uuid,uuid,text)') is null
+  and to_regprocedure('public.remove_room_member(uuid,uuid)') is null
+  and to_regprocedure('public.delete_message_for_everyone(uuid)') is null
+  and to_regprocedure('public.delete_message_for_everyone(uuid,uuid)') is null,
+  'receiptless core mutation signatures are removed'
+);
+select ok(
+  not has_function_privilege(
+    'service_role', 'private.derive_invite_code_digest(uuid,text,uuid,uuid)', 'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated', 'private.derive_invite_code_digest(uuid,text,uuid,uuid)', 'EXECUTE'
+  ),
+  'the database-owned invite derivation key has no callable digest oracle'
+);
+select ok(
+  not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'private'
+      and table_name in (
+        'invite_issuance_mutation_receipts', 'room_retention_mutation_receipts',
+        'room_member_role_mutation_receipts', 'room_member_removal_mutation_receipts',
+        'message_deletion_mutation_receipts'
+      )
+      and column_name ~ '(plaintext|ciphertext|invite_code|raw_code|message_body|room_title)'
+  ),
+  'core mutation receipts retain no plaintext, ciphertext, or raw invite capability'
+);
+select ok(
+  pg_get_functiondef(
+    'private.issue_invite(uuid,uuid,uuid,text,uuid,bytea,integer)'::regprocedure
+  ) like '%derive_invite_code_digest%'
+  and pg_get_functiondef(
+    'private.issue_invite(uuid,uuid,uuid,text,uuid,bytea,integer)'::regprocedure
+  ) like '%request_digest%'
+  and pg_get_functiondef(
+    'private.issue_invite(uuid,uuid,uuid,text,uuid,bytea,integer)'::regprocedure
+  ) like '%invite_issuance_mutation_receipts%',
+  'invite issuance validates deterministic derivation and exact retry input'
+);
+select ok(
+  pg_get_functiondef('private.update_room_retention(uuid,uuid,integer)'::regprocedure)
+    like '%room_retention_mutation_receipts%'
+  and pg_get_functiondef('private.update_room_member_role(uuid,uuid,uuid,text)'::regprocedure)
+    like '%room_member_role_mutation_receipts%'
+  and pg_get_functiondef('private.remove_room_member(uuid,uuid,uuid)'::regprocedure)
+    like '%room_member_removal_mutation_receipts%'
+  and pg_get_functiondef('private.delete_message_for_everyone(uuid,uuid,integer)'::regprocedure)
+    like '%message_deletion_mutation_receipts%'
+  and pg_get_functiondef('private.update_room_retention(uuid,uuid,integer)'::regprocedure)
+    like '%request_digest%'
+  and pg_get_functiondef('private.update_room_member_role(uuid,uuid,uuid,text)'::regprocedure)
+    like '%request_digest%'
+  and pg_get_functiondef('private.remove_room_member(uuid,uuid,uuid)'::regprocedure)
+    like '%request_digest%'
+  and pg_get_functiondef('private.delete_message_for_everyone(uuid,uuid,integer)'::regprocedure)
+    like '%request_digest%'
+  and pg_get_functiondef('private.delete_message_for_everyone(uuid,uuid,integer)'::regprocedure)
+    like '%current_revision <> p_expected_revision%',
+  'each core mutation binds its retry receipt to the complete request identity and delete CAS'
+);
+select ok(
+  (
+    select count(*) = 9
+      and bool_and(prosecdef)
+      and bool_and(proconfig @> array['search_path=""']::text[])
+    from pg_proc
+    join pg_namespace on pg_namespace.oid = pronamespace
+    where nspname = 'private'
+      and proname in (
+        'initialize_runtime_configuration', 'derive_invite_code_digest',
+        'assert_invite_code_available', 'issue_invite', 'update_room_retention',
+        'update_room_member_role', 'remove_room_member',
+        'delete_message_for_everyone', 'purge_expired_relational_data'
+      )
+  ),
+  'core idempotency security-definer functions pin an empty search path'
+);
+select ok(
+  (
+    select count(*) = 7
+      and bool_and(not prosecdef)
+      and bool_and(proconfig @> array['search_path=""']::text[])
+    from pg_proc
+    join pg_namespace on pg_namespace.oid = pronamespace
+    where nspname = 'public'
+      and proname in (
+        '_edge_initialize_runtime_configuration',
+        '_edge_issue_account_registration_invite',
+        '_edge_issue_room_membership_invite', 'update_room_retention',
+        'update_room_member_role', 'remove_room_member',
+        'delete_message_for_everyone'
+      )
+  ),
+  'core idempotency public wrappers are invokers with empty search paths'
+);
+select is(
+  (
+    select count(*)::integer
+    from pg_indexes
+    where schemaname = 'private'
+      and indexname in (
+        'invite_issuance_mutation_receipts_room_id_idx',
+        'room_retention_mutation_receipts_room_id_idx',
+        'room_member_role_mutation_receipts_room_id_idx',
+        'room_member_role_mutation_receipts_member_user_idx',
+        'room_member_removal_mutation_receipts_room_id_idx'
+      )
+  ),
+  5,
+  'new receipt foreign keys have covering indexes'
 );
 
 select * from finish();

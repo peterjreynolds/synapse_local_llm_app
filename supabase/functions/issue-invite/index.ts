@@ -6,7 +6,7 @@ import {
   verifyActor,
 } from "../_shared/backend.ts";
 import { parseIssueInviteRequest } from "../_shared/contracts.ts";
-import { generateInviteCode, postgresByteaFromHex, sha256Hex } from "../_shared/crypto.ts";
+import { deriveInviteCode, postgresByteaFromHex, sha256Hex } from "../_shared/crypto.ts";
 import { HttpError, jsonResponse, serveJsonEndpoint } from "../_shared/http.ts";
 
 Deno.serve((request: Request) =>
@@ -15,7 +15,13 @@ Deno.serve((request: Request) =>
     const secrets = await readRuntimeSecrets();
     const serviceClient = createServiceClient(secrets);
     const actor = await verifyActor(request, serviceClient);
-    const inviteCode = generateInviteCode();
+    const inviteCode = await deriveInviteCode(
+      secrets.inviteDerivationKey,
+      actor.userId,
+      inviteRequest.kind,
+      inviteRequest.kind === "ROOM_MEMBERSHIP" ? inviteRequest.roomId : null,
+      inviteRequest.clientMutationId,
+    );
     const inviteDigest = postgresByteaFromHex(await sha256Hex(inviteCode));
 
     try {
@@ -25,6 +31,7 @@ Deno.serve((request: Request) =>
       const rpcArguments: Record<string, unknown> = {
         p_actor_user_id: actor.userId,
         p_auth_session_id: actor.authSessionId,
+        p_client_mutation_id: inviteRequest.clientMutationId,
         p_code_digest: inviteDigest,
         p_expires_in_seconds: inviteRequest.expiresInSeconds,
       };
