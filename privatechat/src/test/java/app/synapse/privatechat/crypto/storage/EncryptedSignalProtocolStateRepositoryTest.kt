@@ -6,6 +6,9 @@ import app.synapse.privatechat.crypto.SignalPreKeyId
 import app.synapse.privatechat.crypto.SignalProtocolStateAddress
 import app.synapse.privatechat.crypto.SignalProtocolStateCorruptedException
 import app.synapse.privatechat.crypto.StoredLocalSignalIdentity
+import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
+import app.synapse.privatechat.security.storage.EncryptedStateFile
+import app.synapse.privatechat.security.storage.EncryptedStateKeyProvider
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -321,10 +324,11 @@ class EncryptedSignalProtocolStateRepositoryTest {
     private fun productionCipher(
         file: MemoryEncryptedStateFile,
         keyProvider: MemorySignalStateKeyProvider,
-    ): AesGcmSignalStateCipher =
-        AesGcmSignalStateCipher(
+    ): Aes256GcmEncryptedStateCipher =
+        Aes256GcmEncryptedStateCipher(
             keyProvider = keyProvider,
             keyCreationAllowed = file::permitsEncryptionKeyCreation,
+            authenticatedContext = "synapse.private.signal-state.v1",
         )
 
     private fun key(seed: Int): SecretKey = SecretKeySpec(ByteArray(32) { (it + seed).toByte() }, "AES")
@@ -395,7 +399,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
 
     private class MemorySignalStateKeyProvider(
         var existingKey: SecretKey? = null,
-    ) : SignalStateKeyProvider {
+    ) : EncryptedStateKeyProvider {
         var creationCount = 0
             private set
         var loadFailure: Exception? = null

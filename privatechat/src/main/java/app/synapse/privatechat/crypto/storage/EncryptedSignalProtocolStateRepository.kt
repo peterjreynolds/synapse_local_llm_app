@@ -8,15 +8,18 @@ import app.synapse.privatechat.crypto.SignalProtocolStateCorruptedException
 import app.synapse.privatechat.crypto.SignalProtocolStateLimits
 import app.synapse.privatechat.crypto.SignalProtocolStateRepository
 import app.synapse.privatechat.crypto.StoredLocalSignalIdentity
+import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
+import app.synapse.privatechat.security.storage.EncryptedStateCipher
+import app.synapse.privatechat.security.storage.EncryptedStateFile
 import java.util.UUID
 
 /**
  * Single-owner durable Signal state store. Plaintext state exists only in process memory and the
  * complete serialized snapshot is authenticated and encrypted before it crosses [EncryptedStateFile].
  */
-class EncryptedSignalProtocolStateRepository(
+class EncryptedSignalProtocolStateRepository internal constructor(
     private val encryptedStateFile: EncryptedStateFile,
-    private val stateCipher: SignalStateCipher,
+    private val stateCipher: EncryptedStateCipher,
 ) : SignalProtocolStateRepository {
     private val monitor = Any()
     private var transactionDepth = 0
@@ -272,21 +275,8 @@ class EncryptedSignalProtocolStateRepository(
         const val MAX_REMOTE_IDENTITY_BYTES = 256
         const val MAX_BASE_KEY_BYTES = 256
         const val MAX_ENCRYPTED_STATE_BYTES =
-            SignalStateCodec.MAX_TOTAL_PLAINTEXT_BYTES + AesGcmSignalStateCipher.MAX_ENVELOPE_OVERHEAD_BYTES
+            SignalStateCodec.MAX_TOTAL_PLAINTEXT_BYTES + Aes256GcmEncryptedStateCipher.MAX_ENVELOPE_OVERHEAD_BYTES
     }
-}
-
-interface EncryptedStateFile {
-    /** Returns an owned ciphertext copy or null when no committed state exists. */
-    fun read(maximumBytes: Int): ByteArray?
-
-    fun replace(ciphertext: ByteArray)
-}
-
-interface SignalStateCipher {
-    fun encrypt(plaintext: ByteArray): ByteArray
-
-    fun decrypt(ciphertext: ByteArray): ByteArray
 }
 
 internal data class MutableSignalState(
