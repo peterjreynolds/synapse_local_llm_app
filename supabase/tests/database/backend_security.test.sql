@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(95);
+select plan(96);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -154,6 +154,15 @@ select ok(
     )
   ),
   'every existing Auth identity satisfies the UUID-bound internal-address invariant'
+);
+select ok(
+  lower(pg_get_functiondef(
+    'private.configure_bootstrap_capability(bytea,integer)'::regprocedure
+  )) like '%delete from private.bootstrap_capabilities%where singleton%'
+  and lower(pg_get_functiondef(
+    'private.redeem_account_registration(bytea,uuid,bytea,text,uuid,text)'::regprocedure
+  )) like '%delete from private.bootstrap_capabilities%where singleton%',
+  'bootstrap mutation functions use safeupdate-compatible bounded deletes'
 );
 select ok(
   (

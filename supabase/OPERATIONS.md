@@ -15,6 +15,7 @@ legacy Auth identity from becoming an implicit Synapse Private account.
    - `20260825115540_bind_encrypted_chat_context_and_capacity.sql`
    - `20260825143000_disambiguate_envelope_capacity_release.sql`
    - `20260827040000_allow_bound_auth_identity_creation.sql`
+   - `20260827042500_make_bootstrap_deletes_safeupdate_compatible.sql`
 2. Deploy `redeem-invite`, `sign-in`, `register-device`, `issue-invite`,
    `redeem-room-invite`, and `purge-expired-data` with the JWT settings in
    `config.toml`.
@@ -346,7 +347,7 @@ Record results, timestamps, and project reference without tokens, invite codes,
 peppers, derivation keys, purge capabilities, passwords, internal email, or
 ciphertext.
 
-- Migration history contains all eight versions in order.
+- Migration history contains all nine versions in order.
 - Direct client, email, SMS, and anonymous signup fail.
 - Unauthorized insert and identity-changing update on `auth.users` fail through
   the database trigger.

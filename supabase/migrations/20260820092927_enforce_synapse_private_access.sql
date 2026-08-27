@@ -1468,7 +1468,7 @@ begin
   perform private.assert_invite_code_available(p_code_digest);
   capability_expiry := statement_timestamp() + make_interval(secs => p_expires_in_seconds);
 
-  delete from private.bootstrap_capabilities;
+  delete from private.bootstrap_capabilities where singleton;
   insert into private.bootstrap_capabilities (code_digest, expires_at)
   values (p_code_digest, capability_expiry);
 
@@ -2133,7 +2133,7 @@ begin
       raise exception using errcode = '22023', message = 'registration is not authorized';
     end if;
     selected_registration_kind := 'BOOTSTRAP';
-    delete from private.bootstrap_capabilities;
+    delete from private.bootstrap_capabilities where singleton;
   end if;
 
   insert into public.profiles (user_id, display_name)
