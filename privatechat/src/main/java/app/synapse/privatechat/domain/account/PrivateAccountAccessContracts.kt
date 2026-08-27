@@ -225,23 +225,12 @@ fun validatePrivateAccountAccessDraft(draft: PrivateAccountAccessDraft): Private
             is PrivateAccountAccessDraft.SignIn -> draft.passwordInput
             is PrivateAccountAccessDraft.RegisterWithInvite -> draft.passwordInput
         }
-    val minimumPasswordLength =
-        when (draft) {
-            is PrivateAccountAccessDraft.SignIn -> 1
-            is PrivateAccountAccessDraft.RegisterWithInvite -> PRIVATE_PASSWORD_LENGTH_RANGE.first
-        }
-    if (
-        passwordInput.length !in minimumPasswordLength..PRIVATE_PASSWORD_LENGTH_RANGE.last ||
-        '\u0000' in passwordInput
-    ) {
+    if (!isPrivateAccountPasswordShapeValid(passwordInput)) {
         return PrivateAccountAccessValidation.Rejected(
             field = PrivateAccountInputField.PASSWORD,
             userMessage =
-                if (draft is PrivateAccountAccessDraft.RegisterWithInvite) {
-                    "Use ${PRIVATE_PASSWORD_LENGTH_RANGE.first}–${PRIVATE_PASSWORD_LENGTH_RANGE.last} password characters."
-                } else {
-                    "Enter the password for this account."
-                },
+                "Use ${PRIVATE_PASSWORD_LENGTH_RANGE.first}–${PRIVATE_PASSWORD_LENGTH_RANGE.last} " +
+                    "password characters without control characters.",
         )
     }
     val password = PrivateAccountPassword(passwordInput)
@@ -314,10 +303,37 @@ private fun normalizePrivateUsername(usernameInput: String): PrivateUsername? {
         ?.let(::PrivateUsername)
 }
 
+private fun isPrivateAccountPasswordShapeValid(passwordInput: String): Boolean {
+    var utf16Index = 0
+    var codePointCount = 0
+    var utf8ByteCount = 0
+    while (utf16Index < passwordInput.length) {
+        val codePoint = Character.codePointAt(passwordInput, utf16Index)
+        if (codePoint <= 0x1F || codePoint == 0x7F) return false
+        codePointCount += 1
+        utf8ByteCount +=
+            when {
+                codePoint <= 0x7F -> 1
+                codePoint <= 0x7FF -> 2
+                codePoint <= 0xFFFF -> 3
+                else -> 4
+            }
+        if (
+            codePointCount > PRIVATE_PASSWORD_LENGTH_RANGE.last ||
+            utf8ByteCount > PRIVATE_PASSWORD_LENGTH_RANGE.last
+        ) {
+            return false
+        }
+        utf16Index += Character.charCount(codePoint)
+    }
+    return codePointCount >= PRIVATE_PASSWORD_LENGTH_RANGE.first &&
+        utf8ByteCount >= PRIVATE_PASSWORD_LENGTH_RANGE.first
+}
+
 private const val PRIVATE_DISPLAY_NAME_LIMIT = 64
 private val PRIVATE_PASSWORD_LENGTH_RANGE = 12..128
 private val PRIVATE_USERNAME_PATTERN = Regex("^[a-z][a-z0-9_]{2,31}$")
-private val PRIVATE_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{32,128}$")
+private val PRIVATE_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")
 private const val PRIVATE_ACCOUNT_DENIAL_MESSAGE_LIMIT = 200
 
 private fun requireSafePrivateAccountMessage(

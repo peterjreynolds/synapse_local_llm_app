@@ -237,7 +237,7 @@ class PrivateChatPoliciesTest {
                             roomId = room.roomId,
                             mutationId = PrivateClientMutationId("mutation"),
                             invitationId = PrivateRoomInvitationId("invitation"),
-                            invitationCode = PrivateRoomInvitationCode("A".repeat(32)),
+                            invitationCode = PrivateRoomInvitationCode("A".repeat(43)),
                             expiresAt = now,
                         ),
                     ),

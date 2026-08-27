@@ -211,7 +211,7 @@ class PrivateAccountAccessViewModelTest {
                     usernameInput = "peter_01",
                     passwordInput = VALID_PASSWORD,
                     passwordConfirmationInput = VALID_PASSWORD,
-                    invitationCodeInput = "A".repeat(32),
+                    invitationCodeInput = "A".repeat(43),
                 ),
             )
             runCurrent()

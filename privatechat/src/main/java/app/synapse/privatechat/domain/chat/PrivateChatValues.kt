@@ -72,4 +72,4 @@ private fun normalizePrivateOpaqueIdentifier(input: String): String? =
         }
 
 private val PRIVATE_OPAQUE_IDENTIFIER_LENGTH_RANGE = 1..128
-private val PRIVATE_ROOM_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{32,128}$")
+private val PRIVATE_ROOM_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")

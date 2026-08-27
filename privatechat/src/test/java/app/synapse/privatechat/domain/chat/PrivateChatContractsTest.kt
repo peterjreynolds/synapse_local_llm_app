@@ -32,10 +32,17 @@ class PrivateChatContractsTest {
     @Test
     fun `sensitive values redact their contents`() {
         val message = PrivateMessageText("do-not-render")
-        val invitation = PrivateRoomInvitationCode("A".repeat(32))
+        val invitation = PrivateRoomInvitationCode("A".repeat(43))
 
         assertFalse(message.toString().contains(message.plaintext))
         assertFalse(invitation.toString().contains(invitation.secret))
+    }
+
+    @Test
+    fun `room invitation accepts only the backend issued capability width`() {
+        assertTrue(parsePrivateRoomInvitationCode("A".repeat(43)) != null)
+        assertEquals(null, parsePrivateRoomInvitationCode("A".repeat(42)))
+        assertEquals(null, parsePrivateRoomInvitationCode("A".repeat(44)))
     }
 
     @Test
