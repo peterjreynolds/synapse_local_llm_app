@@ -20,6 +20,7 @@ internal object SupabaseSessionTokenContract {
     }
 
     private val ACCESS_TOKEN_LENGTH_RANGE = 20..8_192
+
     // Supabase refresh tokens are opaque handles; current hosted projects can issue 12-character tokens.
     private val REFRESH_TOKEN_LENGTH_RANGE = 1..8_192
     private val ACCESS_TOKEN_PATTERN = Regex("^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$")
