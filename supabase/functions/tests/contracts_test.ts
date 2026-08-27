@@ -8,7 +8,7 @@ import {
   parseRegisterDeviceRequest,
   parseSignInRequest,
 } from "../_shared/contracts.ts";
-import { generateInternalAccountIdentity } from "../_shared/backend.ts";
+import { createServiceClient, generateInternalAccountIdentity } from "../_shared/backend.ts";
 import { deriveInviteCode } from "../_shared/crypto.ts";
 import { HttpError } from "../_shared/http.ts";
 
@@ -16,6 +16,13 @@ const UUID = "018f1d9e-7b2a-7000-8000-000000000001";
 const curveKey = `05${"11".repeat(32)}`;
 const signature = "22".repeat(64);
 const kyberKey = `08${"33".repeat(1568)}`;
+
+function jwtSegment(payload: Readonly<Record<string, unknown>>): string {
+  return btoa(JSON.stringify(payload))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+}
 
 function registration(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -61,6 +68,79 @@ Deno.test("binds each generated internal email to its Auth user id", () => {
     ),
     true,
   );
+});
+
+Deno.test("isolates a password session from service-role RPC authorization", async () => {
+  const userId = "018f1d9e-7b2a-4000-8000-000000000001";
+  const sessionId = "018f1d9e-7b2a-4000-8000-000000000002";
+  const serviceRoleKey = "test-service-role-key";
+  const userAccessToken = [
+    jwtSegment({ alg: "HS256", typ: "JWT" }),
+    jwtSegment({
+      aud: "authenticated",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      role: "authenticated",
+      session_id: sessionId,
+      sub: userId,
+    }),
+    "test-signature",
+  ].join(".");
+  const rpcAuthorizations: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = new Request(input, init);
+    if (request.url.includes("/auth/v1/token?grant_type=password")) {
+      return Promise.resolve(
+        Response.json({
+          access_token: userAccessToken,
+          expires_in: 3600,
+          refresh_token: "test-refresh-token",
+          token_type: "bearer",
+          user: {
+            id: userId,
+            aud: "authenticated",
+            role: "authenticated",
+            email: `${userId}@identity.synapse-private.invalid`,
+            email_confirmed_at: "2026-08-27T00:00:00.000Z",
+            app_metadata: { provider: "email", providers: ["email"] },
+            user_metadata: {},
+            identities: [],
+            created_at: "2026-08-27T00:00:00.000Z",
+            updated_at: "2026-08-27T00:00:00.000Z",
+            is_anonymous: false,
+          },
+        }),
+      );
+    }
+    if (request.url.includes("/rest/v1/rpc/_edge_reserve_device_registration")) {
+      rpcAuthorizations.push(request.headers.get("authorization") ?? "");
+      return Promise.resolve(Response.json([]));
+    }
+    return Promise.reject(new Error(`Unexpected test request: ${request.url}`));
+  };
+
+  try {
+    const connection = {
+      supabaseUrl: "https://example.supabase.co",
+      serviceRoleKey,
+    };
+    const serviceClient = createServiceClient(connection);
+    const authenticationClient = createServiceClient(connection);
+    const { error: signInError } = await authenticationClient.auth.signInWithPassword({
+      email: `${userId}@identity.synapse-private.invalid`,
+      password: "correct horse battery staple",
+    });
+    assertEquals(signInError, null);
+
+    await authenticationClient.rpc("_edge_reserve_device_registration", {});
+    await serviceClient.rpc("_edge_reserve_device_registration", {});
+    assertEquals(rpcAuthorizations, [
+      `Bearer ${userAccessToken}`,
+      `Bearer ${serviceRoleKey}`,
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("requires a 32-byte URL-safe invite capability", () => {

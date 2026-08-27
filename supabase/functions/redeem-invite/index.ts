@@ -65,6 +65,9 @@ Deno.serve((request: Request) =>
     const registration = parseRedeemAccountInviteRequest(body);
     const secrets = await readRuntimeSecrets();
     const serviceClient = createServiceClient(secrets);
+    // Password sign-in changes the client's authorization to the user session.
+    // Keep privileged reconciliation and reservation RPCs on an isolated client.
+    const authenticationClient = createServiceClient(secrets);
     await enforceAccountAccessRateLimit(
       serviceClient,
       request,
@@ -127,10 +130,11 @@ Deno.serve((request: Request) =>
       const receipt = expectSingleObject(redemptionData);
       registrationCommitted = true;
 
-      const { data: signInData, error: signInError } = await serviceClient.auth.signInWithPassword({
-        email: internalEmail,
-        password: registration.password,
-      });
+      const { data: signInData, error: signInError } = await authenticationClient.auth
+        .signInWithPassword({
+          email: internalEmail,
+          password: registration.password,
+        });
       if (
         signInError !== null || signInData.user === null || signInData.session === null ||
         signInData.user.id !== expectedUserId
