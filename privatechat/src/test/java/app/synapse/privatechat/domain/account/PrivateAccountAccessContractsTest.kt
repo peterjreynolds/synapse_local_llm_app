@@ -3,6 +3,7 @@ package app.synapse.privatechat.domain.account
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -86,6 +87,15 @@ class PrivateAccountAccessContractsTest {
         assertRejectedField(shortInvite, PrivateAccountInputField.INVITATION_CODE)
         assertRejectedField(oversizedPassword, PrivateAccountInputField.PASSWORD)
         assertRejectedField(controlPassword, PrivateAccountInputField.PASSWORD)
+    }
+
+    @Test
+    fun `account password accepts eight characters and rejects seven`() {
+        val accepted = registrationDraft(password = "12345678", invitationCode = "A".repeat(43))
+        val rejected = registrationDraft(password = "1234567", invitationCode = "A".repeat(43))
+
+        assertTrue(validatePrivateAccountAccessDraft(accepted) is PrivateAccountAccessValidation.Accepted)
+        assertRejectedField(rejected, PrivateAccountInputField.PASSWORD)
     }
 
     @Test

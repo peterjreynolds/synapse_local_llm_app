@@ -210,6 +210,32 @@ Deno.test("phase-one account access accepts a transport UUID but no Signal bundl
   );
 });
 
+Deno.test("account passwords accept eight characters and reject seven", () => {
+  const parsedRegistration = parseRedeemAccountInviteRequest(
+    registration({ password: "12345678" }),
+  );
+  const parsedSignIn = parseSignInRequest({
+    device_id: UUID,
+    username: "private_user",
+    password: "12345678",
+  });
+  assertEquals(parsedRegistration.password, "12345678");
+  assertEquals(parsedSignIn.password, "12345678");
+  assertThrows(
+    () => parseRedeemAccountInviteRequest(registration({ password: "1234567" })),
+    HttpError,
+  );
+  assertThrows(
+    () =>
+      parseSignInRequest({
+        device_id: UUID,
+        username: "private_user",
+        password: "1234567",
+      }),
+    HttpError,
+  );
+});
+
 Deno.test("register-device accepts the exact Signal wire maxima", () => {
   const parsed = parseRegisterDeviceRequest(deviceRegistration());
   assertEquals(parsed.device.registrationId, 16380);

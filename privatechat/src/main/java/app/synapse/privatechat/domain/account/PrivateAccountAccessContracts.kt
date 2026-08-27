@@ -331,7 +331,7 @@ private fun isPrivateAccountPasswordShapeValid(passwordInput: String): Boolean {
 }
 
 private const val PRIVATE_DISPLAY_NAME_LIMIT = 64
-private val PRIVATE_PASSWORD_LENGTH_RANGE = 12..128
+private val PRIVATE_PASSWORD_LENGTH_RANGE = 8..128
 private val PRIVATE_USERNAME_PATTERN = Regex("^[a-z][a-z0-9_]{2,31}$")
 private val PRIVATE_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")
 private const val PRIVATE_ACCOUNT_DENIAL_MESSAGE_LIMIT = 200

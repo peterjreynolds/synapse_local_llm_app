@@ -107,13 +107,13 @@ export function normalizeUsername(input: unknown): string {
 }
 
 function parsePassword(input: unknown): string {
-  const value = parseString(input, 12, 128);
+  const value = parseString(input, 8, 128);
   const byteLength = new TextEncoder().encode(value).byteLength;
   const containsControlCharacter = [...value].some((character) => {
     const codePoint = character.codePointAt(0)!;
     return codePoint <= 0x1f || codePoint === 0x7f;
   });
-  if (byteLength < 12 || byteLength > 128 || containsControlCharacter) {
+  if (byteLength < 8 || byteLength > 128 || containsControlCharacter) {
     throw new HttpError(400, "The request body is invalid.");
   }
   return value;
