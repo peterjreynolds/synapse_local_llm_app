@@ -363,8 +363,8 @@ class SupabasePrivateAccountApiTest {
         const val PASSWORD = "correct-horse-battery"
         const val INVITE_CODE = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         const val ACCESS_TOKEN = "access.token.with-safe-characters-123456789"
-        const val REFRESH_TOKEN = "refresh-token-with-safe-characters-123456789"
+        const val REFRESH_TOKEN = "refresh12345"
         const val REFRESHED_ACCESS_TOKEN = "refreshed.token.with-safe-characters-123456789"
-        const val REFRESHED_REFRESH_TOKEN = "refreshed-token-with-safe-characters-123456789"
+        const val REFRESHED_REFRESH_TOKEN = "rotated12345"
     }
 }

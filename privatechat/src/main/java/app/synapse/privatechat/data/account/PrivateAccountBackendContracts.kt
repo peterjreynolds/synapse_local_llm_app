@@ -2,6 +2,7 @@ package app.synapse.privatechat.data.account
 
 import app.synapse.privatechat.crypto.SignalDeviceId
 import app.synapse.privatechat.crypto.SignalPublicPreKeyBundle
+import app.synapse.privatechat.data.session.SupabaseSessionTokenContract
 import app.synapse.privatechat.domain.account.PrivateAccountAccessCommand
 import app.synapse.privatechat.domain.account.PrivateAccountId
 import app.synapse.privatechat.domain.account.PrivateDisplayName
@@ -24,8 +25,8 @@ internal class PrivateBackendSessionTokens(
     private val refreshTokenCharacters = refreshToken
 
     init {
-        require(SAFE_SESSION_TOKEN.matches(accessToken)) { "Supabase access token is malformed" }
-        require(SAFE_SESSION_TOKEN.matches(refreshToken)) { "Supabase refresh token is malformed" }
+        SupabaseSessionTokenContract.requireValidAccessToken(accessToken)
+        SupabaseSessionTokenContract.requireValidRefreshToken(refreshToken)
     }
 
     fun exposeAccessTokenForRequest(): String = accessTokenCharacters
@@ -52,7 +53,7 @@ internal class PrivateSessionRefreshCommand(
     private val refreshTokenCharacters = refreshToken
 
     init {
-        require(SAFE_SESSION_TOKEN.matches(refreshToken)) { "Supabase refresh token is malformed" }
+        SupabaseSessionTokenContract.requireValidRefreshToken(refreshToken)
     }
 
     fun exposeRefreshTokenForRequest(): String = refreshTokenCharacters
@@ -67,7 +68,7 @@ internal class PrivateSessionSignOutCommand(
     private val accessTokenCharacters = accessToken
 
     init {
-        require(SAFE_SESSION_TOKEN.matches(accessToken)) { "Supabase access token is malformed" }
+        SupabaseSessionTokenContract.requireValidAccessToken(accessToken)
     }
 
     fun exposeAccessTokenForRequest(): String = accessTokenCharacters
@@ -132,5 +133,4 @@ internal interface PrivateAccountBackend {
     suspend fun signOut(command: PrivateSessionSignOutCommand): PrivateAccountBackendOutcome<PrivateBackendSignOutReceipt>
 }
 
-private val SAFE_SESSION_TOKEN = Regex("^[A-Za-z0-9._~-]{20,8192}$")
 private const val PRIVATE_BACKEND_REJECTION_MESSAGE_LIMIT = 200
