@@ -138,6 +138,13 @@ class SupabasePrivateAccountApiTest {
                     .length,
             )
             assertEquals(
+                "05${"01".repeat(32)}",
+                device
+                    .getValue("identity_key_hex")
+                    .jsonPrimitive
+                    .content,
+            )
+            assertEquals(
                 3_138,
                 device
                     .getValue("kyber_pre_key")
@@ -146,6 +153,15 @@ class SupabasePrivateAccountApiTest {
                     .jsonPrimitive
                     .content
                     .length,
+            )
+            assertEquals(
+                "08${"05".repeat(1_568)}",
+                device
+                    .getValue("kyber_pre_key")
+                    .jsonObject
+                    .getValue("public_key_hex")
+                    .jsonPrimitive
+                    .content,
             )
             assertFalse(request.toString().contains(ACCESS_TOKEN))
         }

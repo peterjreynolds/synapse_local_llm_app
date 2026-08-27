@@ -46,6 +46,7 @@ import app.synapse.privatechat.domain.chat.PrivateClientMutationId
 import app.synapse.privatechat.domain.chat.PrivateSocialGateway
 import app.synapse.privatechat.ui.account.PrivateAccountAccessViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
+import kotlinx.coroutines.Dispatchers
 import java.time.Clock
 import java.util.UUID
 
@@ -180,6 +181,7 @@ class PrivateChatCompositionRoot private constructor(
                                 pollingRepository = pollingRepository,
                                 envelopeCipher = envelopeCipher,
                             ),
+                        operationDispatcher = Dispatchers.IO,
                         clock = clock,
                     ),
                 chatGateway =

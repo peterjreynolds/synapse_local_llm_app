@@ -19,17 +19,22 @@ import app.synapse.privatechat.domain.account.PrivateInvitationCode
 import app.synapse.privatechat.domain.account.PrivateRemoteSessionRevocationStatus
 import app.synapse.privatechat.domain.account.PrivateUsername
 import app.synapse.privatechat.security.storage.CryptographicallyErasableEncryptedStateStorage
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.Executors
 
 class SupabasePrivateAccountGatewayTest {
     @Test
@@ -365,11 +370,39 @@ class SupabasePrivateAccountGatewayTest {
         assertSame(PrivateAccountAccessOutcome.TransportUnavailable, outcome)
     }
 
+    @Test
+    fun accountBootstrapRunsOnTheDedicatedOperationDispatcher() {
+        val backend = RecordingPrivateAccountBackend()
+        val executor =
+            Executors.newSingleThreadExecutor { task ->
+                Thread(task, ACCOUNT_OPERATION_THREAD_NAME)
+            }
+        val dispatcher = executor.asCoroutineDispatcher()
+        try {
+            val gateway =
+                gateway(
+                    backend = backend,
+                    signalRepository = InMemorySignalProtocolStateRepository(),
+                    sessionRepository = sessionRepository(),
+                    operationDispatcher = dispatcher,
+                )
+
+            val outcome = runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+
+            assertTrue(outcome is PrivateAccountAccessOutcome.Confirmed)
+            assertTrue(backend.authenticationThreadName?.startsWith(ACCOUNT_OPERATION_THREAD_NAME) == true)
+            assertTrue(backend.deviceRegistrationThreadName?.startsWith(ACCOUNT_OPERATION_THREAD_NAME) == true)
+        } finally {
+            dispatcher.close()
+        }
+    }
+
     private fun gateway(
         backend: PrivateAccountBackend,
         signalRepository: InMemorySignalProtocolStateRepository,
         sessionRepository: EncryptedPrivateSessionRepository,
         localStateInvalidator: PrivateAccountLocalStateInvalidator = NoStoredPrivateConversationStateInvalidator,
+        operationDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
     ): SupabasePrivateAccountGateway =
         SupabasePrivateAccountGateway(
             backend = backend,
@@ -379,6 +412,7 @@ class SupabasePrivateAccountGatewayTest {
                 ),
             sessionRepository = sessionRepository,
             localStateInvalidator = localStateInvalidator,
+            operationDispatcher = operationDispatcher,
             clock = FIXED_CLOCK,
         )
 
@@ -462,6 +496,10 @@ class SupabasePrivateAccountGatewayTest {
             private set
         var refreshCount = 0
             private set
+        var authenticationThreadName: String? = null
+            private set
+        var deviceRegistrationThreadName: String? = null
+            private set
 
         override suspend fun authenticate(
             command: PrivateAccountAccessCommand,
@@ -470,6 +508,7 @@ class SupabasePrivateAccountGatewayTest {
         ): PrivateAccountBackendOutcome<UnboundPrivateAccountSession> {
             authenticationFailure?.let { throw it }
             events += "authenticate"
+            authenticationThreadName = Thread.currentThread().name
             authenticatedTransportDeviceId = transportDeviceId
             this.registrationRedemptionId = registrationRedemptionId
             return authenticationOutcome
@@ -479,6 +518,7 @@ class SupabasePrivateAccountGatewayTest {
             command: PrivateDeviceBindingCommand,
         ): PrivateAccountBackendOutcome<PrivateDeviceBindingReceipt> {
             events += "registerDevice"
+            deviceRegistrationThreadName = Thread.currentThread().name
             deviceBindingCommand = command
             return deviceBindingOutcome
         }
@@ -561,5 +601,6 @@ class SupabasePrivateAccountGatewayTest {
         const val REFRESH_TOKEN = "refresh_token_material_1234567890"
         const val REFRESHED_ACCESS_TOKEN = "header.payload.refreshed-signature-material"
         const val REFRESHED_REFRESH_TOKEN = "refreshed_token_material_1234567890"
+        const val ACCOUNT_OPERATION_THREAD_NAME = "private-account-operation"
     }
 }

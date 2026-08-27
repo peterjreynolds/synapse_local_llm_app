@@ -371,7 +371,14 @@ private fun JsonObject.toSessionTokens(clock: Clock): PrivateBackendSessionToken
     )
 }
 
-private fun ByteArray.toLowerHex(): String = joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xFF) }
+private fun ByteArray.toLowerHex(): String =
+    buildString(size * 2) {
+        this@toLowerHex.forEach { byte ->
+            val unsignedByte = byte.toInt() and 0xFF
+            append(LOWER_HEX_DIGITS[unsignedByte ushr 4])
+            append(LOWER_HEX_DIGITS[unsignedByte and 0x0F])
+        }
+    }
 
 private fun malformedResponse(
     message: String,
@@ -384,3 +391,4 @@ internal class SupabaseAccountResponseException(
 ) : IllegalStateException(message, cause)
 
 private const val MAXIMUM_CLOCK_SKEW_SECONDS = 60L
+private const val LOWER_HEX_DIGITS = "0123456789abcdef"

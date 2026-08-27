@@ -1,5 +1,6 @@
 package app.synapse.privatechat.data.account
 
+import app.synapse.privatechat.crypto.SignalProtocolException
 import app.synapse.privatechat.crypto.SignalProtocolStateCorruptedException
 import app.synapse.privatechat.data.session.ConfirmedPrivateDeviceRegistration
 import app.synapse.privatechat.data.session.EncryptedPrivateSessionRepository
@@ -16,8 +17,10 @@ import app.synapse.privatechat.domain.account.PrivateAccountSignOutOutcome
 import app.synapse.privatechat.domain.account.PrivateDisplayName
 import app.synapse.privatechat.domain.account.PrivateRemoteSessionRevocationStatus
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.time.Clock
 import java.util.UUID
 
@@ -26,77 +29,88 @@ internal class SupabasePrivateAccountGateway(
     private val signalDeviceBootstrapper: PrivateSignalDeviceBootstrapper,
     private val sessionRepository: EncryptedPrivateSessionRepository,
     private val localStateInvalidator: PrivateAccountLocalStateInvalidator = NoStoredPrivateConversationStateInvalidator,
+    private val operationDispatcher: CoroutineDispatcher,
     private val clock: Clock = Clock.systemUTC(),
 ) : PrivateAccountGateway {
     private val sessionMutationMutex = Mutex()
 
     override suspend fun requestPrivateAccountAccess(command: PrivateAccountAccessCommand): PrivateAccountAccessOutcome =
-        sessionMutationMutex.withLock {
-            try {
-                requestAndPersistBoundAccount(command)
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (_: SupabaseTransportException) {
-                PrivateAccountAccessOutcome.TransportUnavailable
-            } catch (_: PrivateSessionStateUnavailableException) {
-                PrivateAccountAccessOutcome.LocalStateUnavailable
-            } catch (_: SignalProtocolStateCorruptedException) {
-                PrivateAccountAccessOutcome.LocalStateUnavailable
-            } catch (_: PrivateDeviceIdentityConflictException) {
-                PrivateAccountAccessOutcome.LocalStateUnavailable
-            } catch (_: SupabaseAccountResponseException) {
-                PrivateAccountAccessOutcome.VerificationFailed
-            } catch (_: IllegalArgumentException) {
-                PrivateAccountAccessOutcome.VerificationFailed
+        withContext(operationDispatcher) {
+            sessionMutationMutex.withLock {
+                try {
+                    requestAndPersistBoundAccount(command)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: SupabaseTransportException) {
+                    PrivateAccountAccessOutcome.TransportUnavailable
+                } catch (_: PrivateSessionStateUnavailableException) {
+                    PrivateAccountAccessOutcome.LocalStateUnavailable
+                } catch (_: SignalProtocolStateCorruptedException) {
+                    PrivateAccountAccessOutcome.LocalStateUnavailable
+                } catch (_: SignalProtocolException) {
+                    PrivateAccountAccessOutcome.LocalStateUnavailable
+                } catch (_: PrivateDeviceIdentityConflictException) {
+                    PrivateAccountAccessOutcome.LocalStateUnavailable
+                } catch (_: SupabaseAccountResponseException) {
+                    PrivateAccountAccessOutcome.VerificationFailed
+                } catch (_: IllegalArgumentException) {
+                    PrivateAccountAccessOutcome.VerificationFailed
+                }
             }
         }
 
     override suspend fun restorePrivateAccountSession(): PrivateAccountSessionOutcome =
-        sessionMutationMutex.withLock {
-            guardSessionOperation {
-                val session =
-                    sessionRepository.loadRegisteredSession()
-                        ?: return@guardSessionOperation signedOutAfterPurgingLocalState()
-                if (session.expiresAt.isAfter(clock.instant().plusSeconds(SESSION_REFRESH_WINDOW_SECONDS))) {
-                    session.toActiveOutcome()
-                } else {
-                    refreshSession(session)
+        withContext(operationDispatcher) {
+            sessionMutationMutex.withLock {
+                guardSessionOperation {
+                    val session =
+                        sessionRepository.loadRegisteredSession()
+                            ?: return@guardSessionOperation signedOutAfterPurgingLocalState()
+                    if (session.expiresAt.isAfter(clock.instant().plusSeconds(SESSION_REFRESH_WINDOW_SECONDS))) {
+                        session.toActiveOutcome()
+                    } else {
+                        refreshSession(session)
+                    }
                 }
             }
         }
 
     override suspend fun refreshPrivateAccountSession(): PrivateAccountSessionOutcome =
-        sessionMutationMutex.withLock {
-            guardSessionOperation {
-                val session =
-                    sessionRepository.loadRegisteredSession()
-                        ?: return@guardSessionOperation signedOutAfterPurgingLocalState()
-                refreshSession(session)
+        withContext(operationDispatcher) {
+            sessionMutationMutex.withLock {
+                guardSessionOperation {
+                    val session =
+                        sessionRepository.loadRegisteredSession()
+                            ?: return@guardSessionOperation signedOutAfterPurgingLocalState()
+                    refreshSession(session)
+                }
             }
         }
 
     override suspend fun signOutPrivateAccount(): PrivateAccountSignOutOutcome =
-        sessionMutationMutex.withLock {
-            try {
-                val storedSession =
-                    sessionRepository.loadRegisteredSession()
-                        ?: run {
-                            purgeLocalConversationState()
-                            return@withLock PrivateAccountSignOutOutcome.AlreadySignedOut
-                        }
-                purgeLocalConversationState()
-                sessionRepository.clearAuthenticatedSession()
-                PrivateAccountSignOutOutcome.LocallySignedOut(
-                    remoteRevocation = bestEffortRemoteSessionRevocation(storedSession),
-                )
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (_: PrivateAccountLocalStateUnavailableException) {
-                PrivateAccountSignOutOutcome.LocalStateUnavailable
-            } catch (_: PrivateSessionStateUnavailableException) {
-                PrivateAccountSignOutOutcome.LocalStateUnavailable
-            } catch (_: Exception) {
-                PrivateAccountSignOutOutcome.VerificationFailed
+        withContext(operationDispatcher) {
+            sessionMutationMutex.withLock {
+                try {
+                    val storedSession =
+                        sessionRepository.loadRegisteredSession()
+                            ?: run {
+                                purgeLocalConversationState()
+                                return@withLock PrivateAccountSignOutOutcome.AlreadySignedOut
+                            }
+                    purgeLocalConversationState()
+                    sessionRepository.clearAuthenticatedSession()
+                    PrivateAccountSignOutOutcome.LocallySignedOut(
+                        remoteRevocation = bestEffortRemoteSessionRevocation(storedSession),
+                    )
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: PrivateAccountLocalStateUnavailableException) {
+                    PrivateAccountSignOutOutcome.LocalStateUnavailable
+                } catch (_: PrivateSessionStateUnavailableException) {
+                    PrivateAccountSignOutOutcome.LocalStateUnavailable
+                } catch (_: Exception) {
+                    PrivateAccountSignOutOutcome.VerificationFailed
+                }
             }
         }
 
