@@ -8,6 +8,7 @@ import {
   parseRegisterDeviceRequest,
   parseSignInRequest,
 } from "../_shared/contracts.ts";
+import { generateInternalAccountIdentity } from "../_shared/backend.ts";
 import { deriveInviteCode } from "../_shared/crypto.ts";
 import { HttpError } from "../_shared/http.ts";
 
@@ -46,6 +47,20 @@ function deviceRegistration(overrides: Record<string, unknown> = {}): Record<str
 
 Deno.test("normalizes the public username before keyed lookup", () => {
   assertEquals(normalizeUsername("  Private_User "), "private_user");
+});
+
+Deno.test("binds each generated internal email to its Auth user id", () => {
+  const identity = generateInternalAccountIdentity();
+  assertEquals(
+    identity.internalEmail,
+    `${identity.userId}@identity.synapse-private.invalid`,
+  );
+  assertEquals(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+      identity.userId,
+    ),
+    true,
+  );
 });
 
 Deno.test("requires a 32-byte URL-safe invite capability", () => {

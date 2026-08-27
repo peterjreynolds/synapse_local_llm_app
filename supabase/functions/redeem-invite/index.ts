@@ -5,7 +5,7 @@ import {
   expectObjectRows,
   expectSingleObject,
   expectStringField,
-  generateInternalAccountEmail,
+  generateInternalAccountIdentity,
   publicSession,
   readRuntimeSecrets,
   reserveDeviceRegistrationForSession,
@@ -84,18 +84,25 @@ Deno.serve((request: Request) =>
       );
       if (initialInspection === null) throw new Error("Registration capability is unavailable");
 
-      const internalEmail = initialInspection.state === "AVAILABLE"
-        ? generateInternalAccountEmail()
-        : initialInspection.existingInternalEmail;
+      const generatedIdentity = initialInspection.state === "AVAILABLE"
+        ? generateInternalAccountIdentity()
+        : null;
+      const internalEmail = generatedIdentity?.internalEmail ??
+        initialInspection.existingInternalEmail;
       if (internalEmail === null) throw new Error("Registration receipt is incomplete");
-      if (initialInspection.state === "AVAILABLE") {
+      if (generatedIdentity !== null) {
         const { data, error } = await serviceClient.auth.admin.createUser({
+          id: generatedIdentity.userId,
           email: internalEmail,
           password: registration.password,
           email_confirm: true,
           app_metadata: { synapse_private_registration_authority: true },
         });
-        if (error !== null || data.user === null) throw new Error("Auth identity creation failed");
+        if (
+          error !== null || data.user === null || data.user.id !== generatedIdentity.userId
+        ) {
+          throw new Error("Auth identity creation failed");
+        }
         createdUserId = data.user.id;
       }
       const expectedUserId = createdUserId ?? initialInspection.existingUserId;

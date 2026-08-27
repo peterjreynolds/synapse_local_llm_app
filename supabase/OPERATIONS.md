@@ -14,6 +14,7 @@ legacy Auth identity from becoming an implicit Synapse Private account.
    - `20260825100000_enforce_idempotent_core_mutations.sql`
    - `20260825115540_bind_encrypted_chat_context_and_capacity.sql`
    - `20260825143000_disambiguate_envelope_capacity_release.sql`
+   - `20260827040000_allow_bound_auth_identity_creation.sql`
 2. Deploy `redeem-invite`, `sign-in`, `register-device`, `issue-invite`,
    `redeem-room-invite`, and `purge-expired-data` with the JWT settings in
    `config.toml`.
@@ -28,12 +29,15 @@ Every Edge Function must be redeployed after the sixth migration because all
 six import the shared runtime-secret reader. `issue-invite` also has a changed
 request and database RPC contract.
 
-The database-side `auth.users` trigger is the authoritative direct-signup
-guard. It rejects inserts and identity-changing updates unless the identity
-uses a generated internal address, has no phone number, is non-anonymous, and
-carries the server-only registration marker in `app_metadata`. A client signup
-request cannot set `app_metadata`. The official Auth hooks and disabled-signup
-settings provide additional fail-closed layers.
+The before-user-created Auth hook is the authority-marker guard. The
+database-side `auth.users` trigger independently requires every insert and
+identity-changing update to bind the caller-selected Auth UUID to the same
+generated internal address, with no phone number and no anonymous identity.
+That UUID binding remains valid while Auth writes role, confirmation state, and
+admin-supplied `app_metadata` in separate updates. Registration redemption and
+the custom-access-token hook both require the persisted server-only marker. A
+client signup request can neither choose the Auth UUID nor set `app_metadata`;
+disabled public signup adds another fail-closed layer.
 
 ## Runtime secrets
 
@@ -342,7 +346,7 @@ Record results, timestamps, and project reference without tokens, invite codes,
 peppers, derivation keys, purge capabilities, passwords, internal email, or
 ciphertext.
 
-- Migration history contains all five versions in order.
+- Migration history contains all eight versions in order.
 - Direct client, email, SMS, and anonymous signup fail.
 - Unauthorized insert and identity-changing update on `auth.users` fail through
   the database trigger.

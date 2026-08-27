@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(91);
+select plan(95);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -143,12 +143,38 @@ select ok(
   'clients cannot invoke the Auth trigger function directly'
 );
 select ok(
+  not exists (
+    select 1
+    from auth.users as auth_user
+    where not private.auth_identity_has_bound_internal_address(
+      auth_user.id,
+      auth_user.email,
+      auth_user.phone,
+      auth_user.is_anonymous
+    )
+  ),
+  'every existing Auth identity satisfies the UUID-bound internal-address invariant'
+);
+select ok(
   (
     select prosecdef and proconfig @> array['search_path=""']::text[]
     from pg_proc
     where oid = 'private.enforce_synapse_private_auth_user_identity()'::regprocedure
   ),
   'the Auth insert guard is security-definer with an empty search path'
+);
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'private.auth_identity_has_bound_internal_address(uuid,text,text,boolean)',
+    'EXECUTE'
+  )
+  and pg_get_functiondef(
+    'private.auth_identity_has_bound_internal_address(uuid,text,text,boolean)'::regprocedure
+  ) like '%p_user_id::text || ''@identity.synapse-private.invalid''%'
+  and pg_get_functiondef('private.enforce_synapse_private_auth_user_identity()'::regprocedure)
+    like '%private.auth_identity_has_bound_internal_address(%',
+  'the transient Auth insert requires an inaccessible user-id-bound internal identity'
 );
 select ok(
   lower(pg_get_functiondef('private.authorize_synapse_private_user_creation(jsonb)'::regprocedure))
@@ -276,6 +302,32 @@ select throws_ok(
   'Registration is not authorized.',
   'the database trigger rejects direct signup even without hosted hook configuration'
 );
+select lives_ok(
+  $$insert into auth.users (
+      id, aud, role, email, encrypted_password, email_confirmed_at,
+      raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+    ) values (
+      '90000000-0000-4000-8000-000000000004',
+      'authenticated',
+      'authenticated',
+      '90000000-0000-4000-8000-000000000004@identity.synapse-private.invalid',
+      '',
+      now(),
+      '{"provider":"email","providers":["email"]}',
+      '{}',
+      now(),
+      now()
+    )$$,
+  'the Auth admin phase-one insert may precede server app metadata persistence'
+);
+select lives_ok(
+  $$update auth.users
+    set updated_at = now()
+    where id = '90000000-0000-4000-8000-000000000004'$$,
+  'the bound identity permits Auth intermediate updates before app metadata persistence'
+);
+delete from auth.users
+where id = '90000000-0000-4000-8000-000000000004';
 select throws_ok(
   $$update auth.users
     set email = 'person@example.com', updated_at = now()
