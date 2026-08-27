@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import app.synapse.privatechat.domain.chat.PrivateActivityFeedAvailability
 import app.synapse.privatechat.domain.chat.PrivateActivitySharingPreferences
 import app.synapse.privatechat.domain.chat.PrivateActivitySharingState
 import app.synapse.privatechat.domain.chat.PrivatePresenceSnapshot
@@ -84,9 +85,14 @@ private fun PrivateActivitySharingSwitch(
 internal fun PrivatePresenceSummary(socialState: PrivateSocialUiState) {
     when (socialState) {
         is PrivateSocialUiState.Available -> {
-            val visiblePresence = socialState.snapshot.visiblePresence
+            val snapshot = socialState.snapshot
             Text(
-                text = privateVisiblePresenceLabel(visiblePresence),
+                text =
+                    if (snapshot.presenceAvailability == PrivateActivityFeedAvailability.AVAILABLE) {
+                        privateVisiblePresenceLabel(snapshot.visiblePresence)
+                    } else {
+                        "Online status temporarily unavailable. Conversations are still connected."
+                    },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,

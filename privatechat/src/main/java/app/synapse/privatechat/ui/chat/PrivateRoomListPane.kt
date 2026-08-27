@@ -104,7 +104,7 @@ internal fun PrivateRoomListPane(
             PrivateRoomFeedUiState.TransportUnavailable ->
                 PrivateRoomFeedStatus(
                     title = "Connection unavailable",
-                    detail = "Conversation transport is not configured in this build.",
+                    detail = "The encrypted chat service could not be reached. Check your connection and try again.",
                     modifier = Modifier.weight(1f),
                 )
 

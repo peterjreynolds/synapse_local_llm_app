@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.synapse.privatechat.domain.chat.PrivateActivityFeedAvailability
 import app.synapse.privatechat.domain.chat.PrivateConversationSnapshot
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageOwnership
@@ -74,7 +75,14 @@ internal fun PrivateMessageTimeline(
                 }
             }
         }
-        if (snapshot.typingParticipants.isNotEmpty()) {
+        if (snapshot.typingAvailability == PrivateActivityFeedAvailability.UNAVAILABLE) {
+            Text(
+                text = "Typing status temporarily unavailable.",
+                modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.compact),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (snapshot.typingParticipants.isNotEmpty()) {
             Text(
                 text = privateTypingLabel(snapshot),
                 modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.compact),

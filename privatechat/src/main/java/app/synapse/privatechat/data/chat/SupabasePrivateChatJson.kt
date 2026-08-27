@@ -154,7 +154,10 @@ internal fun SupabaseHttpResponse.requireChatMutationRejection(): SupabasePrivat
             429 -> "Too many chat actions. Try again shortly."
             else -> serverMessage?.let(::mapSafeServerRejection) ?: "The encrypted chat action could not be completed."
         }
-    return SupabasePrivateChatRequestRejectedException(userMessage)
+    return SupabasePrivateChatRequestRejectedException(
+        statusCode = statusCode,
+        userMessage = userMessage,
+    )
 }
 
 internal fun ByteArray.toLowerHex(): String =
@@ -166,8 +169,13 @@ internal class SupabasePrivateChatResponseException(
 ) : IllegalStateException(message, cause)
 
 internal class SupabasePrivateChatRequestRejectedException(
+    val statusCode: Int,
     val userMessage: String,
-) : IllegalStateException("Supabase rejected an authenticated private chat request")
+) : IllegalStateException("Supabase rejected an authenticated private chat request") {
+    init {
+        require(statusCode in 100..599) { "Supabase rejection status is invalid" }
+    }
+}
 
 private fun buildJsonObjectForField(
     field: String,

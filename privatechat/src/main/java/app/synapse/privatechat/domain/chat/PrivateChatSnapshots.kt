@@ -38,6 +38,11 @@ enum class PrivateActivitySharingState {
     ENABLED,
 }
 
+enum class PrivateActivityFeedAvailability {
+    AVAILABLE,
+    UNAVAILABLE,
+}
+
 enum class PrivateMessageRetention(
     val durationSeconds: Int,
     val label: String,
@@ -182,6 +187,7 @@ data class PrivateConversationSnapshot(
     val members: List<PrivateRoomMemberSnapshot>,
     val messages: List<PrivateMessageSnapshot>,
     val typingParticipants: List<PrivateTypingParticipant>,
+    val typingAvailability: PrivateActivityFeedAvailability = PrivateActivityFeedAvailability.AVAILABLE,
 ) {
     init {
         require(members.size == room.participantCount) {

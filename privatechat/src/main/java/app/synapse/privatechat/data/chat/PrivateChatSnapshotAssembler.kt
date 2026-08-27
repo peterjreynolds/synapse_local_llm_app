@@ -1,6 +1,7 @@
 package app.synapse.privatechat.data.chat
 
 import app.synapse.privatechat.domain.account.PrivateAccountId
+import app.synapse.privatechat.domain.chat.PrivateActivityFeedAvailability
 import app.synapse.privatechat.domain.chat.PrivateConversationSnapshot
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageOwnership
@@ -109,6 +110,7 @@ internal class PrivateChatSnapshotAssembler {
                     )
                 },
             typingParticipants = typingParticipants(state, roomId, profiles, currentAccountId),
+            typingAvailability = state.backend.typing.toDomainAvailability(),
         )
     }
 
@@ -119,6 +121,7 @@ internal class PrivateChatSnapshotAssembler {
         val devices = state.backend.devices.associateBy { device -> device.address.transportDeviceId }
         val visiblePresence =
             state.backend.presence
+                .records
                 .map { presence ->
                     val accountId = devices.getValue(presence.deviceId).address.accountId
                     accountId to presence
@@ -150,6 +153,7 @@ internal class PrivateChatSnapshotAssembler {
                 ),
             presenceSharing = ownProfile.presenceSharing,
             visiblePresence = visiblePresence,
+            presenceAvailability = state.backend.presence.toDomainAvailability(),
         )
     }
 
@@ -288,6 +292,7 @@ internal class PrivateChatSnapshotAssembler {
     ): List<PrivateTypingParticipant> {
         val devices = state.backend.devices.associateBy { device -> device.address.transportDeviceId }
         return state.backend.typing
+            .records
             .filter { typing -> typing.roomId == roomId }
             .map { typing -> devices.getValue(typing.deviceId).address.accountId to typing }
             .filter { (accountId, _) -> accountId != currentAccountId }
@@ -333,3 +338,9 @@ private fun PrivateRoomMemberRole.sortOrder(): Int =
     }
 
 private fun malformedSnapshot(message: String): Nothing = throw SupabasePrivateChatResponseException(message)
+
+private fun PrivateBackendActivityFeed<*>.toDomainAvailability(): PrivateActivityFeedAvailability =
+    when (this) {
+        is PrivateBackendActivityFeed.Available -> PrivateActivityFeedAvailability.AVAILABLE
+        PrivateBackendActivityFeed.AccessDenied -> PrivateActivityFeedAvailability.UNAVAILABLE
+    }

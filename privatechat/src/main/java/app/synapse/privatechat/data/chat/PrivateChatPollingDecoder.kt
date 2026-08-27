@@ -422,12 +422,12 @@ private class PrivatePollingGraph private constructor(
                     malformedPollingGraph("Message receipt references an unavailable server record")
                 }
             }
-            state.typing.forEach { typing ->
+            state.typing.records.forEach { typing ->
                 if (rooms[typing.roomId] == null || devices[typing.deviceId] == null) {
                     malformedPollingGraph("Typing state references an unavailable server record")
                 }
             }
-            state.presence.forEach { presence ->
+            state.presence.records.forEach { presence ->
                 if (devices[presence.deviceId] == null) {
                     malformedPollingGraph("Presence state references an unavailable device")
                 }

@@ -74,11 +74,15 @@ internal class SupabasePrivateChatPollingApi(
                 }
             val typing =
                 async {
-                    getExpiringTable(session, "typing_state", TYPING_COLUMNS, now).parseTyping(now)
+                    loadActivityFeed {
+                        getExpiringTable(session, "typing_state", TYPING_COLUMNS, now).parseTyping(now)
+                    }
                 }
             val presence =
                 async {
-                    getExpiringTable(session, "presence_state", PRESENCE_COLUMNS, now).parsePresence(now)
+                    loadActivityFeed {
+                        getExpiringTable(session, "presence_state", PRESENCE_COLUMNS, now).parsePresence(now)
+                    }
                 }
 
             val messageRecords = messages.await()
@@ -151,6 +155,14 @@ internal class SupabasePrivateChatPollingApi(
             selectedColumns = selectedColumns,
             filters = mapOf("expires_at" to "gt.$now"),
         )
+
+    private suspend fun <Record> loadActivityFeed(loadRecords: suspend () -> List<Record>): PrivateBackendActivityFeed<Record> =
+        try {
+            PrivateBackendActivityFeed.Available(loadRecords())
+        } catch (rejection: SupabasePrivateChatRequestRejectedException) {
+            if (rejection.statusCode != HTTP_FORBIDDEN) throw rejection
+            PrivateBackendActivityFeed.AccessDenied
+        }
 
     private suspend fun getTable(
         session: PrivateChatAuthenticatedSession,
@@ -317,6 +329,7 @@ private fun requireCompleteCurrentDeviceEnvelopeSet(
 private fun malformedPollingRelation(message: String): Nothing = throw SupabasePrivateChatResponseException(message)
 
 private const val POLLING_QUERY_ROW_LIMIT = 2_001
+private const val HTTP_FORBIDDEN = 403
 private const val MAXIMUM_MESSAGE_CIPHERTEXT_BYTES = 262_144
 private const val MAXIMUM_REACTION_CIPHERTEXT_BYTES = 16_384
 private const val PROFILE_COLUMNS =

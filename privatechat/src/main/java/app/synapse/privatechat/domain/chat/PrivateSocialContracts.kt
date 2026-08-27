@@ -148,6 +148,7 @@ data class PrivateSocialSnapshot(
     val profile: PrivateProfileSnapshot,
     val presenceSharing: PrivatePresenceSharingState,
     val visiblePresence: List<PrivatePresenceSnapshot>,
+    val presenceAvailability: PrivateActivityFeedAvailability = PrivateActivityFeedAvailability.AVAILABLE,
 ) {
     init {
         require(profile.accountId == accountId) { "The social profile must belong to the current account." }
