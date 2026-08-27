@@ -24,7 +24,7 @@ jobs:
       EXPECTED_MINIMUM_ANDROID_API: "28"
       EXPECTED_APK_ABIS: arm64-v8a,armeabi-v7a,x86_64
       EXPECTED_SIGNING_CERTIFICATE_SHA256: 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b
-      MAXIMUM_APK_BYTES: "524288000"
+      MAXIMUM_APK_BYTES: "67108864"
 
     steps:
       - name: Check out repository
