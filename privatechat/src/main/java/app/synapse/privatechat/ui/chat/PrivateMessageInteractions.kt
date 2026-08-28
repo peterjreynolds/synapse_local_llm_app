@@ -55,7 +55,8 @@ internal fun privateMessageActionOptions(message: PrivateMessageSnapshot): List<
 @Composable
 internal fun PrivateMessageActionsDialog(
     message: PrivateMessageSnapshot,
-    enabled: Boolean,
+    localActionsEnabled: Boolean,
+    transportActionsEnabled: Boolean,
     onDismiss: () -> Unit,
     onReply: () -> Unit,
     onCopy: () -> Unit,
@@ -95,7 +96,7 @@ internal fun PrivateMessageActionsDialog(
                 )
                 PrivateQuickReactionPalette(
                     selectedEmojis = selectedReactions,
-                    enabled = enabled,
+                    enabled = transportActionsEnabled,
                     onEmojiSelected = { emoji ->
                         onDismiss()
                         onReact(emoji)
@@ -104,7 +105,7 @@ internal fun PrivateMessageActionsDialog(
                 TextButton(
                     onClick = { showFullEmojiPicker = true },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = enabled,
+                    enabled = transportActionsEnabled,
                 ) {
                     Text("More emojis…")
                 }
@@ -121,7 +122,15 @@ internal fun PrivateMessageActionsDialog(
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = enabled,
+                        enabled =
+                            when (action) {
+                                PrivateMessageActionOption.REPLY,
+                                PrivateMessageActionOption.COPY,
+                                PrivateMessageActionOption.EDIT,
+                                -> localActionsEnabled
+
+                                PrivateMessageActionOption.DELETE_FOR_EVERYONE -> transportActionsEnabled
+                            },
                         colors =
                             if (action == PrivateMessageActionOption.DELETE_FOR_EVERYONE) {
                                 ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)

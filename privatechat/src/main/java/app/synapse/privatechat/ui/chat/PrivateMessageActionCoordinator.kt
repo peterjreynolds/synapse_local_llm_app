@@ -5,6 +5,7 @@ import app.synapse.privatechat.domain.chat.ChangePrivateReactionCommand
 import app.synapse.privatechat.domain.chat.DeletePrivateMessageForEveryoneCommand
 import app.synapse.privatechat.domain.chat.EditPrivateMessageCommand
 import app.synapse.privatechat.domain.chat.PrivateChatGateway
+import app.synapse.privatechat.domain.chat.PrivateClientMutationId
 import app.synapse.privatechat.domain.chat.PrivateClientMutationIdFactory
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageOwnership
@@ -27,12 +28,14 @@ internal class PrivateMessageActionCoordinator(
     private val activitySharingCoordinator: PrivateActivitySharingCoordinator,
     private val activeAccountId: () -> PrivateAccountId?,
 ) {
+    private var pendingMutationRecovery: PrivatePendingMessageMutationRecovery? = null
+
     fun updateComposerText(text: String) {
         if (text.length > PRIVATE_COMPOSER_INPUT_LIMIT) return
         val wasBlank = stateStore.current.composerText.isBlank()
         stateStore.update { state -> state.copy(composerText = text) }
         val isBlank = text.isBlank()
-        if (wasBlank != isBlank) {
+        if (wasBlank != isBlank && conversationTransportIsConnected()) {
             activitySharingCoordinator.publishTypingStateIfEnabled(
                 if (isBlank) PrivateTypingState.INACTIVE else PrivateTypingState.ACTIVE,
             )
@@ -74,7 +77,9 @@ internal class PrivateMessageActionCoordinator(
                     ),
             )
         }
-        activitySharingCoordinator.publishTypingStateIfEnabled(PrivateTypingState.ACTIVE)
+        if (conversationTransportIsConnected()) {
+            activitySharingCoordinator.publishTypingStateIfEnabled(PrivateTypingState.ACTIVE)
+        }
     }
 
     fun cancelComposerContext() {
@@ -97,8 +102,12 @@ internal class PrivateMessageActionCoordinator(
     fun submitComposer() {
         val accountId = activeAccountId() ?: return
         val submittedState = stateStore.current
-        val conversation =
-            (submittedState.conversation as? PrivateConversationUiState.Available)?.snapshot ?: return
+        val submittedComposer =
+            PrivateSubmittedComposerState(
+                text = submittedState.composerText,
+                mode = submittedState.composerMode,
+            )
+        val conversation = connectedConversationSnapshotOrReject(submittedState) ?: return
         when (val validation = validatePrivateMessageText(submittedState.composerText)) {
             is PrivateMessageTextValidation.Rejected ->
                 mutationCoordinator.rejectChatInput(validation.field, validation.userMessage)
@@ -120,7 +129,16 @@ internal class PrivateMessageActionCoordinator(
                             kind = PrivateChatOperationKind.SEND_MESSAGE,
                             request = { gateway.sendMessage(command) },
                             receiptMatches = { receipt -> PrivateChatReceiptValidator.matches(receipt, command) },
-                            onConfirmed = { clearSubmittedComposer(submittedState) },
+                            onConfirmed = { clearSubmittedComposer(submittedComposer) },
+                            onTransportUnavailable = {
+                                pendingMutationRecovery =
+                                    PrivatePendingMessageMutationRecovery.Composer(
+                                        mutationId = command.mutationId,
+                                        kind = PrivateChatOperationKind.SEND_MESSAGE,
+                                        submittedComposer = submittedComposer,
+                                    )
+                                markConversationReconnecting()
+                            },
                         )
                     }
 
@@ -130,7 +148,7 @@ internal class PrivateMessageActionCoordinator(
                             roomId = conversation.room.roomId,
                             mode = mode,
                             validation = validation,
-                            submittedState = submittedState,
+                            submittedComposer = submittedComposer,
                         )
                 }
         }
@@ -141,7 +159,7 @@ internal class PrivateMessageActionCoordinator(
         reactionInput: String,
     ) {
         val accountId = activeAccountId() ?: return
-        val message = findPresentedMessage(messageId) ?: return
+        val message = findConnectedMessageOrReject(messageId) ?: return
         when (val validation = validatePrivateReaction(reactionInput)) {
             is PrivateReactionValidation.Rejected ->
                 mutationCoordinator.rejectChatInput(validation.field, validation.userMessage)
@@ -168,6 +186,14 @@ internal class PrivateMessageActionCoordinator(
                     kind = PrivateChatOperationKind.CHANGE_REACTION,
                     request = { gateway.changeReaction(command) },
                     receiptMatches = { receipt -> PrivateChatReceiptValidator.matches(receipt, command) },
+                    onTransportUnavailable = {
+                        pendingMutationRecovery =
+                            PrivatePendingMessageMutationRecovery.WithoutComposer(
+                                mutationId = command.mutationId,
+                                kind = PrivateChatOperationKind.CHANGE_REACTION,
+                            )
+                        markConversationReconnecting()
+                    },
                 )
             }
         }
@@ -175,7 +201,7 @@ internal class PrivateMessageActionCoordinator(
 
     fun deleteMessageForEveryone(messageId: PrivateMessageId) {
         val accountId = activeAccountId() ?: return
-        val message = findPresentedMessage(messageId) ?: return
+        val message = findConnectedMessageOrReject(messageId) ?: return
         if (message.ownership != PrivateMessageOwnership.CURRENT_ACCOUNT) {
             mutationCoordinator.rejectAction("Only your own messages can be deleted for everyone.")
             return
@@ -192,6 +218,7 @@ internal class PrivateMessageActionCoordinator(
             kind = PrivateChatOperationKind.DELETE_MESSAGE_FOR_EVERYONE,
             request = { gateway.deleteMessageForEveryone(command) },
             receiptMatches = { receipt -> PrivateChatReceiptValidator.matches(receipt, command) },
+            onTransportUnavailable = ::markConversationReconnecting,
         )
     }
 
@@ -201,12 +228,34 @@ internal class PrivateMessageActionCoordinator(
         }
     }
 
+    /** Drops account-scoped plaintext and recovery correlation before the ViewModel changes owners. */
+    fun resetForAccountTransition() {
+        pendingMutationRecovery = null
+        clearComposer()
+    }
+
+    fun acceptRecoveredMutations(recoveredMutationIds: Set<PrivateClientMutationId>) {
+        val pendingRecovery = pendingMutationRecovery ?: return
+        if (pendingRecovery.mutationId !in recoveredMutationIds) return
+        pendingMutationRecovery = null
+        if (pendingRecovery is PrivatePendingMessageMutationRecovery.Composer) {
+            clearSubmittedComposer(pendingRecovery.submittedComposer)
+        }
+        stateStore.update { state ->
+            if (state.operation is PrivateChatOperationUiState.TransportUnavailable) {
+                state.copy(operation = PrivateChatOperationUiState.Recovered(pendingRecovery.kind))
+            } else {
+                state
+            }
+        }
+    }
+
     private fun submitMessageEdit(
         accountId: PrivateAccountId,
         roomId: app.synapse.privatechat.domain.chat.PrivateRoomId,
         mode: PrivateComposerMode.Editing,
         validation: PrivateMessageTextValidation.Accepted,
-        submittedState: PrivateChatUiState,
+        submittedComposer: PrivateSubmittedComposerState,
     ) {
         if (validation.message == mode.originalBody) {
             mutationCoordinator.rejectAction("Change the message before saving it.")
@@ -225,15 +274,24 @@ internal class PrivateMessageActionCoordinator(
             kind = PrivateChatOperationKind.EDIT_MESSAGE,
             request = { gateway.editMessage(command) },
             receiptMatches = { receipt -> PrivateChatReceiptValidator.matches(receipt, command) },
-            onConfirmed = { clearSubmittedComposer(submittedState) },
+            onConfirmed = { clearSubmittedComposer(submittedComposer) },
+            onTransportUnavailable = {
+                pendingMutationRecovery =
+                    PrivatePendingMessageMutationRecovery.Composer(
+                        mutationId = command.mutationId,
+                        kind = PrivateChatOperationKind.EDIT_MESSAGE,
+                        submittedComposer = submittedComposer,
+                    )
+                markConversationReconnecting()
+            },
         )
     }
 
-    private fun clearSubmittedComposer(submittedState: PrivateChatUiState) {
+    private fun clearSubmittedComposer(submittedComposer: PrivateSubmittedComposerState) {
         stateStore.update { state ->
             if (
-                state.composerText == submittedState.composerText &&
-                state.composerMode == submittedState.composerMode
+                state.composerText == submittedComposer.text &&
+                state.composerMode == submittedComposer.mode
             ) {
                 state.copy(composerText = "", composerMode = PrivateComposerMode.NewMessage)
             } else {
@@ -244,9 +302,31 @@ internal class PrivateMessageActionCoordinator(
     }
 
     private fun publishInactiveTypingForBlankComposer() {
-        if (stateStore.current.composerText.isBlank()) {
+        if (stateStore.current.composerText.isBlank() && conversationTransportIsConnected()) {
             activitySharingCoordinator.publishTypingStateIfEnabled(PrivateTypingState.INACTIVE)
         }
+    }
+
+    private fun connectedConversationSnapshotOrReject(
+        state: PrivateChatUiState = stateStore.current,
+    ): app.synapse.privatechat.domain.chat.PrivateConversationSnapshot? {
+        val snapshot = PrivateChatMutationAvailability.connectedConversationSnapshot(state)
+        if (snapshot == null) {
+            mutationCoordinator.rejectAction(PRIVATE_RECONNECT_BEFORE_MUTATION_MESSAGE)
+        }
+        return snapshot
+    }
+
+    private fun findConnectedMessageOrReject(messageId: PrivateMessageId): PrivateMessageSnapshot? =
+        connectedConversationSnapshotOrReject()
+            ?.messages
+            ?.firstOrNull { message -> message.messageId == messageId }
+
+    private fun conversationTransportIsConnected(): Boolean =
+        PrivateChatMutationAvailability.connectedConversationSnapshot(stateStore.current) != null
+
+    private fun markConversationReconnecting() {
+        stateStore.update(PrivateChatUiReducer::markConversationTransportUnavailable)
     }
 
     private fun findPresentedMessage(messageId: PrivateMessageId): PrivateMessageSnapshot? =
@@ -254,3 +334,28 @@ internal class PrivateMessageActionCoordinator(
 }
 
 internal const val PRIVATE_COMPOSER_INPUT_LIMIT = 4_096
+internal const val PRIVATE_RECONNECT_BEFORE_MUTATION_MESSAGE =
+    "Reconnect before sending or changing conversation data."
+
+private sealed interface PrivatePendingMessageMutationRecovery {
+    val mutationId: PrivateClientMutationId
+    val kind: PrivateChatOperationKind
+
+    data class Composer(
+        override val mutationId: PrivateClientMutationId,
+        override val kind: PrivateChatOperationKind,
+        val submittedComposer: PrivateSubmittedComposerState,
+    ) : PrivatePendingMessageMutationRecovery
+
+    data class WithoutComposer(
+        override val mutationId: PrivateClientMutationId,
+        override val kind: PrivateChatOperationKind,
+    ) : PrivatePendingMessageMutationRecovery
+}
+
+private data class PrivateSubmittedComposerState(
+    val text: String,
+    val mode: PrivateComposerMode,
+) {
+    override fun toString(): String = "PrivateSubmittedComposerState(text=[REDACTED], mode=${mode::class.simpleName})"
+}

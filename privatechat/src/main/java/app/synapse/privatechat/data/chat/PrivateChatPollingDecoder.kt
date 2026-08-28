@@ -37,6 +37,7 @@ internal data class PrivateResolvedPollingState(
     val messages: Map<UUID, PrivateResolvedMessage>,
     val reactions: Map<UUID, PrivateResolvedReaction>,
     val loadedAt: Instant,
+    val recoveredMutationIds: Set<UUID> = emptySet(),
 )
 
 /** Serializes Signal envelope consumption while allowing every observer to reuse the durable cache. */
@@ -44,6 +45,7 @@ internal class PrivateChatPollingRepository(
     private val backend: PrivateChatPollingBackend,
     private val envelopeCipher: PrivateChatEnvelopeCipher,
     private val payloadCache: PrivateDecryptedPayloadCacheRepository,
+    private val pendingMutationRecovery: PrivatePendingOutboundMutationRecovery,
     private val clock: Clock = Clock.systemUTC(),
 ) {
     private val pollingMutex = Mutex()
@@ -54,27 +56,34 @@ internal class PrivateChatPollingRepository(
             val now = clock.instant()
             if (!session.isUsableAt(now)) {
                 recentState = null
+                pendingMutationRecovery.clearRecoveredMutationIds()
                 payloadCache.clearForSessionInvalidation()
                 throw SupabasePrivateChatResponseException("Authenticated chat session is unavailable")
             }
+            val newlyRecoveredMutationIds = pendingMutationRecovery.recoverPendingMutations(session)
+            val recoveredMutationIds =
+                newlyRecoveredMutationIds + pendingMutationRecovery.retainedRecoveredMutationIds(session)
+            if (newlyRecoveredMutationIds.isNotEmpty()) recentState = null
             recentState?.let { cached ->
                 if (
                     cached.session.hasSameAuthenticatedDeviceAs(session) &&
                     !now.isBefore(cached.loadedAt) &&
                     now.isBefore(cached.loadedAt.plusMillis(MAXIMUM_RESOLVED_STATE_REUSE_MILLIS))
                 ) {
-                    return@withLock cached
+                    return@withLock cached.copy(recoveredMutationIds = recoveredMutationIds)
                 }
             }
             val backendState = backend.loadPollingState(session, now)
-            PrivateChatPollingDecoder(envelopeCipher, payloadCache).decode(session, backendState, now).also { resolved ->
-                recentState = resolved
-            }
+            PrivateChatPollingDecoder(envelopeCipher, payloadCache)
+                .decode(session, backendState, now)
+                .copy(recoveredMutationIds = recoveredMutationIds)
+                .also { resolved -> recentState = resolved }
         }
 
     suspend fun clearForSessionInvalidation() {
         pollingMutex.withLock {
             recentState = null
+            pendingMutationRecovery.clearRecoveredMutationIds()
             payloadCache.clearForSessionInvalidation()
         }
     }

@@ -174,6 +174,7 @@ data class PrivateRoomFeedSnapshot(
     val accountId: PrivateAccountId,
     val rooms: List<PrivateRoomSummary>,
     val activitySharingPreferences: PrivateActivitySharingPreferences,
+    val recoveredMutationIds: Set<PrivateClientMutationId> = emptySet(),
 ) {
     init {
         require(rooms.distinctBy(PrivateRoomSummary::roomId).size == rooms.size) {
@@ -189,6 +190,7 @@ data class PrivateConversationSnapshot(
     val messages: List<PrivateMessageSnapshot>,
     val typingParticipants: List<PrivateTypingParticipant>,
     val typingAvailability: PrivateActivityFeedAvailability = PrivateActivityFeedAvailability.AVAILABLE,
+    val recoveredMutationIds: Set<PrivateClientMutationId> = emptySet(),
 ) {
     init {
         require(members.size == room.participantCount) {

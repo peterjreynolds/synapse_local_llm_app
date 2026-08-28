@@ -31,7 +31,9 @@ internal fun PrivateChatOperationNotice(
     modifier: Modifier = Modifier,
 ) {
     val notice = privateOperationNotice(operation) ?: return
-    val confirmed = operation is PrivateChatOperationUiState.Confirmed
+    val confirmed =
+        operation is PrivateChatOperationUiState.Confirmed ||
+            operation is PrivateChatOperationUiState.Recovered
     Surface(
         onClick = onDismiss,
         modifier = modifier.fillMaxWidth(),
@@ -241,7 +243,11 @@ internal fun PrivateConversationStatus(
             CircularProgressIndicator()
             Spacer(Modifier.height(16.dp))
         }
-        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
         Spacer(Modifier.height(4.dp))
         Text(
             text = detail,
@@ -278,6 +284,15 @@ private fun privateOperationNotice(operation: PrivateChatOperationUiState): Stri
             }
 
         is PrivateChatOperationUiState.InvalidInput -> operation.userMessage
+        is PrivateChatOperationUiState.Recovered ->
+            when (operation.kind) {
+                PrivateChatOperationKind.SEND_MESSAGE -> "Message send recovered after reconnecting."
+                PrivateChatOperationKind.EDIT_MESSAGE -> "Message edit recovered after reconnecting."
+                PrivateChatOperationKind.CHANGE_REACTION -> "Reaction recovered after reconnecting."
+                PrivateChatOperationKind.CREATE_ROOM -> "Conversation creation recovered after reconnecting."
+                else -> "Earlier request recovered after reconnecting."
+            }
+
         is PrivateChatOperationUiState.Rejected -> operation.userMessage
         PrivateChatOperationUiState.TransportUnavailable ->
             "The request was not confirmed because conversation transport is unavailable."

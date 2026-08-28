@@ -6,6 +6,28 @@ import app.synapse.privatechat.domain.chat.PrivateRoomId
 import app.synapse.privatechat.domain.chat.PrivateRoomSummary
 
 internal object PrivateChatUiReducer {
+    fun markRoomFeedTransportUnavailable(state: PrivateChatUiState): PrivateChatUiState =
+        state.copy(
+            roomFeed =
+                when (val roomFeed = state.roomFeed) {
+                    is PrivateRoomFeedUiState.Available ->
+                        roomFeed.copy(connectionState = PrivateChatConnectionUiState.RECONNECTING)
+
+                    else -> PrivateRoomFeedUiState.TransportUnavailable
+                },
+        )
+
+    fun markConversationTransportUnavailable(state: PrivateChatUiState): PrivateChatUiState =
+        state.copy(
+            conversation =
+                when (val conversation = state.conversation) {
+                    is PrivateConversationUiState.Available ->
+                        conversation.copy(connectionState = PrivateChatConnectionUiState.RECONNECTING)
+
+                    else -> PrivateConversationUiState.TransportUnavailable
+                },
+        )
+
     fun acceptRoomFeed(
         state: PrivateChatUiState,
         snapshot: PrivateRoomFeedSnapshot,
@@ -26,6 +48,11 @@ internal object PrivateChatUiReducer {
             )
         }
     }
+
+    fun acceptConversation(
+        state: PrivateChatUiState,
+        snapshot: app.synapse.privatechat.domain.chat.PrivateConversationSnapshot,
+    ): PrivateChatUiState = state.copy(conversation = PrivateConversationUiState.Available(snapshot))
 
     fun updatePresentedRoom(
         state: PrivateChatUiState,

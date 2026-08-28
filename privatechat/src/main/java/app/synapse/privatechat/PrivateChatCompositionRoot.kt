@@ -178,14 +178,15 @@ class PrivateChatCompositionRoot private constructor(
                     clock = clock,
                 )
             val execution = PrivateChatGatewayExecution(sessionResolver)
+            val encryptedMutationOutbox = PrivateEncryptedMutationOutbox(envelopeCipher, chatBackend, clock)
             val pollingRepository =
                 PrivateChatPollingRepository(
                     backend = chatBackend,
                     envelopeCipher = envelopeCipher,
                     payloadCache = payloadCache,
+                    pendingMutationRecovery = encryptedMutationOutbox,
                     clock = clock,
                 )
-            val encryptedMutationOutbox = PrivateEncryptedMutationOutbox(envelopeCipher, chatBackend, clock)
             val snapshotAssembler = PrivateChatSnapshotAssembler()
             val chatMutations =
                 PrivateChatMutationCoordinator(

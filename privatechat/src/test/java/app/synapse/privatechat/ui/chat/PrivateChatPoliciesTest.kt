@@ -91,6 +91,130 @@ class PrivateChatPoliciesTest {
     }
 
     @Test
+    fun `transport loss keeps the last confirmed room feed visible while reconnecting`() {
+        val snapshot =
+            PrivateRoomFeedSnapshot(
+                accountId = PrivateAccountId("current"),
+                rooms = listOf(roomSummary()),
+                activitySharingPreferences = PrivateActivitySharingPreferences(),
+            )
+        val state =
+            PrivateChatUiState(
+                roomFeed = PrivateRoomFeedUiState.Available(snapshot),
+            )
+
+        val reduced = PrivateChatUiReducer.markRoomFeedTransportUnavailable(state)
+        val roomFeed = reduced.roomFeed as PrivateRoomFeedUiState.Available
+
+        assertEquals(snapshot, roomFeed.snapshot)
+        assertEquals(PrivateChatConnectionUiState.RECONNECTING, roomFeed.connectionState)
+    }
+
+    @Test
+    fun `transport loss keeps the last confirmed conversation visible while reconnecting`() {
+        val now = Instant.parse("2026-08-20T18:00:00Z")
+        val currentAccount = PrivateAccountId("current")
+        val room = roomSummary()
+        val snapshot =
+            PrivateConversationSnapshot(
+                accountId = currentAccount,
+                room = room,
+                members =
+                    listOf(
+                        PrivateRoomMemberSnapshot(currentAccount, "Current", PrivateRoomMemberRole.OWNER),
+                        PrivateRoomMemberSnapshot(
+                            PrivateAccountId("friend"),
+                            "Friend",
+                            PrivateRoomMemberRole.MEMBER,
+                        ),
+                    ),
+                messages = listOf(message(room.roomId, "confirmed", now, now.plusSeconds(60))),
+                typingParticipants = emptyList(),
+            )
+        val state =
+            PrivateChatUiState(
+                selectedRoomId = room.roomId,
+                conversation = PrivateConversationUiState.Available(snapshot),
+            )
+
+        val reduced = PrivateChatUiReducer.markConversationTransportUnavailable(state)
+        val conversation = reduced.conversation as PrivateConversationUiState.Available
+
+        assertEquals(snapshot, conversation.snapshot)
+        assertEquals(PrivateChatConnectionUiState.RECONNECTING, conversation.connectionState)
+    }
+
+    @Test
+    fun `fresh room feed restores connected mutation availability after reconnecting`() {
+        val currentAccount = PrivateAccountId("current")
+        val room = roomSummary()
+        val snapshot =
+            PrivateRoomFeedSnapshot(
+                accountId = currentAccount,
+                rooms = listOf(room),
+                activitySharingPreferences = PrivateActivitySharingPreferences(),
+            )
+        val state =
+            PrivateChatUiState(
+                roomFeed =
+                    PrivateRoomFeedUiState.Available(
+                        snapshot = snapshot,
+                        connectionState = PrivateChatConnectionUiState.RECONNECTING,
+                    ),
+            )
+
+        val reduced = PrivateChatUiReducer.acceptRoomFeed(state, snapshot)
+        val roomFeed = reduced.roomFeed as PrivateRoomFeedUiState.Available
+
+        assertEquals(PrivateChatConnectionUiState.CONNECTED, roomFeed.connectionState)
+        assertEquals(snapshot, PrivateChatMutationAvailability.connectedRoomFeedSnapshot(reduced))
+    }
+
+    @Test
+    fun `reconnecting conversation keeps local content but disables transport mutations until recovery`() {
+        val now = Instant.parse("2026-08-20T18:00:00Z")
+        val currentAccount = PrivateAccountId("current")
+        val room = roomSummary()
+        val snapshot =
+            PrivateConversationSnapshot(
+                accountId = currentAccount,
+                room = room,
+                members =
+                    listOf(
+                        PrivateRoomMemberSnapshot(currentAccount, "Current", PrivateRoomMemberRole.OWNER),
+                        PrivateRoomMemberSnapshot(
+                            PrivateAccountId("friend"),
+                            "Friend",
+                            PrivateRoomMemberRole.MEMBER,
+                        ),
+                    ),
+                messages = listOf(message(room.roomId, "confirmed", now, now.plusSeconds(60))),
+                typingParticipants = emptyList(),
+            )
+        val reconnecting =
+            PrivateChatUiState(
+                selectedRoomId = room.roomId,
+                conversation =
+                    PrivateConversationUiState.Available(
+                        snapshot = snapshot,
+                        connectionState = PrivateChatConnectionUiState.RECONNECTING,
+                    ),
+                composerText = "local draft remains available",
+            )
+
+        assertNull(PrivateChatMutationAvailability.connectedConversationSnapshot(reconnecting))
+        assertEquals("local draft remains available", reconnecting.composerText)
+
+        val recovered = PrivateChatUiReducer.acceptConversation(reconnecting, snapshot)
+
+        assertEquals(snapshot, PrivateChatMutationAvailability.connectedConversationSnapshot(recovered))
+        assertEquals(
+            PrivateChatConnectionUiState.CONNECTED,
+            (recovered.conversation as PrivateConversationUiState.Available).connectionState,
+        )
+    }
+
+    @Test
     fun `retention receipt must match every command identity field`() {
         val command =
             ChangePrivateRoomRetentionCommand(

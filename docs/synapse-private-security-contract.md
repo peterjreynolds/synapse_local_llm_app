@@ -24,11 +24,12 @@ delete-for-everyone, four timed-retention policies, archive, pin, mute, optional
 presence, optional typing indicators, and optional read receipts.
 
 The current build deliberately does **not** include attachments, voice notes,
-voice/video calls, TURN configuration, push notifications, plaintext search,
-or an end-user safety-number verification screen. These features must remain
-disabled rather than use a weaker fallback. A newly joined device also shows a
-generic encrypted-room title until an authorized current device publishes a
-new metadata envelope; automatic metadata backfill is not implemented yet.
+voice/video calls, TURN configuration, push notifications, server-side or
+persistent plaintext search, or an end-user safety-number verification screen.
+These features must remain disabled rather than use a weaker fallback. A newly
+joined device also shows a generic encrypted-room title until an authorized
+current device publishes a new metadata envelope; automatic metadata backfill
+is not implemented yet.
 
 This build is not Signal and is not connected to the Signal service. It embeds
 the pinned libsignal library as a cryptographic implementation detail. The
@@ -95,6 +96,12 @@ transport and must not be inferred from content encryption.
   client mutation identifiers match the authoritative room row. Room, message,
   and reaction mutation receipts echo their request context, and the Android
   client rejects a receipt that does not match its request.
+- An encrypted mutation is committed to the device outbox before dispatch. A
+  poll resolves any ambiguous pending request with its original mutation ID
+  and ciphertext before publishing a connected snapshot. If a later request
+  reaches the outbox first, the earlier request is recovered and the later
+  request is rejected until the caller refreshes, preventing duplicate sends
+  or room creation under a new mutation ID.
 - Cryptographic library versions and artifact hashes are pinned. Dependency and
   license review is a release gate.
 
@@ -156,8 +163,9 @@ history, server-side full-text index, or server-side conversation export.
 - Android secure-window protection blocks ordinary screenshots and recent-app
   previews. Leaving the foreground synchronously closes invitation overlays,
   clears displayed one-use codes, and cancels in-flight invitation requests.
-- Plaintext search is not implemented in the current rolling release. A future
-  search feature may index only currently unexpired messages in memory.
+- Conversation search scans only the currently presented, unexpired confirmed
+  room titles, senders, and latest-message previews in memory. Search queries
+  and indexes are not persisted or sent to Supabase.
 - Debug archives and logs contain bounded state and correlation identifiers,
   never usernames, message content, keys, tokens, invite codes, object paths,
   call descriptions, ICE candidates, or network addresses.

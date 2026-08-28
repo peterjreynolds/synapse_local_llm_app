@@ -89,6 +89,10 @@ private fun AvailableConversation(
 ) {
     val tokens = SynapsePrivateDesignSystem.tokens
     val actionRunning = state.operation is PrivateChatOperationUiState.Running
+    val localInteractionsEnabled = !actionRunning
+    val transportMutationsEnabled =
+        localInteractionsEnabled &&
+            PrivateChatMutationAvailability.connectedConversationSnapshot(state) != null
     val snapshot = conversation.snapshot
     val context = LocalContext.current
     var selectedMessageId by remember(snapshot.room.roomId) { mutableStateOf<PrivateMessageId?>(null) }
@@ -98,22 +102,21 @@ private fun AvailableConversation(
         PrivateConversationHeader(
             room = snapshot.room,
             showBackButton = showBackButton,
-            actionRunning = actionRunning,
+            mutationEnabled = transportMutationsEnabled,
             invitationCreating = state.roomInvitation is PrivateRoomInvitationUiState.Creating,
             navigationActions = navigationActions,
             roomActions = roomActions,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        PrivateRetentionSelector(
-            selectedRetention = snapshot.room.retention,
-            enabled = !actionRunning,
-            onChangeRetention = roomActions.changeRetention,
-            modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.small),
-        )
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        if (conversation.connectionState == PrivateChatConnectionUiState.RECONNECTING) {
+            PrivateChatReconnectingBanner(
+                modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.small),
+            )
+        }
         PrivateMessageTimeline(
             snapshot = snapshot,
-            enabled = !actionRunning,
+            interactionEnabled = localInteractionsEnabled,
+            reactionEnabled = transportMutationsEnabled,
             onSelectMessage = { messageId -> selectedMessageId = messageId },
             onReact = messageActions.toggleReaction,
             modifier = Modifier.weight(1f),
@@ -122,7 +125,8 @@ private fun AvailableConversation(
             PrivateMessageComposer(
                 text = state.composerText,
                 mode = state.composerMode,
-                enabled = !actionRunning,
+                inputEnabled = localInteractionsEnabled,
+                submitEnabled = transportMutationsEnabled,
                 onTextChanged = messageActions.changeComposerText,
                 onSubmit = messageActions.submitComposer,
                 onCancelContext = messageActions.cancelComposerContext,
@@ -134,7 +138,8 @@ private fun AvailableConversation(
     snapshot.messages.firstOrNull { message -> message.messageId == selectedMessageId }?.let { message ->
         PrivateMessageActionsDialog(
             message = message,
-            enabled = !actionRunning,
+            localActionsEnabled = localInteractionsEnabled,
+            transportActionsEnabled = transportMutationsEnabled,
             onDismiss = { selectedMessageId = null },
             onReply = { messageActions.beginReply(message.messageId) },
             onCopy = {
@@ -165,6 +170,7 @@ private fun AvailableConversation(
                         pendingDeletion = null
                         messageActions.deleteForEveryone(messageId)
                     },
+                    enabled = transportMutationsEnabled,
                 ) {
                     Text("Delete for everyone")
                 }

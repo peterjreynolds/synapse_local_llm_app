@@ -6,18 +6,20 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Clock
 import java.time.Instant
+import java.util.UUID
 
 /**
- * Serializes all encrypted mutations through one durable pending request. A later mutation first
- * replays any earlier request so a WHISPER envelope can never overtake its establishing PREKEY.
+ * Serializes encrypted mutations through durable pending requests. An earlier ambiguous request is
+ * recovered before a later request, and the later request is then rejected so callers must refresh.
  */
 internal class PrivateEncryptedMutationOutbox(
     private val envelopeCipher: PrivateChatEnvelopeCipher,
     private val backend: PrivateChatBackend,
     private val clock: Clock = Clock.systemUTC(),
-) {
+) : PrivatePendingOutboundMutationRecovery {
     private val dispatcher = PrivateEncryptedMutationDispatcher(backend)
     private val executionMutex = Mutex()
+    private val recoveredMutationLedger = PrivateRecoveredMutationLedger()
 
     suspend fun execute(
         session: PrivateChatAuthenticatedSession,
@@ -35,7 +37,16 @@ internal class PrivateEncryptedMutationOutbox(
                 )
             val operationDigest = PrivateEncryptedMutationCodec.operationDigest(intent, plaintext)
             try {
-                replayEarlierPendingMutations(session, key, now)
+                val recoveredEarlierMutations = recoverPendingMutations(session, key, now)
+                if (recoveredEarlierMutations.isNotEmpty()) {
+                    recoveredMutationLedger.recordAndSnapshot(
+                        session.localSignalAddress,
+                        recoveredEarlierMutations,
+                    )
+                    throw PrivateChatCommandRejectedException(
+                        "An earlier encrypted request was recovered. Refresh before trying this action again.",
+                    )
+                }
                 val pending = envelopeCipher.loadPendingOutboundMutation(key)
                 val prepared =
                     if (pending != null) {
@@ -56,24 +67,58 @@ internal class PrivateEncryptedMutationOutbox(
             }
         }
 
-    private suspend fun replayEarlierPendingMutations(
-        session: PrivateChatAuthenticatedSession,
-        requestedKey: SignalPendingOutboundMutationKey,
-        now: Instant,
-    ) {
-        envelopeCipher.listPendingOutboundMutations().forEach { pending ->
-            if (pending.key == requestedKey) return@forEach
-            if (!pending.expiresAt.isAfter(now)) {
-                discardExpired(pending)
-                return@forEach
-            }
-            val request = PrivateEncryptedMutationCodec.decode(pending.opaqueRequest)
-            if (request.clientMutationId != pending.key.clientMutationId) {
-                throw PrivateEncryptedMutationOutboxException("Pending encrypted mutation key is inconsistent")
-            }
-            executeAndConfirm(session, pending, request)
+    override suspend fun recoverPendingMutations(session: PrivateChatAuthenticatedSession): Set<UUID> =
+        executionMutex.withLock {
+            val recoveredMutationIds =
+                recoverPendingMutations(
+                    session = session,
+                    skippedKey = null,
+                    now = clock.instant(),
+                )
+            recoveredMutationLedger.recordAndSnapshot(
+                session.localSignalAddress,
+                recoveredMutationIds,
+            )
+            recoveredMutationIds
         }
+
+    override suspend fun retainedRecoveredMutationIds(session: PrivateChatAuthenticatedSession): Set<UUID> =
+        executionMutex.withLock {
+            recoveredMutationLedger.snapshot(session.localSignalAddress)
+        }
+
+    override suspend fun clearRecoveredMutationIds() {
+        executionMutex.withLock { recoveredMutationLedger.clear() }
     }
+
+    private suspend fun recoverPendingMutations(
+        session: PrivateChatAuthenticatedSession,
+        skippedKey: SignalPendingOutboundMutationKey?,
+        now: Instant,
+    ): Set<UUID> =
+        buildSet {
+            envelopeCipher.listPendingOutboundMutations().forEach { pending ->
+                if (pending.key == skippedKey) return@forEach
+                if (
+                    pending.key.accountId != session.localSignalAddress.accountId ||
+                    pending.key.transportDeviceId != session.localSignalAddress.transportDeviceId
+                ) {
+                    throw PrivateEncryptedMutationOutboxException(
+                        "Pending encrypted mutation belongs to another authenticated device",
+                    )
+                }
+                if (!pending.expiresAt.isAfter(now)) {
+                    discardExpired(pending)
+                    return@forEach
+                }
+                val request = PrivateEncryptedMutationCodec.decode(pending.opaqueRequest)
+                if (request.clientMutationId != pending.key.clientMutationId) {
+                    throw PrivateEncryptedMutationOutboxException("Pending encrypted mutation key is inconsistent")
+                }
+                executeAndConfirm(session, pending, request)
+                add(pending.key.clientMutationId)
+            }
+        }
 
     private suspend fun preparePendingMutation(
         session: PrivateChatAuthenticatedSession,
@@ -157,6 +202,14 @@ internal class PrivateEncryptedMutationOutbox(
             digest.fill(0)
         }
     }
+}
+
+internal fun interface PrivatePendingOutboundMutationRecovery {
+    suspend fun recoverPendingMutations(session: PrivateChatAuthenticatedSession): Set<UUID>
+
+    suspend fun retainedRecoveredMutationIds(session: PrivateChatAuthenticatedSession): Set<UUID> = emptySet()
+
+    suspend fun clearRecoveredMutationIds() = Unit
 }
 
 internal class PrivateEncryptedMutationOutboxException(

@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -35,7 +38,8 @@ import app.synapse.privatechat.ui.theme.SynapsePrivateDesignSystem
 internal fun PrivateMessageComposer(
     text: String,
     mode: PrivateComposerMode,
-    enabled: Boolean,
+    inputEnabled: Boolean,
+    submitEnabled: Boolean,
     onTextChanged: (String) -> Unit,
     onSubmit: () -> Unit,
     onCancelContext: () -> Unit,
@@ -90,25 +94,30 @@ internal fun PrivateMessageComposer(
                     }
                 },
                 modifier = Modifier.weight(1f),
-                enabled = enabled,
+                enabled = inputEnabled,
                 label = { Text(if (mode is PrivateComposerMode.Editing) "Revised message" else "Message") },
                 minLines = 1,
                 maxLines = 5,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSubmit() }),
+                keyboardActions =
+                    KeyboardActions(
+                        onSend = {
+                            if (submitEnabled && text.isNotBlank()) onSubmit()
+                        },
+                    ),
                 leadingIcon = {
                     IconButton(
                         onClick = { showEmojiPicker = true },
                         modifier = Modifier.semantics { contentDescription = "Choose emoji" },
-                        enabled = enabled,
+                        enabled = inputEnabled,
                     ) {
-                        Text("😊")
+                        Icon(Icons.Default.EmojiEmotions, contentDescription = null)
                     }
                 },
             )
             Button(
                 onClick = onSubmit,
-                enabled = enabled && text.isNotBlank(),
+                enabled = inputEnabled && submitEnabled && text.isNotBlank(),
             ) {
                 Text(if (mode is PrivateComposerMode.Editing) "Save" else "Send")
             }

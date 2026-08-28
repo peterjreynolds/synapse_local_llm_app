@@ -8,30 +8,31 @@ internal fun PrivateSocialOverlay(
     accountSessionActions: PrivateAccountSessionUiActions,
     navigationActions: PrivateChatNavigationActions,
     socialActions: PrivateSocialUiActions,
+    onDismissOperationNotice: () -> Unit,
 ) {
     when (state.overlay) {
         PrivateChatOverlay.HIDDEN -> Unit
         PrivateChatOverlay.PROFILE ->
-            PrivateProfileDialog(
+            PrivateProfileScreen(
                 socialState = state.social,
+                roomFeedState = state.roomFeed,
                 presencePublication = state.presencePublication,
                 accountInvitation = state.accountInvitation,
                 operation = state.operation,
                 accountSessionActions = accountSessionActions,
-                onSaveProfile = socialActions.saveProfile,
-                onChangePresenceSharing = socialActions.changePresenceSharing,
-                onCreateAccountInvitation = {
-                    navigationActions.dismissOverlay()
-                    socialActions.createOneUseAccountInvitation()
-                },
+                socialActions = socialActions,
+                onDismissOperationNotice = onDismissOperationNotice,
                 onDismiss = navigationActions.dismissOverlay,
             )
 
         PrivateChatOverlay.CREATE_CONVERSATION ->
             PrivateCreateConversationDialog(
                 operation = state.operation,
+                transportMutationsEnabled =
+                    PrivateChatMutationAvailability.connectedRoomFeedSnapshot(state) != null,
                 onCreateRoom = socialActions.createRoom,
                 onRedeemRoomInvitation = socialActions.redeemRoomInvitation,
+                onDismissOperationNotice = onDismissOperationNotice,
                 onDismiss = navigationActions.dismissOverlay,
             )
 

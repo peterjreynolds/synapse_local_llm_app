@@ -41,7 +41,8 @@ import java.time.Instant
 @Composable
 internal fun PrivateMessageTimeline(
     snapshot: PrivateConversationSnapshot,
-    enabled: Boolean,
+    interactionEnabled: Boolean,
+    reactionEnabled: Boolean,
     onSelectMessage: (PrivateMessageId) -> Unit,
     onReact: (PrivateMessageId, String) -> Unit,
     modifier: Modifier = Modifier,
@@ -72,7 +73,8 @@ internal fun PrivateMessageTimeline(
                 ) { message ->
                     PrivateMessageBubble(
                         message = message,
-                        enabled = enabled,
+                        interactionEnabled = interactionEnabled,
+                        reactionEnabled = reactionEnabled,
                         onSelect = { onSelectMessage(message.messageId) },
                         onReact = { reaction -> onReact(message.messageId, reaction) },
                     )
@@ -100,7 +102,8 @@ internal fun PrivateMessageTimeline(
 @Composable
 private fun PrivateMessageBubble(
     message: PrivateMessageSnapshot,
-    enabled: Boolean,
+    interactionEnabled: Boolean,
+    reactionEnabled: Boolean,
     onSelect: () -> Unit,
     onReact: (String) -> Unit,
 ) {
@@ -114,7 +117,7 @@ private fun PrivateMessageBubble(
                     .align(if (ownMessage) Alignment.CenterEnd else Alignment.CenterStart)
                     .widthIn(max = 560.dp)
                     .combinedClickable(
-                        enabled = enabled,
+                        enabled = interactionEnabled,
                         onClickLabel = "Message actions",
                         onClick = onSelect,
                         onLongClickLabel = "Message reactions and actions",
@@ -178,7 +181,7 @@ private fun PrivateMessageBubble(
                             FilterChip(
                                 selected = reaction.selectionState == PrivateReactionSelectionState.SELECTED,
                                 onClick = { onReact(reaction.reaction.canonical) },
-                                enabled = enabled,
+                                enabled = reactionEnabled,
                                 label = { Text("${reaction.reaction.canonical} ${reaction.count}") },
                             )
                         }

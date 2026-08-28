@@ -2,6 +2,7 @@ package app.synapse.privatechat.data.chat
 
 import app.synapse.privatechat.domain.account.PrivateAccountId
 import app.synapse.privatechat.domain.chat.PrivateActivityFeedAvailability
+import app.synapse.privatechat.domain.chat.PrivateClientMutationId
 import app.synapse.privatechat.domain.chat.PrivateConversationSnapshot
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageOwnership
@@ -56,6 +57,7 @@ internal class PrivateChatSnapshotAssembler {
             accountId = state.session.accountId,
             rooms = rooms,
             activitySharingPreferences = currentProfile(state).activitySharing,
+            recoveredMutationIds = state.recoveredMutationIds.toDomainMutationIds(),
         )
     }
 
@@ -111,6 +113,7 @@ internal class PrivateChatSnapshotAssembler {
                 },
             typingParticipants = typingParticipants(state, roomId, profiles, currentAccountId),
             typingAvailability = state.backend.typing.toDomainAvailability(),
+            recoveredMutationIds = state.recoveredMutationIds.toDomainMutationIds(),
         )
     }
 
@@ -320,6 +323,9 @@ internal class PrivateChatSnapshotAssembler {
                     receipt.kind == PrivateBackendMessageReceiptKind.READ
             }.mapTo(HashSet(), PrivateBackendMessageReceiptRecord::messageId)
 }
+
+private fun Set<UUID>.toDomainMutationIds(): Set<PrivateClientMutationId> =
+    mapTo(linkedSetOf()) { mutationId -> PrivateClientMutationId(mutationId.toString()) }
 
 private fun UUID.toDomainAccountId(): PrivateAccountId = PrivateAccountId(toString())
 

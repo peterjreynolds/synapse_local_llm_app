@@ -6,9 +6,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -21,50 +18,31 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
-import app.synapse.privatechat.domain.chat.PrivateActivityFeedAvailability
 import app.synapse.privatechat.domain.chat.PrivateActivitySharingPreferences
 import app.synapse.privatechat.domain.chat.PrivateActivitySharingState
 import app.synapse.privatechat.domain.chat.PrivatePresenceSnapshot
-import app.synapse.privatechat.ui.theme.SynapsePrivateDesignSystem
 
 @Composable
-internal fun PrivateActivitySharingCard(
+internal fun PrivateActivitySharingControls(
     preferences: PrivateActivitySharingPreferences,
-    socialActions: PrivateSocialUiActions,
+    enabled: Boolean,
+    onChangeReadReceiptSharing: (PrivateActivitySharingState) -> Unit,
+    onChangeTypingIndicatorSharing: (PrivateActivitySharingState) -> Unit,
 ) {
-    val tokens = SynapsePrivateDesignSystem.tokens
-    Card(
-        colors =
-            CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f),
-            ),
-        shape = RoundedCornerShape(tokens.radii.control),
-        border = CardDefaults.outlinedCardBorder(),
-    ) {
-        Column(
-            modifier = Modifier.padding(tokens.spacing.medium),
-            verticalArrangement = Arrangement.spacedBy(tokens.spacing.small),
-        ) {
-            Text("Activity sharing", style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = "These start off. Enable only the short-lived activity details you want to share.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            PrivateActivitySharingSwitch(
-                label = "Read receipts",
-                detail = "Shares when you have opened messages in a conversation.",
-                sharingState = preferences.readReceipts,
-                onChange = socialActions.changeReadReceiptSharing,
-            )
-            PrivateActivitySharingSwitch(
-                label = "Typing indicators",
-                detail = "Shares while you are actively typing in a conversation.",
-                sharingState = preferences.typingIndicators,
-                onChange = socialActions.changeTypingIndicatorSharing,
-            )
-        }
-    }
+    PrivateActivitySharingSwitch(
+        label = "Read receipts",
+        detail = "Let people know when you open their messages.",
+        sharingState = preferences.readReceipts,
+        enabled = enabled,
+        onChange = onChangeReadReceiptSharing,
+    )
+    PrivateActivitySharingSwitch(
+        label = "Typing indicators",
+        detail = "Let people see while you are typing.",
+        sharingState = preferences.typingIndicators,
+        enabled = enabled,
+        onChange = onChangeTypingIndicatorSharing,
+    )
 }
 
 @Composable
@@ -72,6 +50,7 @@ private fun PrivateActivitySharingSwitch(
     label: String,
     detail: String,
     sharingState: PrivateActivitySharingState,
+    enabled: Boolean,
     onChange: (PrivateActivitySharingState) -> Unit,
 ) {
     val sharingEnabled = sharingState == PrivateActivitySharingState.ENABLED
@@ -81,6 +60,7 @@ private fun PrivateActivitySharingSwitch(
                 .fillMaxWidth()
                 .toggleable(
                     value = sharingEnabled,
+                    enabled = enabled,
                     role = Role.Switch,
                     onValueChange = { enabled ->
                         onChange(
@@ -109,45 +89,9 @@ private fun PrivateActivitySharingSwitch(
         Switch(
             checked = sharingEnabled,
             onCheckedChange = null,
+            enabled = enabled,
             modifier = Modifier.clearAndSetSemantics { },
         )
-    }
-}
-
-@Composable
-internal fun PrivatePresenceSummary(socialState: PrivateSocialUiState) {
-    when (socialState) {
-        is PrivateSocialUiState.Available -> {
-            val snapshot = socialState.snapshot
-            Text(
-                text =
-                    if (snapshot.presenceAvailability == PrivateActivityFeedAvailability.AVAILABLE) {
-                        privateVisiblePresenceLabel(snapshot.visiblePresence)
-                    } else {
-                        "Online status temporarily unavailable. Conversations are still connected."
-                    },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-            )
-        }
-
-        PrivateSocialUiState.Loading ->
-            Text(
-                text = "Checking short-lived online status…",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-        PrivateSocialUiState.NotRequested,
-        PrivateSocialUiState.TransportUnavailable,
-        PrivateSocialUiState.UnexpectedFailure,
-        ->
-            Text(
-                text = "Online status unavailable.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
     }
 }
 

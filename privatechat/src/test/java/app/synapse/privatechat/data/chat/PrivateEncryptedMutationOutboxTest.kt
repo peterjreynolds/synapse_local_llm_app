@@ -73,7 +73,7 @@ class PrivateEncryptedMutationOutboxTest {
     }
 
     @Test
-    fun concurrentMutationReplaysExactAmbiguousRequestBeforePreparingNextRatchet() =
+    fun newMutationStopsAfterRecoveringExactAmbiguousRequest() =
         runTest {
             val firstDispatchEntered = CompletableDeferred<Unit>()
             val releaseFirstDispatch = CompletableDeferred<Unit>()
@@ -100,21 +100,24 @@ class PrivateEncryptedMutationOutboxTest {
                 releaseFirstDispatch.complete(Unit)
                 val firstFailure = runCatching { first.await() }.exceptionOrNull()
                 check(firstFailure is IOException)
-                second.await()
+                val secondFailure = runCatching { second.await() }.exceptionOrNull()
+                check(secondFailure is PrivateChatCommandRejectedException)
             }
 
-            assertEquals(2, signalCipher.preparationCount)
+            assertEquals(1, signalCipher.preparationCount)
             assertEquals(
                 listOf(
                     FIRST_INTENT.clientMutationId,
                     FIRST_INTENT.clientMutationId,
-                    SECOND_INTENT.clientMutationId,
                 ),
                 backend.dispatchedMutationIds,
             )
             assertArrayEquals(backend.dispatchedCiphertexts[0], backend.dispatchedCiphertexts[1])
-            check(!backend.dispatchedCiphertexts[1].contentEquals(backend.dispatchedCiphertexts[2]))
             assertEquals(0, signalCipher.listPendingOutboundMutations().size)
+            assertEquals(
+                setOf(FIRST_INTENT.clientMutationId),
+                outbox.retainedRecoveredMutationIds(SESSION),
+            )
             backend.destroyRecordedCiphertexts()
         }
 
@@ -142,6 +145,36 @@ class PrivateEncryptedMutationOutboxTest {
 
             assertEquals(1, signalCipher.preparationCount)
             assertEquals(2, backend.dispatchedCiphertexts.size)
+            assertArrayEquals(backend.dispatchedCiphertexts[0], backend.dispatchedCiphertexts[1])
+            assertEquals(0, signalCipher.listPendingOutboundMutations().size)
+            backend.destroyRecordedCiphertexts()
+        }
+
+    @Test
+    fun pollingRecoveryResumesExactPendingRequestBeforePublishingFreshState() =
+        runTest {
+            var failNextDispatch = true
+            val backend =
+                RecordingSendBackend {
+                    if (failNextDispatch) {
+                        failNextDispatch = false
+                        throw IOException("ambiguous transport failure")
+                    }
+                }
+            val signalCipher = RecordingPendingSignalCipher()
+            val outbox = createOutbox(signalCipher, backend)
+            runCatching { outbox.execute(SESSION, FIRST_INTENT, FIRST_PLAINTEXT, LOCAL_RECIPIENTS) }
+
+            val recoveredMutationIds = outbox.recoverPendingMutations(SESSION)
+
+            assertEquals(setOf(FIRST_INTENT.clientMutationId), recoveredMutationIds)
+            assertEquals(
+                setOf(FIRST_INTENT.clientMutationId),
+                outbox.retainedRecoveredMutationIds(SESSION),
+            )
+            outbox.clearRecoveredMutationIds()
+            assertEquals(emptySet<UUID>(), outbox.retainedRecoveredMutationIds(SESSION))
+            assertEquals(1, signalCipher.preparationCount)
             assertArrayEquals(backend.dispatchedCiphertexts[0], backend.dispatchedCiphertexts[1])
             assertEquals(0, signalCipher.listPendingOutboundMutations().size)
             backend.destroyRecordedCiphertexts()

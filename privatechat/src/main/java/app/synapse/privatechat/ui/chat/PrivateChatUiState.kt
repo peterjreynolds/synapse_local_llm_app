@@ -26,6 +26,7 @@ sealed interface PrivateRoomFeedUiState {
 
     data class Available(
         val snapshot: PrivateRoomFeedSnapshot,
+        val connectionState: PrivateChatConnectionUiState = PrivateChatConnectionUiState.CONNECTED,
     ) : PrivateRoomFeedUiState
 
     data object TransportUnavailable : PrivateRoomFeedUiState
@@ -40,11 +41,17 @@ sealed interface PrivateConversationUiState {
 
     data class Available(
         val snapshot: PrivateConversationSnapshot,
+        val connectionState: PrivateChatConnectionUiState = PrivateChatConnectionUiState.CONNECTED,
     ) : PrivateConversationUiState
 
     data object TransportUnavailable : PrivateConversationUiState
 
     data object UnexpectedFailure : PrivateConversationUiState
+}
+
+enum class PrivateChatConnectionUiState {
+    CONNECTED,
+    RECONNECTING,
 }
 
 sealed interface PrivateComposerMode {
@@ -90,6 +97,10 @@ sealed interface PrivateChatOperationUiState {
 
     data class Confirmed(
         val receipt: PrivateMutationReceipt,
+    ) : PrivateChatOperationUiState
+
+    data class Recovered(
+        val kind: PrivateChatOperationKind,
     ) : PrivateChatOperationUiState
 
     data class InvalidInput(
