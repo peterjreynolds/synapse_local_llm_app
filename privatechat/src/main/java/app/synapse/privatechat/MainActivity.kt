@@ -6,10 +6,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.core.view.WindowCompat
+import app.synapse.privatechat.data.update.AndroidPrivateAppInstaller
 import app.synapse.privatechat.ui.PrivateChatApp
 import app.synapse.privatechat.ui.account.PrivateAccountAccessViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
 import app.synapse.privatechat.ui.theme.SynapsePrivateTheme
+import app.synapse.privatechat.ui.update.PrivateAppUpdateViewModel
 
 class MainActivity : ComponentActivity() {
     private val compositionRoot by lazy { PrivateChatCompositionRoot.create(applicationContext) }
@@ -19,6 +21,10 @@ class MainActivity : ComponentActivity() {
     private val chatViewModel: PrivateChatViewModel by viewModels {
         compositionRoot.chatViewModelFactory
     }
+    private val appUpdateViewModel: PrivateAppUpdateViewModel by viewModels {
+        compositionRoot.appUpdateViewModelFactory
+    }
+    private val appInstaller by lazy { AndroidPrivateAppInstaller(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,6 +35,8 @@ class MainActivity : ComponentActivity() {
                 PrivateChatApp(
                     accountAccessViewModel = accountAccessViewModel,
                     chatViewModel = chatViewModel,
+                    appUpdateViewModel = appUpdateViewModel,
+                    onOpenAppInstaller = appInstaller::openInstaller,
                 )
             }
         }

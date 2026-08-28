@@ -1,6 +1,7 @@
 package app.synapse.privatechat
 
 import android.content.Context
+import android.os.Build
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -40,12 +41,16 @@ import app.synapse.privatechat.data.session.PrivateSessionStateUnavailableExcept
 import app.synapse.privatechat.data.supabase.SupabaseHttpTransport
 import app.synapse.privatechat.data.supabase.SynapsePrivateBackendConfig
 import app.synapse.privatechat.data.supabase.UrlConnectionSupabaseHttpTransport
+import app.synapse.privatechat.data.update.AndroidPrivateAppUpdateDownloader
+import app.synapse.privatechat.data.update.GitHubPrivateAppUpdateRepository
+import app.synapse.privatechat.data.update.UrlConnectionPrivateUpdateSource
 import app.synapse.privatechat.domain.account.PrivateAccountGateway
 import app.synapse.privatechat.domain.chat.PrivateChatGateway
 import app.synapse.privatechat.domain.chat.PrivateClientMutationId
 import app.synapse.privatechat.domain.chat.PrivateSocialGateway
 import app.synapse.privatechat.ui.account.PrivateAccountAccessViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
+import app.synapse.privatechat.ui.update.PrivateAppUpdateViewModel
 import kotlinx.coroutines.Dispatchers
 import java.time.Clock
 import java.util.UUID
@@ -54,6 +59,8 @@ class PrivateChatCompositionRoot private constructor(
     accountGateway: PrivateAccountGateway,
     chatGateway: PrivateChatGateway,
     socialGateway: PrivateSocialGateway,
+    updateRepository: GitHubPrivateAppUpdateRepository,
+    updateDownloader: AndroidPrivateAppUpdateDownloader,
     clock: Clock,
 ) {
     val accountAccessViewModelFactory: ViewModelProvider.Factory =
@@ -75,6 +82,16 @@ class PrivateChatCompositionRoot private constructor(
             }
         }
 
+    val appUpdateViewModelFactory: ViewModelProvider.Factory =
+        viewModelFactory {
+            initializer {
+                PrivateAppUpdateViewModel(
+                    updateRepository = updateRepository,
+                    updateDownloader = updateDownloader,
+                )
+            }
+        }
+
     companion object {
         fun create(context: Context): PrivateChatCompositionRoot {
             val clock = Clock.systemUTC()
@@ -86,10 +103,27 @@ class PrivateChatCompositionRoot private constructor(
             val appContext = context.applicationContext
             val transport = UrlConnectionSupabaseHttpTransport(config)
             val runtime = createRuntime(appContext, transport, clock)
+            val updateTransferSource = UrlConnectionPrivateUpdateSource()
+            val deviceSupportedAbis = Build.SUPPORTED_ABIS.toSet()
             return PrivateChatCompositionRoot(
                 accountGateway = runtime.accountGateway,
                 chatGateway = runtime.chatGateway,
                 socialGateway = runtime.socialGateway,
+                updateRepository =
+                    GitHubPrivateAppUpdateRepository(
+                        transferSource = updateTransferSource,
+                        currentVersionCode = BuildConfig.VERSION_CODE,
+                        deviceAndroidApi = Build.VERSION.SDK_INT,
+                        deviceSupportedAbis = deviceSupportedAbis,
+                    ),
+                updateDownloader =
+                    AndroidPrivateAppUpdateDownloader(
+                        context = appContext,
+                        transferSource = updateTransferSource,
+                        installedVersionCode = BuildConfig.VERSION_CODE,
+                        deviceAndroidApi = Build.VERSION.SDK_INT,
+                        deviceSupportedAbis = deviceSupportedAbis,
+                    ),
                 clock = clock,
             )
         }

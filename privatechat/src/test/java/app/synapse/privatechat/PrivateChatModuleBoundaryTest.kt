@@ -135,7 +135,7 @@ class PrivateChatModuleBoundaryTest {
     }
 
     @Test
-    fun `manifest excludes SMS runtime and package installation permissions`() {
+    fun `manifest keeps SMS forbidden and scopes package installation to verified updates`() {
         val sourceManifest = moduleDirectory.resolve("src/main/AndroidManifest.xml").readText()
         val mergedManifestFile =
             moduleDirectory.resolve(
@@ -150,7 +150,6 @@ class PrivateChatModuleBoundaryTest {
                 "android.permission.READ_SMS",
                 "android.permission.RECEIVE_MMS",
                 "android.permission.RECEIVE_SMS",
-                "android.permission.REQUEST_INSTALL_PACKAGES",
                 "android.permission.SEND_SMS",
                 "com.termux.permission.RUN_COMMAND",
             )
@@ -159,6 +158,23 @@ class PrivateChatModuleBoundaryTest {
             "Forbidden manifest permissions: ${declaredPermissions intersect forbiddenPermissions}",
             (declaredPermissions intersect forbiddenPermissions).isEmpty(),
         )
+        assertEquals(
+            "The verified rolling updater owns the sole package-install permission rationale",
+            1,
+            extractDeclaredPermissions(sourceManifest).count { permission ->
+                permission == "android.permission.REQUEST_INSTALL_PACKAGES"
+            },
+        )
+        assertTrue(sourceManifest.contains("verified rolling APK"))
+        assertTrue(sourceManifest.contains("android:name=\"androidx.core.content.FileProvider\""))
+        assertTrue(sourceManifest.contains("android:authorities=\"\${applicationId}.updateprovider\""))
+        assertTrue(sourceManifest.contains("android:exported=\"false\""))
+        assertTrue(sourceManifest.contains("android:grantUriPermissions=\"true\""))
+        val updateFilePaths = moduleDirectory.resolve("src/main/res/xml/update_file_paths.xml").readText()
+        assertTrue(updateFilePaths.contains("name=\"verified_app_updates\""))
+        assertTrue(updateFilePaths.contains("path=\"app-updates/\""))
+        assertFalse(updateFilePaths.contains("external-path"))
+        assertFalse(updateFilePaths.contains("root-path"))
         assertFalse(mergedManifest.contains("SmsAutoReply"))
         assertFalse(mergedManifest.contains("com.termux"))
     }
