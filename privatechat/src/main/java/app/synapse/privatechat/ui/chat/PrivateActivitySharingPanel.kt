@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -14,6 +15,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.dp
 import app.synapse.privatechat.domain.chat.PrivateActivityFeedAvailability
 import app.synapse.privatechat.domain.chat.PrivateActivitySharingPreferences
 import app.synapse.privatechat.domain.chat.PrivateActivitySharingState
@@ -46,11 +53,13 @@ internal fun PrivateActivitySharingCard(
             )
             PrivateActivitySharingSwitch(
                 label = "Read receipts",
+                detail = "Shares when you have opened messages in a conversation.",
                 sharingState = preferences.readReceipts,
                 onChange = socialActions.changeReadReceiptSharing,
             )
             PrivateActivitySharingSwitch(
                 label = "Typing indicators",
+                detail = "Shares while you are actively typing in a conversation.",
                 sharingState = preferences.typingIndicators,
                 onChange = socialActions.changeTypingIndicatorSharing,
             )
@@ -61,22 +70,46 @@ internal fun PrivateActivitySharingCard(
 @Composable
 private fun PrivateActivitySharingSwitch(
     label: String,
+    detail: String,
     sharingState: PrivateActivitySharingState,
     onChange: (PrivateActivitySharingState) -> Unit,
 ) {
+    val sharingEnabled = sharingState == PrivateActivitySharingState.ENABLED
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .toggleable(
+                    value = sharingEnabled,
+                    role = Role.Switch,
+                    onValueChange = { enabled ->
+                        onChange(
+                            if (enabled) {
+                                PrivateActivitySharingState.ENABLED
+                            } else {
+                                PrivateActivitySharingState.DISABLED
+                            },
+                        )
+                    },
+                ).semantics(mergeDescendants = true) {
+                    contentDescription = "$label. $detail"
+                    stateDescription = if (sharingEnabled) "Enabled" else "Disabled"
+                }.padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Switch(
-            checked = sharingState == PrivateActivitySharingState.ENABLED,
-            onCheckedChange = { checked ->
-                onChange(
-                    if (checked) PrivateActivitySharingState.ENABLED else PrivateActivitySharingState.DISABLED,
-                )
-            },
+            checked = sharingEnabled,
+            onCheckedChange = null,
+            modifier = Modifier.clearAndSetSemantics { },
         )
     }
 }
