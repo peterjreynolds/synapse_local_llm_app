@@ -1,13 +1,8 @@
 package app.synapse.privatechat.ui.chat
 
 import android.content.ActivityNotFoundException
-import android.content.ClipData
-import android.content.ClipDescription
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.os.Build
-import android.os.PersistableBundle
 import app.synapse.privatechat.domain.account.PrivateInvitationCode
 import app.synapse.privatechat.domain.chat.PrivateRoomInvitationCode
 
@@ -57,22 +52,14 @@ internal fun copyPrivateInvitationCode(
     context: Context,
     transferContent: PrivateInvitationTransferContent,
 ): PrivateInvitationCopyOutcome {
-    val clipboard =
-        context.getSystemService(ClipboardManager::class.java)
+    val clipboardOwner =
+        privateSensitiveClipboardOwner(context)
             ?: return PrivateInvitationCopyOutcome.CLIPBOARD_UNAVAILABLE
-    val primaryClip =
-        ClipData.newPlainText(
-            "Synapse Private invitation code",
-            transferContent.exposeCodeForUserAction(),
-        )
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        primaryClip.description.extras =
-            PersistableBundle().apply {
-                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
-            }
+    return when (clipboardOwner.copyInvitationCode(transferContent.exposeCodeForUserAction())) {
+        PrivateSensitiveClipboardCopyOutcome.COPIED -> PrivateInvitationCopyOutcome.COPIED
+        PrivateSensitiveClipboardCopyOutcome.CLIPBOARD_UNAVAILABLE ->
+            PrivateInvitationCopyOutcome.CLIPBOARD_UNAVAILABLE
     }
-    clipboard.setPrimaryClip(primaryClip)
-    return PrivateInvitationCopyOutcome.COPIED
 }
 
 internal fun sharePrivateInvitationCode(

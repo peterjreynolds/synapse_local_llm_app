@@ -17,6 +17,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -33,6 +37,7 @@ internal enum class PrivateMessageActionOption(
     val label: String,
 ) {
     REPLY("Reply"),
+    COPY("Copy"),
     EDIT("Edit"),
     DELETE_FOR_EVERYONE("Delete for everyone"),
 }
@@ -40,6 +45,7 @@ internal enum class PrivateMessageActionOption(
 internal fun privateMessageActionOptions(message: PrivateMessageSnapshot): List<PrivateMessageActionOption> =
     buildList {
         add(PrivateMessageActionOption.REPLY)
+        add(PrivateMessageActionOption.COPY)
         if (message.ownership == PrivateMessageOwnership.CURRENT_ACCOUNT) {
             add(PrivateMessageActionOption.EDIT)
             add(PrivateMessageActionOption.DELETE_FOR_EVERYONE)
@@ -52,14 +58,28 @@ internal fun PrivateMessageActionsDialog(
     enabled: Boolean,
     onDismiss: () -> Unit,
     onReply: () -> Unit,
+    onCopy: () -> Unit,
     onEdit: () -> Unit,
     onReact: (String) -> Unit,
     onDeleteForEveryone: () -> Unit,
 ) {
+    var showFullEmojiPicker by remember(message.messageId) { mutableStateOf(false) }
     val selectedReactions =
         message.reactions
             .filter { reaction -> reaction.selectionState == PrivateReactionSelectionState.SELECTED }
             .mapTo(linkedSetOf()) { reaction -> reaction.reaction.canonical }
+    if (showFullEmojiPicker) {
+        PrivateFullEmojiPicker(
+            title = "Choose a reaction",
+            onDismiss = { showFullEmojiPicker = false },
+            onEmojiPicked = { emoji ->
+                showFullEmojiPicker = false
+                onDismiss()
+                onReact(emoji)
+            },
+        )
+        return
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Message actions") },
@@ -73,15 +93,21 @@ internal fun PrivateMessageActionsDialog(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
-                PrivateEmojiPalette(
+                PrivateQuickReactionPalette(
                     selectedEmojis = selectedReactions,
                     enabled = enabled,
-                    actionLabel = "React with",
                     onEmojiSelected = { emoji ->
                         onDismiss()
                         onReact(emoji)
                     },
                 )
+                TextButton(
+                    onClick = { showFullEmojiPicker = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = enabled,
+                ) {
+                    Text("More emojis…")
+                }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 privateMessageActionOptions(message).forEach { action ->
                     TextButton(
@@ -89,6 +115,7 @@ internal fun PrivateMessageActionsDialog(
                             onDismiss()
                             when (action) {
                                 PrivateMessageActionOption.REPLY -> onReply()
+                                PrivateMessageActionOption.COPY -> onCopy()
                                 PrivateMessageActionOption.EDIT -> onEdit()
                                 PrivateMessageActionOption.DELETE_FOR_EVERYONE -> onDeleteForEveryone()
                             }
@@ -116,90 +143,62 @@ internal fun PrivateMessageActionsDialog(
 }
 
 @Composable
-internal fun PrivateEmojiPalette(
+internal fun PrivateQuickReactionPalette(
     selectedEmojis: Set<String>,
     enabled: Boolean,
-    actionLabel: String,
     onEmojiSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    Row(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        PRIVATE_MESSAGE_EMOJIS.chunked(PRIVATE_EMOJI_COLUMNS).forEach { emojiRow ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
+        PRIVATE_QUICK_REACTIONS.forEach { emoji ->
+            val isSelected = emoji in selectedEmojis
+            Surface(
+                onClick = { onEmojiSelected(emoji) },
+                modifier =
+                    Modifier
+                        .size(40.dp)
+                        .semantics {
+                            contentDescription = "React with ${privateEmojiAccessibilityLabel(emoji)}"
+                            selected = isSelected
+                        },
+                enabled = enabled,
+                shape = CircleShape,
+                color =
+                    if (isSelected) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
             ) {
-                emojiRow.forEach { emoji ->
-                    val isSelected = emoji in selectedEmojis
-                    Surface(
-                        onClick = { onEmojiSelected(emoji) },
-                        modifier =
-                            Modifier
-                                .size(40.dp)
-                                .semantics {
-                                    contentDescription = "$actionLabel ${privateEmojiAccessibilityLabel(emoji)}"
-                                    selected = isSelected
-                                },
-                        enabled = enabled,
-                        shape = CircleShape,
-                        color =
-                            if (isSelected) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surface
-                            },
-                    ) {
-                        androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
-                            Text(text = emoji, fontSize = 21.sp)
-                        }
-                    }
+                androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
+                    Text(text = emoji, fontSize = 21.sp)
                 }
             }
         }
     }
 }
 
-internal val PRIVATE_MESSAGE_EMOJIS =
+internal val PRIVATE_QUICK_REACTIONS =
     listOf(
-        "😀",
+        "👍",
+        "❤️",
         "😂",
-        "😊",
-        "😍",
-        "😘",
-        "😎",
-        "🥳",
-        "🤔",
         "😮",
         "😢",
         "😡",
-        "🤯",
-        "👍",
-        "👎",
-        "👏",
-        "🙏",
-        "💪",
-        "👀",
-        "❤️",
-        "🔥",
-        "🎉",
-        "💯",
-        "✅",
-        "🤝",
     )
 
 private fun privateEmojiAccessibilityLabel(emoji: String): String =
     when (emoji) {
         "😂" -> "laughing"
+        "😮" -> "surprised"
         "😢" -> "sad"
         "😡" -> "angry"
         "👍" -> "thumbs up"
-        "👎" -> "thumbs down"
         "❤️" -> "heart"
         else -> emoji
     }
-
-private const val PRIVATE_EMOJI_COLUMNS = 6

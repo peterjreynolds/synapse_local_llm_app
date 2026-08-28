@@ -1,5 +1,7 @@
 package app.synapse.privatechat.ui.chat
 
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import app.synapse.privatechat.domain.account.PrivateAccountId
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageOwnership
@@ -19,6 +21,7 @@ class PrivateMessageInteractionsTest {
         assertEquals(
             listOf(
                 PrivateMessageActionOption.REPLY,
+                PrivateMessageActionOption.COPY,
                 PrivateMessageActionOption.EDIT,
                 PrivateMessageActionOption.DELETE_FOR_EVERYONE,
             ),
@@ -29,16 +32,47 @@ class PrivateMessageInteractionsTest {
     @Test
     fun `other participant message actions allow reply without privileged mutations`() {
         assertEquals(
-            listOf(PrivateMessageActionOption.REPLY),
+            listOf(
+                PrivateMessageActionOption.REPLY,
+                PrivateMessageActionOption.COPY,
+            ),
             privateMessageActionOptions(message(PrivateMessageOwnership.OTHER_PARTICIPANT)),
         )
     }
 
     @Test
-    fun `every presented emoji satisfies the reaction boundary`() {
-        assertEquals(PRIVATE_MESSAGE_EMOJIS.size, PRIVATE_MESSAGE_EMOJIS.distinct().size)
+    fun `emoji insertion replaces the current selection and puts the caret after the emoji`() {
+        val revisedValue =
+            insertPrivateComposerEmoji(
+                currentValue =
+                    TextFieldValue(
+                        text = "before selected after",
+                        selection = TextRange(start = 7, end = 15),
+                    ),
+                emoji = "😊",
+            )
+
+        assertEquals("before 😊 after", revisedValue.text)
+        assertEquals(TextRange(9), revisedValue.selection)
+    }
+
+    @Test
+    fun `authoritative draft replacement moves the caret to the end of the restored draft`() {
+        val synchronizedValue =
+            synchronizePrivateComposerFieldValue(
+                currentValue = TextFieldValue(text = "old", selection = TextRange(1)),
+                authoritativeText = "restored draft",
+            )
+
+        assertEquals("restored draft", synchronizedValue.text)
+        assertEquals(TextRange("restored draft".length), synchronizedValue.selection)
+    }
+
+    @Test
+    fun `every quick reaction satisfies the reaction boundary`() {
+        assertEquals(PRIVATE_QUICK_REACTIONS.size, PRIVATE_QUICK_REACTIONS.distinct().size)
         assertTrue(
-            PRIVATE_MESSAGE_EMOJIS.all { emoji ->
+            PRIVATE_QUICK_REACTIONS.all { emoji ->
                 validatePrivateReaction(emoji) is PrivateReactionValidation.Accepted
             },
         )

@@ -1,5 +1,6 @@
 package app.synapse.privatechat.ui.chat
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -11,10 +12,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.ui.theme.SynapsePrivateDesignSystem
 
@@ -87,6 +90,7 @@ private fun AvailableConversation(
     val tokens = SynapsePrivateDesignSystem.tokens
     val actionRunning = state.operation is PrivateChatOperationUiState.Running
     val snapshot = conversation.snapshot
+    val context = LocalContext.current
     var selectedMessageId by remember(snapshot.room.roomId) { mutableStateOf<PrivateMessageId?>(null) }
     var pendingDeletion by remember(snapshot.room.roomId) { mutableStateOf<PrivateMessageId?>(null) }
 
@@ -114,15 +118,17 @@ private fun AvailableConversation(
             onReact = messageActions.toggleReaction,
             modifier = Modifier.weight(1f),
         )
-        PrivateMessageComposer(
-            text = state.composerText,
-            mode = state.composerMode,
-            enabled = !actionRunning,
-            onTextChanged = messageActions.changeComposerText,
-            onSubmit = messageActions.submitComposer,
-            onCancelContext = messageActions.cancelComposerContext,
-            modifier = Modifier.padding(tokens.spacing.large),
-        )
+        key(snapshot.room.roomId) {
+            PrivateMessageComposer(
+                text = state.composerText,
+                mode = state.composerMode,
+                enabled = !actionRunning,
+                onTextChanged = messageActions.changeComposerText,
+                onSubmit = messageActions.submitComposer,
+                onCancelContext = messageActions.cancelComposerContext,
+                modifier = Modifier.padding(tokens.spacing.large),
+            )
+        }
     }
 
     snapshot.messages.firstOrNull { message -> message.messageId == selectedMessageId }?.let { message ->
@@ -131,6 +137,17 @@ private fun AvailableConversation(
             enabled = !actionRunning,
             onDismiss = { selectedMessageId = null },
             onReply = { messageActions.beginReply(message.messageId) },
+            onCopy = {
+                val clipboardOwner = privateSensitiveClipboardOwner(context)
+                val copyOutcome = clipboardOwner?.copyMessageText(message.body)
+                val copyMessage =
+                    if (copyOutcome == PrivateSensitiveClipboardCopyOutcome.COPIED) {
+                        "Message copied. Synapse will clear it after one minute if unchanged."
+                    } else {
+                        "The message could not be copied."
+                    }
+                Toast.makeText(context, copyMessage, Toast.LENGTH_SHORT).show()
+            },
             onEdit = { messageActions.beginEdit(message.messageId) },
             onReact = { emoji -> messageActions.toggleReaction(message.messageId, emoji) },
             onDeleteForEveryone = { pendingDeletion = message.messageId },

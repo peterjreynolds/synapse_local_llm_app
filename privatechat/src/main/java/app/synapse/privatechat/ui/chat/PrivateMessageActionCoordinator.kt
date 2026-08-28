@@ -253,4 +253,4 @@ internal class PrivateMessageActionCoordinator(
         PrivateChatUiReducer.findPresentedMessage(stateStore.current, messageId)
 }
 
-private const val PRIVATE_COMPOSER_INPUT_LIMIT = 4_096
+internal const val PRIVATE_COMPOSER_INPUT_LIMIT = 4_096
