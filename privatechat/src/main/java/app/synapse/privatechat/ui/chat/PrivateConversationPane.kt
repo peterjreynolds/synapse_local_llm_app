@@ -87,6 +87,7 @@ private fun AvailableConversation(
     val tokens = SynapsePrivateDesignSystem.tokens
     val actionRunning = state.operation is PrivateChatOperationUiState.Running
     val snapshot = conversation.snapshot
+    var selectedMessageId by remember(snapshot.room.roomId) { mutableStateOf<PrivateMessageId?>(null) }
     var pendingDeletion by remember(snapshot.room.roomId) { mutableStateOf<PrivateMessageId?>(null) }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -109,10 +110,8 @@ private fun AvailableConversation(
         PrivateMessageTimeline(
             snapshot = snapshot,
             enabled = !actionRunning,
-            onReply = messageActions.beginReply,
-            onEdit = messageActions.beginEdit,
+            onSelectMessage = { messageId -> selectedMessageId = messageId },
             onReact = messageActions.toggleReaction,
-            onDelete = { messageId -> pendingDeletion = messageId },
             modifier = Modifier.weight(1f),
         )
         PrivateMessageComposer(
@@ -123,6 +122,18 @@ private fun AvailableConversation(
             onSubmit = messageActions.submitComposer,
             onCancelContext = messageActions.cancelComposerContext,
             modifier = Modifier.padding(tokens.spacing.large),
+        )
+    }
+
+    snapshot.messages.firstOrNull { message -> message.messageId == selectedMessageId }?.let { message ->
+        PrivateMessageActionsDialog(
+            message = message,
+            enabled = !actionRunning,
+            onDismiss = { selectedMessageId = null },
+            onReply = { messageActions.beginReply(message.messageId) },
+            onEdit = { messageActions.beginEdit(message.messageId) },
+            onReact = { emoji -> messageActions.toggleReaction(message.messageId, emoji) },
+            onDeleteForEveryone = { pendingDeletion = message.messageId },
         )
     }
 
