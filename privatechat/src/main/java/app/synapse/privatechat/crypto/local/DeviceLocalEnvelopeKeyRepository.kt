@@ -99,13 +99,15 @@ internal class DeviceLocalEnvelopeKeyRepository(
             require(observedAt.epochSecond in 1..MAXIMUM_SUPPORTED_EPOCH_SECONDS) {
                 "Local envelope key observation time is unsupported"
             }
-            val retainedKeyIds = authoritativeKeyIds + pendingKeyIds
-            val unknown = retainedKeyIds - records.keys
-            if (unknown.isNotEmpty()) {
+            val unknownPendingKeyIds = pendingKeyIds - records.keys
+            if (unknownPendingKeyIds.isNotEmpty()) {
                 throw DeviceLocalContentEnvelopeUnavailableException(
-                    "A retained device-local envelope key is unavailable",
+                    "A pending device-local envelope key is unavailable",
                 )
             }
+            // Authoritative envelopes can outlive keys that were intentionally erased at sign-out.
+            // They remain unreadable, but must not hide other rooms whose device-local keys survive.
+            val retainedKeyIds = (authoritativeKeyIds intersect records.keys) + pendingKeyIds
             val replacement = LinkedHashMap<UUID, DeviceLocalEnvelopeKeyRecord>()
             records.values.forEach { record ->
                 val retained = record.keyId in retainedKeyIds

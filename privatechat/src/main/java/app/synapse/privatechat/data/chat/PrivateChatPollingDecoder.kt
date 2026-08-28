@@ -1,8 +1,10 @@
 package app.synapse.privatechat.data.chat
 
+import app.synapse.privatechat.crypto.local.DeviceLocalContentEnvelopeUnavailableException
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageText
 import app.synapse.privatechat.domain.chat.PrivateReactionCode
+import app.synapse.privatechat.domain.chat.PrivateRoomMetadataState
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Clock
@@ -122,8 +124,17 @@ internal class PrivateChatPollingDecoder(
                         expiresAt = MAXIMUM_ROOM_METADATA_CACHE_EXPIRY,
                     )
                 val payload =
-                    resolvePayload(session, graph, envelope, descriptor, now) { decoded ->
-                        validateRoomMetadata(decoded, room, envelope)
+                    try {
+                        resolvePayload(session, graph, envelope, descriptor, now) { decoded ->
+                            validateRoomMetadata(decoded, room, envelope)
+                        }
+                    } catch (_: DeviceLocalContentEnvelopeUnavailableException) {
+                        return@associate room.roomId to
+                            PrivateResolvedRoom(
+                                record = room,
+                                title = PENDING_ROOM_METADATA_TITLE,
+                                metadataState = PrivateRoomMetadataState.UNAVAILABLE_ON_DEVICE,
+                            )
                     }
                 authoritativePayloads += descriptor
                 room.roomId to

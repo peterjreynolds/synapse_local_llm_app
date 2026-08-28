@@ -31,6 +31,7 @@ enum class PrivateRoomMuteState {
 enum class PrivateRoomMetadataState {
     AVAILABLE,
     PENDING,
+    UNAVAILABLE_ON_DEVICE,
 }
 
 enum class PrivateActivitySharingState {

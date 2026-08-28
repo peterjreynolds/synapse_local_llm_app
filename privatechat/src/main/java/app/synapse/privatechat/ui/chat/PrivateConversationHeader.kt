@@ -61,10 +61,13 @@ internal fun PrivateConversationHeader(
                 )
                 Text(
                     text =
-                        if (room.metadataState == PrivateRoomMetadataState.PENDING) {
-                            "Encrypted title pending · ${privateRoomMembershipLabel(room)}"
-                        } else {
-                            privateRoomMembershipLabel(room)
+                        when (room.metadataState) {
+                            PrivateRoomMetadataState.AVAILABLE -> privateRoomMembershipLabel(room)
+                            PrivateRoomMetadataState.PENDING ->
+                                "Encrypted title pending · ${privateRoomMembershipLabel(room)}"
+
+                            PrivateRoomMetadataState.UNAVAILABLE_ON_DEVICE ->
+                                "Encrypted title unavailable on this device · ${privateRoomMembershipLabel(room)}"
                         },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
