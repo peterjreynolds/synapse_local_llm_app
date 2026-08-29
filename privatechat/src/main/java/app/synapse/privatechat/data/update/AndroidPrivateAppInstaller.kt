@@ -5,7 +5,9 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
+import androidx.annotation.RequiresApi
 import androidx.core.net.toUri
 import app.synapse.privatechat.domain.update.PrivateAppInstallerLaunchOutcome
 import app.synapse.privatechat.domain.update.PrivateAppUpdateDownloadReceipt
@@ -25,7 +27,10 @@ internal class AndroidPrivateAppInstaller(
         ) {
             return PrivateAppInstallerLaunchOutcome.Failed("The verified update file location is untrusted.")
         }
-        if (!context.packageManager.canRequestPackageInstalls()) {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
             return openInstallPermissionSettings()
         }
         val installIntent =
@@ -45,6 +50,7 @@ internal class AndroidPrivateAppInstaller(
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     private fun openInstallPermissionSettings(): PrivateAppInstallerLaunchOutcome {
         val permissionIntent =
             Intent(

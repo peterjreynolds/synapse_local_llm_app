@@ -123,7 +123,11 @@ private class AndroidPrivateSensitiveClipboardGateway(
 
     override fun clear(): Boolean =
         try {
-            clipboardManager.clearPrimaryClip()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                clipboardManager.clearPrimaryClip()
+            } else {
+                clipboardManager.setPrimaryClip(ClipData.newPlainText("", ""))
+            }
             true
         } catch (_: SecurityException) {
             false
@@ -142,7 +146,7 @@ private object AndroidPrivateClipboardClearScheduler : PrivateClipboardClearSche
 }
 
 internal const val PRIVATE_SENSITIVE_CLIPBOARD_CLEAR_DELAY_MILLIS = 60_000L
-private const val PRIVATE_MINIMUM_ANDROID_SDK = 28
+private const val PRIVATE_MINIMUM_ANDROID_SDK = 25
 private const val PRIVATE_ANDROID_SENSITIVE_CLIP_API = 33
 private const val PRIVATE_INVITATION_CLIPBOARD_LABEL = "Synapse Private invitation code"
 private const val PRIVATE_MESSAGE_CLIPBOARD_LABEL = "Synapse Private message"

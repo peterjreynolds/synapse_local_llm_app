@@ -21,7 +21,7 @@ jobs:
       UPDATE_METADATA_PATH: Synapse-Private-update.json
       RELEASE_TAG: synapse-private
       EXPECTED_APPLICATION_ID: app.synapse.privatechat
-      EXPECTED_MINIMUM_ANDROID_API: "28"
+      EXPECTED_MINIMUM_ANDROID_API: "25"
       EXPECTED_APK_ABIS: arm64-v8a,armeabi-v7a,x86_64
       EXPECTED_SIGNING_CERTIFICATE_SHA256: 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b
       MAXIMUM_APK_BYTES: "67108864"
@@ -158,7 +158,11 @@ jobs:
               tr ' ' ','
           )"
           actual_signer_sha256="$(
-            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK_PATH" |
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify \
+              --min-sdk-version "$EXPECTED_MINIMUM_ANDROID_API" \
+              --Werr \
+              --print-certs \
+              "$APK_PATH" |
               sed -n "s/^Signer #1 certificate SHA-256 digest: //p"
           )"
 
@@ -298,6 +302,8 @@ jobs:
           test "$metadata_asset_count" = "1"
           test "$metadata_asset_digest" = "$expected_metadata_digest"
           printf '%s' "$release_receipt" | jq -er '.body' | grep -F "Version code: $SYNAPSE_VERSION_CODE." >/dev/null
+          printf '%s' "$release_receipt" | jq -er '.body' | grep -F "Minimum Android API: $EXPECTED_MINIMUM_ANDROID_API." >/dev/null
+          printf '%s' "$release_receipt" | jq -er '.body' | grep -F "APK ABIs: arm64-v8a, armeabi-v7a, x86_64." >/dev/null
 
           receipt_directory="$(mktemp -d)"
           gh release download "$RELEASE_TAG" \
@@ -309,13 +315,22 @@ jobs:
             --arg apk_sha256 "$expected_apk_sha256" \
             --arg signer_sha256 "$EXPECTED_SIGNING_CERTIFICATE_SHA256" \
             --arg source_commit "$GITHUB_SHA" \
-            '.versionCode == $version_code and .apk.sha256 == $apk_sha256 and .apk.signerSha256 == $signer_sha256 and .source.commit == $source_commit' \
+            --argjson minimum_android_api "$EXPECTED_MINIMUM_ANDROID_API" \
+            --arg expected_abis "$EXPECTED_APK_ABIS" \
+            '.versionCode == $version_code and
+              .minimumAndroidApi == $minimum_android_api and
+              .supportedAbis == ($expected_abis | split(",")) and
+              .apk.sha256 == $apk_sha256 and
+              .apk.signerSha256 == $signer_sha256 and
+              .source.commit == $source_commit' \
             "$receipt_directory/$UPDATE_METADATA_PATH" >/dev/null
 
           {
             printf '\n### Synapse Private release receipt\n\n'
             printf -- '- Source commit: `%s`\n' "$GITHUB_SHA"
             printf -- '- Version code: `%s`\n' "$SYNAPSE_VERSION_CODE"
+            printf -- '- Minimum Android API: `%s`\n' "$EXPECTED_MINIMUM_ANDROID_API"
+            printf -- '- APK ABIs: `%s`\n' "$EXPECTED_APK_ABIS"
             printf -- '- APK SHA-256: `%s`\n' "$expected_apk_sha256"
             printf -- '- Signing certificate SHA-256: `%s`\n' "$EXPECTED_SIGNING_CERTIFICATE_SHA256"
             printf -- '- Release tag: `%s`\n' "$RELEASE_TAG"

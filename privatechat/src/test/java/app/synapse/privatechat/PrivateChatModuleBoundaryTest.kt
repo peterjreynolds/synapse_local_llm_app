@@ -18,6 +18,7 @@ class PrivateChatModuleBoundaryTest {
 
         assertTrue(buildScript.contains("namespace = \"app.synapse.privatechat\""))
         assertTrue(buildScript.contains("applicationId = \"app.synapse.privatechat\""))
+        assertTrue("Android 7.1 support must remain explicit", buildScript.contains("minSdk = 25"))
         assertFalse(buildScript.contains("project(\":app\")"))
         assertFalse(buildScript.contains("externalNativeBuild"))
     }

@@ -43,7 +43,7 @@ android {
 
     defaultConfig {
         applicationId = "app.synapse.privatechat"
-        minSdk = 28
+        minSdk = 25
         targetSdk = 36
         versionCode = privateChatVersionCode
         versionName = privateChatVersionName

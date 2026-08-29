@@ -15,7 +15,7 @@ class PrivateSensitiveClipboardOwnerTest {
             PrivateSensitiveClipboardOwner(
                 clipboard = RecordingSensitiveClipboard(),
                 clearScheduler = RecordingClipboardClearScheduler(),
-                androidSdkInt = 27,
+                androidSdkInt = 24,
             )
         }
     }
@@ -28,7 +28,7 @@ class PrivateSensitiveClipboardOwnerTest {
             PrivateSensitiveClipboardOwner(
                 clipboard = clipboard,
                 clearScheduler = scheduler,
-                androidSdkInt = 32,
+                androidSdkInt = 25,
             )
 
         assertEquals(

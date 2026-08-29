@@ -36,6 +36,20 @@ the pinned libsignal library as a cryptographic implementation detail. The
 rolling alpha must not be described as independently audited or as providing
 network-level anonymity.
 
+The rolling APK supports Android 7.1 (API 25) and newer. Compatibility does not
+repair an outdated operating system: a device with obsolete vendor security
+patches has a materially weaker endpoint-security posture and must not be
+described as high assurance. The API-25 path retains Android Keystore-backed
+keys, exact APK certificate verification, HTTPS-only Supabase transport, and
+the same fail-closed authorization behavior; it does not substitute weaker
+cryptography or cleartext networking.
+
+Android 7.1 has no sensitive-clipboard flag. Synapse Private overwrites an
+unchanged copied value after its guarded timeout, but it cannot guarantee that
+Samsung or another vendor clipboard-history feature purges older copies. Copying
+an invitation or message on API 25 must therefore be treated as a disclosure to
+the device clipboard.
+
 ## Honest Privacy Claims
 
 The release may claim end-to-end encrypted message content only after the

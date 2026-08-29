@@ -22,6 +22,22 @@ class GitHubPrivateAppUpdateRepositoryTest {
         }
 
     @Test
+    fun `exposes an API 25 update to an Android 7_1 device`() =
+        runTest {
+            val repository =
+                repository(
+                    source = StubPrivateUpdateTransferSource(validMetadata(minimumAndroidApi = 25)),
+                    deviceAndroidApi = 25,
+                    deviceSupportedAbis = setOf("armeabi-v7a"),
+                )
+
+            val outcome = repository.checkForNewerCompatibleUpdate()
+
+            val available = outcome as PrivateAppUpdateCheckOutcome.Available
+            assertEquals(25, available.update.minimumAndroidApi)
+        }
+
+    @Test
     fun `does not prompt for an installed or incompatible release`() =
         runTest {
             val installed = repository(StubPrivateUpdateTransferSource(validMetadata(versionCode = 2037)), 2037)

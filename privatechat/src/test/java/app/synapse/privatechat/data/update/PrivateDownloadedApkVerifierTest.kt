@@ -14,7 +14,7 @@ class PrivateDownloadedApkVerifierTest {
             downloadedByteCount = 8_192L,
             downloadedSha256 = "a".repeat(64),
             installedVersionCode = 2037,
-            deviceAndroidApi = 35,
+            deviceAndroidApi = 25,
             deviceSupportedAbis = setOf("arm64-v8a"),
         )
     }
@@ -51,11 +51,12 @@ class PrivateDownloadedApkVerifierTest {
 internal fun testUpdate(
     apkByteCount: Long = 8_192L,
     apkSha256: String = "a".repeat(64),
+    minimumAndroidApi: Int = 25,
 ): PrivateAvailableAppUpdate =
     PrivateAvailableAppUpdate(
         versionCode = 2038,
         versionName = "0.1.2038",
-        minimumAndroidApi = 28,
+        minimumAndroidApi = minimumAndroidApi,
         supportedAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64"),
         apkName = SynapsePrivateUpdateTrust.APK_NAME,
         apkByteCount = apkByteCount,
@@ -66,12 +67,12 @@ internal fun testUpdate(
         publishedAt = "2026-08-27T20:15:30Z",
     )
 
-internal fun testInspection(): PrivateApkInspection =
+internal fun testInspection(minimumAndroidApi: Int = 25): PrivateApkInspection =
     PrivateApkInspection(
         applicationId = SynapsePrivateUpdateTrust.APPLICATION_ID,
         versionCode = 2038,
         versionName = "0.1.2038",
-        minimumAndroidApi = 28,
+        minimumAndroidApi = minimumAndroidApi,
         packagedAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64"),
         signerSha256Digests = setOf(SynapsePrivateUpdateTrust.SIGNER_SHA256),
     )

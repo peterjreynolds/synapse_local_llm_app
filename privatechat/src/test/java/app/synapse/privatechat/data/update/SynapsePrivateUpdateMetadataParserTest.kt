@@ -13,7 +13,7 @@ class SynapsePrivateUpdateMetadataParserTest {
 
         assertEquals(2038, update.versionCode)
         assertEquals("0.1.2038", update.versionName)
-        assertEquals(28, update.minimumAndroidApi)
+        assertEquals(25, update.minimumAndroidApi)
         assertEquals(setOf("arm64-v8a", "armeabi-v7a", "x86_64"), update.supportedAbis)
         assertEquals(SynapsePrivateUpdateTrust.APK_URL, update.apkDownloadUrl)
         assertEquals(SynapsePrivateUpdateTrust.SIGNER_SHA256, update.signerSha256)
@@ -55,7 +55,7 @@ class SynapsePrivateUpdateMetadataParserTest {
 
 internal fun validMetadata(
     versionCode: Int = 2038,
-    minimumAndroidApi: Int = 28,
+    minimumAndroidApi: Int = 25,
     supportedAbis: String = "\"arm64-v8a\",\"armeabi-v7a\",\"x86_64\"",
     apkByteCount: Long = 8_192L,
     apkSha256: String = "a".repeat(64),

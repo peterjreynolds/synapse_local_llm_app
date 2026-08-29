@@ -3,6 +3,7 @@ package app.synapse.privatechat.data.update
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.content.pm.Signature
 import android.os.Build
 import java.io.File
 import java.io.IOException
@@ -35,11 +36,11 @@ internal class AndroidPrivateApkInspector(
         val applicationInfo =
             packageInfo.applicationInfo
                 ?: throw IOException("The downloaded update has no application information.")
-        val signers = packageInfo.signingInfo?.apkContentsSigners.orEmpty()
+        val signers = readArchiveSigners(packageInfo)
         if (signers.isEmpty()) throw IOException("The downloaded update has no signing certificate.")
         return PrivateApkInspection(
             applicationId = packageInfo.packageName,
-            versionCode = packageInfo.longVersionCode,
+            versionCode = readArchiveVersionCode(packageInfo),
             versionName = packageInfo.versionName.orEmpty(),
             minimumAndroidApi = applicationInfo.minSdkVersion,
             packagedAbis = readPackagedAbis(apkFile),
@@ -48,16 +49,42 @@ internal class AndroidPrivateApkInspector(
     }
 
     private fun readArchivePackageInfo(apkFile: File): PackageInfo? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.getPackageArchiveInfo(
-                apkFile.absolutePath,
-                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
-            )
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+                packageManager.getPackageArchiveInfo(
+                    apkFile.absolutePath,
+                    PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+                )
+
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> {
+                // Exception scope: Android API 28-32 archive inspection. Owner: Synapse Private updater.
+                // Removal condition: remove this branch when the module minimum SDK reaches API 33.
+                @Suppress("DEPRECATION")
+                packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+            }
+
+            else -> {
+                // Android 7.1 verifies the APK before exposing its legacy signer array. Keep exact
+                // certificate matching in PrivateDownloadedApkVerifier; never trust metadata alone.
+                @Suppress("DEPRECATION")
+                packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_SIGNATURES)
+            }
+        }
+
+    private fun readArchiveVersionCode(packageInfo: PackageInfo): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageInfo.longVersionCode
         } else {
-            // Exception scope: Android API 28-32 archive inspection. Owner: Synapse Private updater.
-            // Removal condition: remove this branch when the module minimum SDK reaches API 33.
             @Suppress("DEPRECATION")
-            packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+            packageInfo.versionCode.toLong()
+        }
+
+    private fun readArchiveSigners(packageInfo: PackageInfo): Array<out Signature> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageInfo.signingInfo?.apkContentsSigners.orEmpty()
+        } else {
+            @Suppress("DEPRECATION")
+            packageInfo.signatures.orEmpty()
         }
 
     private fun readPackagedAbis(apkFile: File): Set<String> =
