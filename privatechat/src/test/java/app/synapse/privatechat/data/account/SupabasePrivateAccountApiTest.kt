@@ -86,6 +86,51 @@ class SupabasePrivateAccountApiTest {
     }
 
     @Test
+    fun signInSurvivesDeviceClockSkewAndCanRegisterTheReservedDevice() =
+        runBlocking {
+            val deviceClockNow = FIXED_NOW.plusSeconds(8 * 60 * 60)
+            val transport =
+                RecordingTransport(
+                    authenticationResponse(
+                        reservationExpiry = POSTGRES_RESERVATION_EXPIRY,
+                    ),
+                )
+            val api = SupabasePrivateAccountApi(transport, Clock.fixed(deviceClockNow, ZoneOffset.UTC))
+
+            val authentication =
+                api.authenticate(
+                    PrivateAccountAccessCommand.SignIn(
+                        username = PrivateUsername("peter_01"),
+                        password = PrivateAccountPassword(PASSWORD),
+                    ),
+                    DEVICE_ID,
+                    null,
+                ) as PrivateAccountBackendOutcome.Confirmed
+
+            assertEquals(Instant.parse(POSTGRES_RESERVATION_EXPIRY), authentication.receipt.reservation.expiresAt)
+            assertEquals(
+                deviceClockNow.plusSeconds(3_600),
+                authentication.receipt.tokens.expiresAt,
+            )
+            transport.responses.add(deviceBindingResponse())
+
+            val registration =
+                api.registerDevice(
+                    PrivateDeviceBindingCommand(
+                        reservation = authentication.receipt.reservation,
+                        tokens = authentication.receipt.tokens,
+                        publicPreKeyBundle = publicBundle(),
+                    ),
+                )
+
+            assertTrue(registration is PrivateAccountBackendOutcome.Confirmed)
+            assertEquals(
+                listOf("sign-in", "register-device"),
+                transport.requests.map { request -> request.pathSegments.last() },
+            )
+        }
+
+    @Test
     fun deviceRegistrationCarriesOnlyPublicSignalMaterialAndRequiresMatchingReservation() =
         runBlocking {
             val transport = RecordingTransport(authenticationResponse())
@@ -270,6 +315,7 @@ class SupabasePrivateAccountApiTest {
     private fun authenticationResponse(
         deviceId: UUID = DEVICE_ID,
         accountContainer: String = "account",
+        reservationExpiry: String = FIXED_NOW.plusSeconds(300).toString(),
     ): SupabaseHttpResponse =
         SupabaseHttpResponse(
             statusCode = 200,
@@ -282,7 +328,7 @@ class SupabasePrivateAccountApiTest {
                             put("user_id", ACCOUNT_ID.toString())
                             put("device_id", deviceId.toString())
                             put("signal_device_id", 7)
-                            put("expires_at", FIXED_NOW.plusSeconds(300).toString())
+                            put("expires_at", reservationExpiry)
                         },
                     )
                     put(
@@ -366,5 +412,6 @@ class SupabasePrivateAccountApiTest {
         const val REFRESH_TOKEN = "refresh12345"
         const val REFRESHED_ACCESS_TOKEN = "refreshed.token.with-safe-characters-123456789"
         const val REFRESHED_REFRESH_TOKEN = "rotated12345"
+        const val POSTGRES_RESERVATION_EXPIRY = "2026-08-22T12:05:00.123456+00:00"
     }
 }

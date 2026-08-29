@@ -179,9 +179,8 @@ internal class SupabasePrivateAccountApi(
                 signalDeviceId = SignalDeviceId.fromWire(reservationObject.requireInt("signal_device_id")),
                 expiresAt = reservationObject.requireInstant("expires_at"),
             )
-        if (!reservation.expiresAt.isAfter(clock.instant())) {
-            malformedResponse("Device reservation is already expired")
-        }
+        // Device wall clocks are not authoritative. The registration RPC validates this
+        // server-issued reservation and its expiry atomically before accepting public keys.
         return UnboundPrivateAccountSession(
             reservation = reservation,
             tokens = responseBody.requireObjectField("session").toSessionTokens(clock),
@@ -351,19 +350,25 @@ private fun JsonObject.toSessionTokens(clock: Clock): PrivateBackendSessionToken
     val expiresInSeconds = requireLong("expires_in")
     if (expiresInSeconds !in 1..86_400) malformedResponse("Supabase session expiry is malformed")
     val explicitExpiry = this["expires_at"]
-    val expiry =
+    if (explicitExpiry != null && explicitExpiry !is JsonNull) {
+        val serverExpiryEpochSecond = requireLong("expires_at")
+        if (serverExpiryEpochSecond !in 1..MAXIMUM_SUPPORTED_EXPIRY_EPOCH_SECONDS) {
+            malformedResponse("Supabase session expiry is malformed")
+        }
         try {
-            if (explicitExpiry == null || explicitExpiry is JsonNull) {
-                clock.instant().plusSeconds(expiresInSeconds)
-            } else {
-                Instant.ofEpochSecond(requireLong("expires_at"))
-            }
+            Instant.ofEpochSecond(serverExpiryEpochSecond)
         } catch (error: DateTimeException) {
             malformedResponse("Supabase session expiry is malformed", error)
         }
-    if (!expiry.isAfter(clock.instant().minusSeconds(MAXIMUM_CLOCK_SKEW_SECONDS))) {
-        malformedResponse("Supabase session is already expired")
     }
+    // expires_in is a server-provided relative lifetime and remains valid when an older device's
+    // wall clock is wrong. Truncate local time to seconds for the durable session contract.
+    val expiry =
+        try {
+            Instant.ofEpochSecond(clock.instant().epochSecond).plusSeconds(expiresInSeconds)
+        } catch (error: DateTimeException) {
+            malformedResponse("Supabase session expiry is malformed", error)
+        }
     return PrivateBackendSessionTokens(
         expiresAt = expiry,
         accessToken = requireString("access_token"),
@@ -390,5 +395,5 @@ internal class SupabaseAccountResponseException(
     cause: Throwable? = null,
 ) : IllegalStateException(message, cause)
 
-private const val MAXIMUM_CLOCK_SKEW_SECONDS = 60L
+private const val MAXIMUM_SUPPORTED_EXPIRY_EPOCH_SECONDS = 253_402_300_799L
 private const val LOWER_HEX_DIGITS = "0123456789abcdef"
