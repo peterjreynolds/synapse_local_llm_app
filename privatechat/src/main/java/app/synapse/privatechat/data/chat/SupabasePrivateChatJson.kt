@@ -1,6 +1,7 @@
 package app.synapse.privatechat.data.chat
 
 import app.synapse.privatechat.data.supabase.SupabaseHttpResponse
+import app.synapse.privatechat.data.supabase.parseSupabasePostgresInstant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -81,7 +82,7 @@ internal fun JsonObject.requireChatBoolean(field: String): Boolean =
 
 internal fun JsonObject.requireChatInstant(field: String): Instant =
     try {
-        Instant.parse(requireChatString(field))
+        parseSupabasePostgresInstant(requireChatString(field))
     } catch (error: DateTimeParseException) {
         throw SupabasePrivateChatResponseException("Supabase chat field $field is malformed", error)
     }
@@ -92,7 +93,7 @@ internal fun JsonObject.requireNullableChatInstant(field: String): Instant? =
         is JsonPrimitive -> {
             if (!element.isString) malformedChatResponse("Supabase chat field $field is malformed")
             try {
-                Instant.parse(element.content)
+                parseSupabasePostgresInstant(element.content)
             } catch (error: DateTimeParseException) {
                 throw SupabasePrivateChatResponseException("Supabase chat field $field is malformed", error)
             }

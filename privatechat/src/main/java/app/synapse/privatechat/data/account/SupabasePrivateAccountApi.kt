@@ -6,6 +6,7 @@ import app.synapse.privatechat.data.supabase.SupabaseHttpMethod
 import app.synapse.privatechat.data.supabase.SupabaseHttpRequest
 import app.synapse.privatechat.data.supabase.SupabaseHttpResponse
 import app.synapse.privatechat.data.supabase.SupabaseHttpTransport
+import app.synapse.privatechat.data.supabase.parseSupabasePostgresInstant
 import app.synapse.privatechat.domain.account.PrivateAccountAccessCommand
 import app.synapse.privatechat.domain.account.PrivateAccountId
 import app.synapse.privatechat.domain.account.PrivateDisplayName
@@ -337,7 +338,7 @@ private fun JsonObject.requireDisplayName(field: String): PrivateDisplayName {
 
 private fun JsonObject.requireInstant(field: String): Instant =
     try {
-        Instant.parse(requireString(field))
+        parseSupabasePostgresInstant(requireString(field))
     } catch (error: DateTimeParseException) {
         malformedResponse("Supabase response field $field is malformed", error)
     }
