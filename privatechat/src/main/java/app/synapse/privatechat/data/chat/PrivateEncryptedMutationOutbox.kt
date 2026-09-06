@@ -159,11 +159,15 @@ internal class PrivateEncryptedMutationOutbox(
             try {
                 dispatcher.execute(session, request)
             } catch (rejection: SupabasePrivateChatRequestRejectedException) {
-                val digest = pending.operationDigest
-                try {
-                    envelopeCipher.discardPendingOutboundMutationAndResetPeerSessions(pending.key, digest)
-                } finally {
-                    digest.fill(0)
+                // A refreshable/temporary HTTP failure is not proof that the mutation was rejected.
+                // Preserve the exact request so recovery cannot advance the ratchet a second time.
+                if (!shouldRetainPrivateMutationAfterHttpFailure(rejection.statusCode)) {
+                    val digest = pending.operationDigest
+                    try {
+                        envelopeCipher.discardPendingOutboundMutationAndResetPeerSessions(pending.key, digest)
+                    } finally {
+                        digest.fill(0)
+                    }
                 }
                 throw rejection
             }

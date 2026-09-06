@@ -1,0 +1,36 @@
+name: Private chat recovery checks
+
+on:
+  push:
+    branches:
+      - ash/private-chat-http-recovery-20260906
+  pull_request:
+    branches:
+      - codex/supabase-private-chat
+    paths:
+      - privatechat/**
+      - .github/workflows/private-chat-recovery-checks.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-chat-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Unit tests, style, lint, and debug build only
+        run: ./gradlew :privatechat:testDebugUnitTest :privatechat:ktlintCheck :privatechat:lintDebug :privatechat:assembleDebug --stacktrace
