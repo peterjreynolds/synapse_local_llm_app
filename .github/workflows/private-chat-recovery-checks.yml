@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - codex/supabase-private-chat
+      - main
     paths:
       - privatechat/**
       - .github/workflows/private-chat-recovery-checks.yml
@@ -32,5 +33,14 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Install Android platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Create disposable test signing key
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -noprompt \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -keypass android -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 2 \
+            -dname "CN=Synapse CI Test Only"
       - name: Unit tests, style, lint, and debug build only
-        run: ./gradlew :privatechat:testDebugUnitTest :privatechat:ktlintCheck :privatechat:lintDebug :privatechat:assembleDebug --stacktrace
+        run: ./gradlew :privatechat:test :privatechat:ktlintCheck :privatechat:lintDebug :privatechat:assembleDebug --stacktrace
