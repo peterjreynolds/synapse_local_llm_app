@@ -298,6 +298,14 @@ class EncryptedPrivateSessionRepositoryTest {
     }
 
     @Test
+    fun sessionContractsAcceptCurrentSupabaseOpaqueRefreshTokenLength() {
+        assertEquals(
+            "refresh12345",
+            registeredSession(refreshToken = "refresh12345").refreshTokenForRenewal(),
+        )
+    }
+
+    @Test
     fun sessionContractsRejectMalformedSecretsExpiryAndDisplayName() {
         assertThrows(IllegalArgumentException::class.java) {
             registeredSession(accessToken = "not-a-jwt-access-token")

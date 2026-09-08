@@ -188,12 +188,8 @@ internal class RegisteredPrivateAccountSession private constructor(
             pseudonymousDisplayName: String,
         ): RegisteredPrivateAccountSession {
             require(accountId != NIL_UUID) { "Account ID must not be nil" }
-            require(accessToken.length in TOKEN_LENGTH_RANGE && ACCESS_TOKEN_PATTERN.matches(accessToken)) {
-                "Access token is malformed"
-            }
-            require(refreshToken.length in TOKEN_LENGTH_RANGE && REFRESH_TOKEN_PATTERN.matches(refreshToken)) {
-                "Refresh token is malformed"
-            }
+            SupabaseSessionTokenContract.requireValidAccessToken(accessToken)
+            SupabaseSessionTokenContract.requireValidRefreshToken(refreshToken)
             require(expiresAt.nano == 0 && expiresAt.epochSecond in 1..MAX_EXPIRY_EPOCH_SECONDS) {
                 "Session expiry is outside the supported range"
             }
@@ -226,9 +222,6 @@ internal class RegisteredPrivateAccountSession private constructor(
         }
 
         private val NIL_UUID = UUID(0L, 0L)
-        private val TOKEN_LENGTH_RANGE = 20..8_192
-        private val ACCESS_TOKEN_PATTERN = Regex("^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$")
-        private val REFRESH_TOKEN_PATTERN = Regex("^[A-Za-z0-9._~-]+$")
         private val AUTHENTICATION_USERNAME_PATTERN = Regex("^[a-z][a-z0-9_]{2,31}$")
         private const val LEGACY_VALIDATION_USERNAME = "legacy_session"
         private const val MAX_DISPLAY_NAME_CHARACTERS = 64

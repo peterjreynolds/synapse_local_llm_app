@@ -19,6 +19,9 @@ Deno.serve((request: Request) =>
     const signIn = parseSignInRequest(body);
     const secrets = await readRuntimeSecrets();
     const serviceClient = createServiceClient(secrets);
+    // Password sign-in changes the client's authorization to the user session.
+    // Keep service-only lookup and reservation RPCs on an isolated client.
+    const authenticationClient = createServiceClient(secrets);
     await enforceAccountAccessRateLimit(serviceClient, request, "SIGN_IN", secrets.rateLimitPepper);
 
     try {
@@ -43,10 +46,11 @@ Deno.serve((request: Request) =>
         ? loginRow.user_id
         : null;
 
-      const { data: signInData, error: signInError } = await serviceClient.auth.signInWithPassword({
-        email: internalEmail,
-        password: signIn.password,
-      });
+      const { data: signInData, error: signInError } = await authenticationClient.auth
+        .signInWithPassword({
+          email: internalEmail,
+          password: signIn.password,
+        });
       if (
         signInError !== null ||
         signInData.user === null ||

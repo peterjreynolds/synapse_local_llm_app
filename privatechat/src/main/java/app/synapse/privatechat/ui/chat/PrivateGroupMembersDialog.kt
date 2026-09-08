@@ -33,6 +33,8 @@ internal fun PrivateGroupMembersDialog(
     val conversation = conversationState as? PrivateConversationUiState.Available
     val snapshot = conversation?.snapshot?.takeIf { it.room.kind == PrivateRoomKind.GROUP }
     val operationRunning = operation is PrivateChatOperationUiState.Running
+    val memberMutationsEnabled =
+        !operationRunning && conversation?.connectionState == PrivateChatConnectionUiState.CONNECTED
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Group members") },
@@ -54,7 +56,7 @@ internal fun PrivateGroupMembersDialog(
                             member = member,
                             currentAccountId = snapshot.accountId,
                             actorRole = actorRole,
-                            enabled = !operationRunning,
+                            enabled = memberMutationsEnabled,
                             onChangeRole = onChangeRole,
                             onRemoveMember = onRemoveMember,
                         )

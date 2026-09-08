@@ -60,6 +60,7 @@ class PrivateChatLocalStateInvalidatorTest {
                 backend = UnusedPollingBackend,
                 envelopeCipher = envelopeCipher,
                 payloadCache = payloadCache,
+                pendingMutationRecovery = PrivatePendingOutboundMutationRecovery { emptySet() },
             )
         return PrivateChatLocalStateInvalidator(pollingRepository, envelopeCipher)
     }

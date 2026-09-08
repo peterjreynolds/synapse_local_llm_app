@@ -31,11 +31,17 @@ enum class PrivateRoomMuteState {
 enum class PrivateRoomMetadataState {
     AVAILABLE,
     PENDING,
+    UNAVAILABLE_ON_DEVICE,
 }
 
 enum class PrivateActivitySharingState {
     DISABLED,
     ENABLED,
+}
+
+enum class PrivateActivityFeedAvailability {
+    AVAILABLE,
+    UNAVAILABLE,
 }
 
 enum class PrivateMessageRetention(
@@ -168,6 +174,7 @@ data class PrivateRoomFeedSnapshot(
     val accountId: PrivateAccountId,
     val rooms: List<PrivateRoomSummary>,
     val activitySharingPreferences: PrivateActivitySharingPreferences,
+    val recoveredMutationIds: Set<PrivateClientMutationId> = emptySet(),
 ) {
     init {
         require(rooms.distinctBy(PrivateRoomSummary::roomId).size == rooms.size) {
@@ -182,6 +189,8 @@ data class PrivateConversationSnapshot(
     val members: List<PrivateRoomMemberSnapshot>,
     val messages: List<PrivateMessageSnapshot>,
     val typingParticipants: List<PrivateTypingParticipant>,
+    val typingAvailability: PrivateActivityFeedAvailability = PrivateActivityFeedAvailability.AVAILABLE,
+    val recoveredMutationIds: Set<PrivateClientMutationId> = emptySet(),
 ) {
     init {
         require(members.size == room.participantCount) {

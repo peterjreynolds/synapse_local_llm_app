@@ -22,14 +22,14 @@ internal object PrivateChatSnapshotPolicy {
         val roomFeed =
             when (val currentRoomFeed = state.roomFeed) {
                 is PrivateRoomFeedUiState.Available ->
-                    PrivateRoomFeedUiState.Available(sanitizeRoomFeed(currentRoomFeed.snapshot, now))
+                    currentRoomFeed.copy(snapshot = sanitizeRoomFeed(currentRoomFeed.snapshot, now))
 
                 else -> currentRoomFeed
             }
         val conversation =
             when (val currentConversation = state.conversation) {
                 is PrivateConversationUiState.Available ->
-                    PrivateConversationUiState.Available(sanitizeConversation(currentConversation.snapshot, now))
+                    currentConversation.copy(snapshot = sanitizeConversation(currentConversation.snapshot, now))
 
                 else -> currentConversation
             }

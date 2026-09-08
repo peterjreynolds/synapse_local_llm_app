@@ -39,7 +39,7 @@ internal class PrivateRoomActionCoordinator(
 
     fun changeRetention(retention: PrivateMessageRetention) {
         val accountId = activeAccountId() ?: return
-        val room = selectedRoom() ?: return
+        val room = connectedSelectedRoomOrReject() ?: return
         if (room.retention == retention) return
         val command =
             ChangePrivateRoomRetentionCommand(
@@ -53,6 +53,7 @@ internal class PrivateRoomActionCoordinator(
             request = { gateway.changeRoomRetention(command) },
             receiptMatches = { receipt -> PrivateChatReceiptValidator.matches(receipt, command) },
             onConfirmed = { receipt -> updatePresentedRoom { current -> current.copy(retention = receipt.retention) } },
+            onTransportUnavailable = ::markConversationAndRoomFeedReconnecting,
         )
     }
 
@@ -69,18 +70,24 @@ internal class PrivateRoomActionCoordinator(
     }
 
     fun changeReadReceiptSharing(sharingState: PrivateActivitySharingState) {
-        val preferences = currentActivitySharingPreferences() ?: return
-        changeActivitySharing(preferences.copy(readReceipts = sharingState))
+        val preferences = connectedActivitySharingPreferencesOrReject() ?: return
+        changeActivitySharing(
+            currentPreferences = preferences,
+            changedPreferences = preferences.copy(readReceipts = sharingState),
+        )
     }
 
     fun changeTypingIndicatorSharing(sharingState: PrivateActivitySharingState) {
-        val preferences = currentActivitySharingPreferences() ?: return
-        changeActivitySharing(preferences.copy(typingIndicators = sharingState))
+        val preferences = connectedActivitySharingPreferencesOrReject() ?: return
+        changeActivitySharing(
+            currentPreferences = preferences,
+            changedPreferences = preferences.copy(typingIndicators = sharingState),
+        )
     }
 
     fun createOneUseRoomInvitation() {
         val accountId = activeAccountId() ?: return
-        val room = selectedRoom() ?: return
+        val room = connectedSelectedRoomOrReject() ?: return
         if (room.kind == PrivateRoomKind.DIRECT && room.participantCount == 2) {
             stateStore.update { state ->
                 state.copy(
@@ -139,8 +146,10 @@ internal class PrivateRoomActionCoordinator(
                 is PrivateChatMutationOutcome.Rejected ->
                     PrivateRoomInvitationUiState.Rejected(outcome.userMessage)
 
-                PrivateChatMutationOutcome.TransportUnavailable ->
+                PrivateChatMutationOutcome.TransportUnavailable -> {
+                    markConversationReconnecting()
                     PrivateRoomInvitationUiState.TransportUnavailable
+                }
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -150,7 +159,7 @@ internal class PrivateRoomActionCoordinator(
 
     private fun changeRoomPreferences(transform: (PrivateRoomSummary) -> PrivateRoomSummary) {
         val accountId = activeAccountId() ?: return
-        val room = selectedRoom() ?: return
+        val room = connectedSelectedRoomOrReject() ?: return
         val changedRoom = transform(room)
         if (changedRoom == room) return
         val command =
@@ -175,24 +184,28 @@ internal class PrivateRoomActionCoordinator(
                     )
                 }
             },
+            onTransportUnavailable = ::markConversationAndRoomFeedReconnecting,
         )
     }
 
-    private fun changeActivitySharing(preferences: PrivateActivitySharingPreferences) {
+    private fun changeActivitySharing(
+        currentPreferences: PrivateActivitySharingPreferences,
+        changedPreferences: PrivateActivitySharingPreferences,
+    ) {
         val accountId = activeAccountId() ?: return
-        val currentPreferences = currentActivitySharingPreferences() ?: return
-        if (currentPreferences == preferences) return
+        if (currentPreferences == changedPreferences) return
         val command =
             ChangePrivateActivitySharingCommand(
                 accountId = accountId,
                 mutationId = mutationIdFactory.createMutationId(),
-                preferences = preferences,
+                preferences = changedPreferences,
             )
         mutationCoordinator.requestConfirmedMutation(
             kind = PrivateChatOperationKind.CHANGE_ACTIVITY_SHARING,
             request = { gateway.changeActivitySharing(command) },
             receiptMatches = { receipt -> PrivateChatReceiptValidator.matches(receipt, command) },
             onConfirmed = { receipt -> acceptActivitySharingReceipt(receipt.preferences) },
+            onTransportUnavailable = ::markRoomFeedReconnecting,
         )
     }
 
@@ -201,8 +214,8 @@ internal class PrivateRoomActionCoordinator(
             val roomFeed = state.roomFeed as? PrivateRoomFeedUiState.Available ?: return@update state
             state.copy(
                 roomFeed =
-                    PrivateRoomFeedUiState.Available(
-                        roomFeed.snapshot.copy(activitySharingPreferences = preferences),
+                    roomFeed.copy(
+                        snapshot = roomFeed.snapshot.copy(activitySharingPreferences = preferences),
                     ),
             )
         }
@@ -210,16 +223,43 @@ internal class PrivateRoomActionCoordinator(
             activitySharingCoordinator.publishTypingStateIfEnabled(PrivateTypingState.INACTIVE, force = true)
         }
         if (preferences.readReceipts == PrivateActivitySharingState.ENABLED) {
-            selectedRoom()?.let(activitySharingCoordinator::acknowledgeRoomReadIfEnabled)
+            PrivateChatMutationAvailability
+                .connectedSelectedRoom(stateStore.current)
+                ?.let(activitySharingCoordinator::acknowledgeRoomReadIfEnabled)
         }
     }
 
-    private fun currentActivitySharingPreferences(): PrivateActivitySharingPreferences? =
-        (stateStore.current.roomFeed as? PrivateRoomFeedUiState.Available)
-            ?.snapshot
-            ?.activitySharingPreferences
+    private fun connectedActivitySharingPreferencesOrReject(): PrivateActivitySharingPreferences? {
+        val preferences =
+            PrivateChatMutationAvailability
+                .connectedRoomFeedSnapshot(stateStore.current)
+                ?.activitySharingPreferences
+        if (preferences == null) {
+            mutationCoordinator.rejectAction(PRIVATE_RECONNECT_BEFORE_MUTATION_MESSAGE)
+        }
+        return preferences
+    }
 
-    private fun selectedRoom(): PrivateRoomSummary? = PrivateChatUiReducer.selectedRoom(stateStore.current)
+    private fun connectedSelectedRoomOrReject(): PrivateRoomSummary? {
+        val room = PrivateChatMutationAvailability.connectedSelectedRoom(stateStore.current)
+        if (room == null) {
+            mutationCoordinator.rejectAction(PRIVATE_RECONNECT_BEFORE_MUTATION_MESSAGE)
+        }
+        return room
+    }
+
+    private fun markConversationReconnecting() {
+        stateStore.update(PrivateChatUiReducer::markConversationTransportUnavailable)
+    }
+
+    private fun markRoomFeedReconnecting() {
+        stateStore.update(PrivateChatUiReducer::markRoomFeedTransportUnavailable)
+    }
+
+    private fun markConversationAndRoomFeedReconnecting() {
+        markConversationReconnecting()
+        markRoomFeedReconnecting()
+    }
 
     private fun updatePresentedRoom(transform: (PrivateRoomSummary) -> PrivateRoomSummary) {
         val selectedRoomId = stateStore.current.selectedRoomId ?: return

@@ -1,7 +1,9 @@
 package app.synapse.privatechat.ui.chat
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.synapse.privatechat.domain.chat.PrivateChatMutationReceipt
 import app.synapse.privatechat.domain.chat.PrivateSocialMutationReceipt
@@ -28,7 +31,9 @@ internal fun PrivateChatOperationNotice(
     modifier: Modifier = Modifier,
 ) {
     val notice = privateOperationNotice(operation) ?: return
-    val confirmed = operation is PrivateChatOperationUiState.Confirmed
+    val confirmed =
+        operation is PrivateChatOperationUiState.Confirmed ||
+            operation is PrivateChatOperationUiState.Recovered
     Surface(
         onClick = onDismiss,
         modifier = modifier.fillMaxWidth(),
@@ -64,7 +69,10 @@ internal fun PrivateRoomInvitationDialog(
             PrivateConfirmedInvitationDialog(
                 title = "One-use conversation invitation",
                 detail = "Share this code with one person. It expires and cannot be reused after redemption.",
-                code = invitationState.receipt.invitationCode.secret,
+                transferContent =
+                    PrivateInvitationTransferContent.forConversation(
+                        invitationState.receipt.invitationCode,
+                    ),
                 expiryLabel = privateRemainingTimeLabel(invitationState.receipt.expiresAt),
                 onDismiss = onDismiss,
             )
@@ -94,7 +102,10 @@ internal fun PrivateAccountInvitationDialog(
             PrivateConfirmedInvitationDialog(
                 title = "One-use account invitation",
                 detail = "Share this code privately. One person can use it to create a Synapse Private account.",
-                code = invitationState.receipt.invitationCode.canonical,
+                transferContent =
+                    PrivateInvitationTransferContent.forAccount(
+                        invitationState.receipt.invitationCode,
+                    ),
                 expiryLabel = privateRemainingTimeLabel(invitationState.receipt.expiresAt),
                 onDismiss = onDismiss,
             )
@@ -118,10 +129,11 @@ internal fun PrivateAccountInvitationDialog(
 private fun PrivateConfirmedInvitationDialog(
     title: String,
     detail: String,
-    code: String,
+    transferContent: PrivateInvitationTransferContent,
     expiryLabel: String,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -133,7 +145,7 @@ private fun PrivateConfirmedInvitationDialog(
                     shape = MaterialTheme.shapes.small,
                 ) {
                     Text(
-                        text = code,
+                        text = transferContent.exposeCodeForUserAction(),
                         modifier = Modifier.padding(12.dp),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -143,6 +155,43 @@ private fun PrivateConfirmedInvitationDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val message =
+                                when (copyPrivateInvitationCode(context, transferContent)) {
+                                    PrivateInvitationCopyOutcome.COPIED -> "Invitation code copied."
+                                    PrivateInvitationCopyOutcome.CLIPBOARD_UNAVAILABLE ->
+                                        "The invitation code could not be copied."
+                                }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Copy code")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (
+                                sharePrivateInvitationCode(context, transferContent) ==
+                                PrivateInvitationShareOutcome.SHARE_UNAVAILABLE
+                            ) {
+                                Toast
+                                    .makeText(
+                                        context,
+                                        "No app is available to share the invitation code.",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Share code")
+                    }
+                }
             }
         },
         confirmButton = {
@@ -194,7 +243,11 @@ internal fun PrivateConversationStatus(
             CircularProgressIndicator()
             Spacer(Modifier.height(16.dp))
         }
-        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
         Spacer(Modifier.height(4.dp))
         Text(
             text = detail,
@@ -231,6 +284,15 @@ private fun privateOperationNotice(operation: PrivateChatOperationUiState): Stri
             }
 
         is PrivateChatOperationUiState.InvalidInput -> operation.userMessage
+        is PrivateChatOperationUiState.Recovered ->
+            when (operation.kind) {
+                PrivateChatOperationKind.SEND_MESSAGE -> "Message send recovered after reconnecting."
+                PrivateChatOperationKind.EDIT_MESSAGE -> "Message edit recovered after reconnecting."
+                PrivateChatOperationKind.CHANGE_REACTION -> "Reaction recovered after reconnecting."
+                PrivateChatOperationKind.CREATE_ROOM -> "Conversation creation recovered after reconnecting."
+                else -> "Earlier request recovered after reconnecting."
+            }
+
         is PrivateChatOperationUiState.Rejected -> operation.userMessage
         PrivateChatOperationUiState.TransportUnavailable ->
             "The request was not confirmed because conversation transport is unavailable."

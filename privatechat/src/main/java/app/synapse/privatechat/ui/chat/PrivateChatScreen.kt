@@ -1,5 +1,6 @@
 package app.synapse.privatechat.ui.chat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -18,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
+import app.synapse.privatechat.ui.account.PrivateAccountSignOutUiState
 
 @Composable
 fun PrivateChatScreen(
@@ -29,6 +31,20 @@ fun PrivateChatScreen(
     socialActions: PrivateSocialUiActions,
     onDismissOperationNotice: () -> Unit,
 ) {
+    val overlayDismissAllowed =
+        state.operation !is PrivateChatOperationUiState.Running &&
+            !(
+                state.overlay == PrivateChatOverlay.PROFILE &&
+                    accountSessionActions.signOutState is PrivateAccountSignOutUiState.SigningOut
+            )
+    BackHandler(enabled = state.overlay != PrivateChatOverlay.HIDDEN) {
+        if (overlayDismissAllowed) navigationActions.dismissOverlay()
+    }
+    BackHandler(
+        enabled = state.overlay == PrivateChatOverlay.HIDDEN && state.selectedRoomId != null,
+    ) {
+        navigationActions.showRoomList()
+    }
     Box(
         modifier =
             Modifier
@@ -60,7 +76,6 @@ fun PrivateChatScreen(
                             socialState = state.social,
                             selectedRoomId = state.selectedRoomId,
                             navigationActions = navigationActions,
-                            socialActions = socialActions,
                             modifier = Modifier.width(PRIVATE_ROOM_LIST_WIDTH),
                         )
                         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -79,7 +94,6 @@ fun PrivateChatScreen(
                         socialState = state.social,
                         selectedRoomId = null,
                         navigationActions = navigationActions,
-                        socialActions = socialActions,
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
@@ -112,6 +126,7 @@ fun PrivateChatScreen(
             accountSessionActions = accountSessionActions,
             navigationActions = navigationActions,
             socialActions = socialActions,
+            onDismissOperationNotice = onDismissOperationNotice,
         )
     }
 }

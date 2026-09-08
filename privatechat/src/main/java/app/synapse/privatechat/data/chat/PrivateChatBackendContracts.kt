@@ -116,6 +116,18 @@ internal data class PrivateBackendPresenceRecord(
     val expiresAt: Instant,
 )
 
+internal sealed interface PrivateBackendActivityFeed<out Record> {
+    val records: List<Record>
+
+    data class Available<Record>(
+        override val records: List<Record>,
+    ) : PrivateBackendActivityFeed<Record>
+
+    data object AccessDenied : PrivateBackendActivityFeed<Nothing> {
+        override val records: List<Nothing> = emptyList()
+    }
+}
+
 internal data class PrivateBackendEnvelopeRecord(
     val parentRecordId: UUID,
     val serverRevision: Int,
@@ -140,8 +152,8 @@ internal data class PrivateBackendPollingState(
     val reactionEnvelopes: List<PrivateBackendEnvelopeRecord>,
     val roomMetadataEnvelopes: List<PrivateBackendEnvelopeRecord>,
     val messageReceipts: List<PrivateBackendMessageReceiptRecord>,
-    val typing: List<PrivateBackendTypingRecord>,
-    val presence: List<PrivateBackendPresenceRecord>,
+    val typing: PrivateBackendActivityFeed<PrivateBackendTypingRecord>,
+    val presence: PrivateBackendActivityFeed<PrivateBackendPresenceRecord>,
 )
 
 internal data class PrivateBackendMessageSendReceipt(

@@ -1,8 +1,10 @@
 package app.synapse.privatechat.data.chat
 
+import app.synapse.privatechat.crypto.local.DeviceLocalContentEnvelopeUnavailableException
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageText
 import app.synapse.privatechat.domain.chat.PrivateReactionCode
+import app.synapse.privatechat.domain.chat.PrivateRoomMetadataState
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Clock
@@ -35,6 +37,7 @@ internal data class PrivateResolvedPollingState(
     val messages: Map<UUID, PrivateResolvedMessage>,
     val reactions: Map<UUID, PrivateResolvedReaction>,
     val loadedAt: Instant,
+    val recoveredMutationIds: Set<UUID> = emptySet(),
 )
 
 /** Serializes Signal envelope consumption while allowing every observer to reuse the durable cache. */
@@ -42,6 +45,7 @@ internal class PrivateChatPollingRepository(
     private val backend: PrivateChatPollingBackend,
     private val envelopeCipher: PrivateChatEnvelopeCipher,
     private val payloadCache: PrivateDecryptedPayloadCacheRepository,
+    private val pendingMutationRecovery: PrivatePendingOutboundMutationRecovery,
     private val clock: Clock = Clock.systemUTC(),
 ) {
     private val pollingMutex = Mutex()
@@ -52,27 +56,34 @@ internal class PrivateChatPollingRepository(
             val now = clock.instant()
             if (!session.isUsableAt(now)) {
                 recentState = null
+                pendingMutationRecovery.clearRecoveredMutationIds()
                 payloadCache.clearForSessionInvalidation()
                 throw SupabasePrivateChatResponseException("Authenticated chat session is unavailable")
             }
+            val newlyRecoveredMutationIds = pendingMutationRecovery.recoverPendingMutations(session)
+            val recoveredMutationIds =
+                newlyRecoveredMutationIds + pendingMutationRecovery.retainedRecoveredMutationIds(session)
+            if (newlyRecoveredMutationIds.isNotEmpty()) recentState = null
             recentState?.let { cached ->
                 if (
                     cached.session.hasSameAuthenticatedDeviceAs(session) &&
                     !now.isBefore(cached.loadedAt) &&
                     now.isBefore(cached.loadedAt.plusMillis(MAXIMUM_RESOLVED_STATE_REUSE_MILLIS))
                 ) {
-                    return@withLock cached
+                    return@withLock cached.copy(recoveredMutationIds = recoveredMutationIds)
                 }
             }
             val backendState = backend.loadPollingState(session, now)
-            PrivateChatPollingDecoder(envelopeCipher, payloadCache).decode(session, backendState, now).also { resolved ->
-                recentState = resolved
-            }
+            PrivateChatPollingDecoder(envelopeCipher, payloadCache)
+                .decode(session, backendState, now)
+                .copy(recoveredMutationIds = recoveredMutationIds)
+                .also { resolved -> recentState = resolved }
         }
 
     suspend fun clearForSessionInvalidation() {
         pollingMutex.withLock {
             recentState = null
+            pendingMutationRecovery.clearRecoveredMutationIds()
             payloadCache.clearForSessionInvalidation()
         }
     }
@@ -122,8 +133,17 @@ internal class PrivateChatPollingDecoder(
                         expiresAt = MAXIMUM_ROOM_METADATA_CACHE_EXPIRY,
                     )
                 val payload =
-                    resolvePayload(session, graph, envelope, descriptor, now) { decoded ->
-                        validateRoomMetadata(decoded, room, envelope)
+                    try {
+                        resolvePayload(session, graph, envelope, descriptor, now) { decoded ->
+                            validateRoomMetadata(decoded, room, envelope)
+                        }
+                    } catch (_: DeviceLocalContentEnvelopeUnavailableException) {
+                        return@associate room.roomId to
+                            PrivateResolvedRoom(
+                                record = room,
+                                title = PENDING_ROOM_METADATA_TITLE,
+                                metadataState = PrivateRoomMetadataState.UNAVAILABLE_ON_DEVICE,
+                            )
                     }
                 authoritativePayloads += descriptor
                 room.roomId to
@@ -422,12 +442,12 @@ private class PrivatePollingGraph private constructor(
                     malformedPollingGraph("Message receipt references an unavailable server record")
                 }
             }
-            state.typing.forEach { typing ->
+            state.typing.records.forEach { typing ->
                 if (rooms[typing.roomId] == null || devices[typing.deviceId] == null) {
                     malformedPollingGraph("Typing state references an unavailable server record")
                 }
             }
-            state.presence.forEach { presence ->
+            state.presence.records.forEach { presence ->
                 if (devices[presence.deviceId] == null) {
                     malformedPollingGraph("Presence state references an unavailable device")
                 }

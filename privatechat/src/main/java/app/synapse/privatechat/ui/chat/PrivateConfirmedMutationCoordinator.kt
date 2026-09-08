@@ -78,6 +78,7 @@ internal class PrivateConfirmedMutationCoordinator(
         request: suspend () -> PrivateChatMutationOutcome<Receipt>,
         receiptMatches: (Receipt) -> Boolean,
         onConfirmed: (Receipt) -> Unit = {},
+        onTransportUnavailable: () -> Unit = {},
     ) {
         if (!mutationInFlight.compareAndSet(false, true)) return
         stateStore.update { state -> state.copy(operation = PrivateChatOperationUiState.Running(kind)) }
@@ -99,8 +100,10 @@ internal class PrivateConfirmedMutationCoordinator(
                             is PrivateChatMutationOutcome.Rejected ->
                                 PrivateChatOperationUiState.Rejected(outcome.userMessage)
 
-                            PrivateChatMutationOutcome.TransportUnavailable ->
+                            PrivateChatMutationOutcome.TransportUnavailable -> {
+                                onTransportUnavailable()
                                 PrivateChatOperationUiState.TransportUnavailable
+                            }
                         }
                     } catch (cancellation: CancellationException) {
                         throw cancellation

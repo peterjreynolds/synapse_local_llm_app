@@ -34,6 +34,11 @@ export interface DeviceRegistrationReservation {
   readonly expiresAt: string;
 }
 
+export interface InternalAccountIdentity {
+  readonly userId: string;
+  readonly internalEmail: string;
+}
+
 interface SupabaseAdminConnection {
   readonly supabaseUrl: string;
   readonly serviceRoleKey: string;
@@ -216,8 +221,12 @@ export async function reserveDeviceRegistrationForSession(
   };
 }
 
-export function generateInternalAccountEmail(): string {
-  return `${crypto.randomUUID()}@identity.synapse-private.invalid`;
+export function generateInternalAccountIdentity(): InternalAccountIdentity {
+  const userId = crypto.randomUUID();
+  return {
+    userId,
+    internalEmail: `${userId}@identity.synapse-private.invalid`,
+  };
 }
 
 export function deviceRegistrationRpcArguments(

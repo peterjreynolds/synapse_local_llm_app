@@ -7,6 +7,7 @@ import app.synapse.privatechat.domain.chat.CreatePrivateOneUseAccountInvitationC
 import app.synapse.privatechat.domain.chat.CreatePrivateRoomCommand
 import app.synapse.privatechat.domain.chat.PrivateChatMutationOutcome
 import app.synapse.privatechat.domain.chat.PrivateChatObservation
+import app.synapse.privatechat.domain.chat.PrivateClientMutationId
 import app.synapse.privatechat.domain.chat.PrivateClientMutationIdFactory
 import app.synapse.privatechat.domain.chat.PrivateMessageRetention
 import app.synapse.privatechat.domain.chat.PrivatePresenceSharingState
@@ -41,6 +42,7 @@ internal class PrivateSocialCoordinator(
     private var observationJob: Job? = null
     private val accountInvitationInFlight = AtomicBoolean(false)
     private var accountInvitationJob: Job? = null
+    private var pendingRoomCreationRecovery: PrivateClientMutationId? = null
 
     fun activateAccount(accountId: PrivateAccountId) {
         if (activeAccountId == accountId && observationJob?.isActive == true) return
@@ -77,6 +79,7 @@ internal class PrivateSocialCoordinator(
         accountInvitationJob?.cancel()
         accountInvitationJob = null
         accountInvitationInFlight.set(false)
+        pendingRoomCreationRecovery = null
         activeAccountId = null
         presencePublisher.deactivateAccount()
     }
@@ -131,6 +134,10 @@ internal class PrivateSocialCoordinator(
         retention: PrivateMessageRetention,
     ) {
         val accountId = activeAccountId ?: return
+        if (PrivateChatMutationAvailability.connectedRoomFeedSnapshot(stateStore.current) == null) {
+            mutationCoordinator.rejectAction(PRIVATE_RECONNECT_BEFORE_MUTATION_MESSAGE)
+            return
+        }
         val acceptedTitle =
             when (val validation = validatePrivateRoomTitle(titleInput)) {
                 is PrivateSocialTextValidation.Accepted -> validation.normalizedText
@@ -152,13 +159,22 @@ internal class PrivateSocialCoordinator(
             request = { gateway.createRoom(command) },
             receiptMatches = { receipt -> PrivateSocialReceiptValidator.matches(receipt, command) },
             onConfirmed = {
+                pendingRoomCreationRecovery = null
                 stateStore.update { state -> state.copy(overlay = PrivateChatOverlay.HIDDEN) }
+            },
+            onTransportUnavailable = {
+                pendingRoomCreationRecovery = command.mutationId
+                markRoomFeedReconnecting()
             },
         )
     }
 
     fun redeemRoomInvitation(invitationCodeInput: String) {
         val accountId = activeAccountId ?: return
+        if (PrivateChatMutationAvailability.connectedRoomFeedSnapshot(stateStore.current) == null) {
+            mutationCoordinator.rejectAction(PRIVATE_RECONNECT_BEFORE_MUTATION_MESSAGE)
+            return
+        }
         val invitationCode = parsePrivateRoomInvitationCode(invitationCodeInput)
         if (invitationCode == null) {
             mutationCoordinator.rejectAction("Enter a valid one-use conversation invitation code.")
@@ -177,7 +193,25 @@ internal class PrivateSocialCoordinator(
             onConfirmed = {
                 stateStore.update { state -> state.copy(overlay = PrivateChatOverlay.HIDDEN) }
             },
+            onTransportUnavailable = ::markRoomFeedReconnecting,
         )
+    }
+
+    fun acceptRecoveredMutations(recoveredMutationIds: Set<PrivateClientMutationId>) {
+        val pendingMutationId = pendingRoomCreationRecovery ?: return
+        if (pendingMutationId !in recoveredMutationIds) return
+        pendingRoomCreationRecovery = null
+        stateStore.update { state ->
+            state.copy(
+                overlay = PrivateChatOverlay.HIDDEN,
+                operation =
+                    if (state.operation is PrivateChatOperationUiState.TransportUnavailable) {
+                        PrivateChatOperationUiState.Recovered(PrivateChatOperationKind.CREATE_ROOM)
+                    } else {
+                        state.operation
+                    },
+            )
+        }
     }
 
     fun changeGroupMemberRole(
@@ -186,14 +220,14 @@ internal class PrivateSocialCoordinator(
     ) {
         val accountId = activeAccountId ?: return
         val conversation = selectedGroupConversation() ?: return
-        if (!currentAccountCanChangeRoles(conversation.snapshot.members, accountId, member)) {
+        if (!currentAccountCanChangeRoles(conversation.members, accountId, member)) {
             mutationCoordinator.rejectAction("Only the group owner can change member roles.")
             return
         }
         val command =
             ChangePrivateGroupMemberRoleCommand(
                 accountId = accountId,
-                roomId = conversation.snapshot.room.roomId,
+                roomId = conversation.room.roomId,
                 mutationId = mutationIdFactory.createMutationId(),
                 memberAccountId = member.accountId,
                 role = role,
@@ -202,20 +236,21 @@ internal class PrivateSocialCoordinator(
             kind = PrivateChatOperationKind.CHANGE_GROUP_MEMBER_ROLE,
             request = { gateway.changeGroupMemberRole(command) },
             receiptMatches = { receipt -> PrivateSocialReceiptValidator.matches(receipt, command) },
+            onTransportUnavailable = ::markConversationReconnecting,
         )
     }
 
     fun removeGroupMember(member: PrivateRoomMemberSnapshot) {
         val accountId = activeAccountId ?: return
         val conversation = selectedGroupConversation() ?: return
-        if (!currentAccountCanRemoveMember(conversation.snapshot.members, accountId, member)) {
+        if (!currentAccountCanRemoveMember(conversation.members, accountId, member)) {
             mutationCoordinator.rejectAction("Your group role cannot remove this member.")
             return
         }
         val command =
             RemovePrivateGroupMemberCommand(
                 accountId = accountId,
-                roomId = conversation.snapshot.room.roomId,
+                roomId = conversation.room.roomId,
                 mutationId = mutationIdFactory.createMutationId(),
                 memberAccountId = member.accountId,
             )
@@ -223,6 +258,7 @@ internal class PrivateSocialCoordinator(
             kind = PrivateChatOperationKind.REMOVE_GROUP_MEMBER,
             request = { gateway.removeGroupMember(command) },
             receiptMatches = { receipt -> PrivateSocialReceiptValidator.matches(receipt, command) },
+            onTransportUnavailable = ::markConversationReconnecting,
         )
     }
 
@@ -321,13 +357,25 @@ internal class PrivateSocialCoordinator(
             PrivateAccountInvitationUiState.UnexpectedFailure
         }
 
-    private fun selectedGroupConversation(): PrivateConversationUiState.Available? {
-        val conversation = stateStore.current.conversation as? PrivateConversationUiState.Available
-        if (conversation?.snapshot?.room?.kind != PrivateRoomKind.GROUP) {
+    private fun selectedGroupConversation(): app.synapse.privatechat.domain.chat.PrivateConversationSnapshot? {
+        val conversation = PrivateChatMutationAvailability.connectedConversationSnapshot(stateStore.current)
+        if (conversation == null) {
+            mutationCoordinator.rejectAction(PRIVATE_RECONNECT_BEFORE_MUTATION_MESSAGE)
+            return null
+        }
+        if (conversation.room.kind != PrivateRoomKind.GROUP) {
             mutationCoordinator.rejectAction("Member management is available only for groups.")
             return null
         }
         return conversation
+    }
+
+    private fun markConversationReconnecting() {
+        stateStore.update(PrivateChatUiReducer::markConversationTransportUnavailable)
+    }
+
+    private fun markRoomFeedReconnecting() {
+        stateStore.update(PrivateChatUiReducer::markRoomFeedTransportUnavailable)
     }
 
     private fun currentAccountCanChangeRoles(

@@ -6,7 +6,7 @@ const validCandidate = {
   applicationId: "app.synapse.privatechat",
   versionCode: "2031",
   versionName: "0.1.2031",
-  minimumAndroidApi: "28",
+  minimumAndroidApi: "25",
   supportedAbis: ["arm64-v8a", "armeabi-v7a", "x86_64"],
   apkName: "Synapse-Private.apk",
   apkBytes: "48151623",
@@ -24,7 +24,7 @@ test("builds complete machine-readable update metadata", () => {
     applicationId: "app.synapse.privatechat",
     versionCode: 2031,
     versionName: "0.1.2031",
-    minimumAndroidApi: 28,
+    minimumAndroidApi: 25,
     supportedAbis: ["arm64-v8a", "armeabi-v7a", "x86_64"],
     apk: {
       name: "Synapse-Private.apk",

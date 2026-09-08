@@ -352,4 +352,4 @@ private const val PROFILE_COLUMNS =
 private const val PRESENCE_COLUMNS = "device_id,created_at,expires_at"
 private const val MAXIMUM_PRESENCE_TIMESTAMP = "9999-12-31T23:59:59Z"
 private val INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")
-private val ROOM_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{32,128}$")
+private val ROOM_INVITATION_CODE_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")

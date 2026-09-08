@@ -1,5 +1,6 @@
 package app.synapse.privatechat.ui.chat
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,13 +20,15 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.synapse.privatechat.domain.chat.PrivateActivityFeedAvailability
 import app.synapse.privatechat.domain.chat.PrivateConversationSnapshot
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageOwnership
@@ -38,11 +41,10 @@ import java.time.Instant
 @Composable
 internal fun PrivateMessageTimeline(
     snapshot: PrivateConversationSnapshot,
-    enabled: Boolean,
-    onReply: (PrivateMessageId) -> Unit,
-    onEdit: (PrivateMessageId) -> Unit,
+    interactionEnabled: Boolean,
+    reactionEnabled: Boolean,
+    onSelectMessage: (PrivateMessageId) -> Unit,
     onReact: (PrivateMessageId, String) -> Unit,
-    onDelete: (PrivateMessageId) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tokens = SynapsePrivateDesignSystem.tokens
@@ -54,6 +56,12 @@ internal fun PrivateMessageTimeline(
                 modifier = Modifier.weight(1f),
             )
         } else {
+            Text(
+                text = "Tap or hold a message to react or see its actions.",
+                modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.small),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(tokens.spacing.large),
@@ -65,16 +73,22 @@ internal fun PrivateMessageTimeline(
                 ) { message ->
                     PrivateMessageBubble(
                         message = message,
-                        enabled = enabled,
-                        onReply = { onReply(message.messageId) },
-                        onEdit = { onEdit(message.messageId) },
+                        interactionEnabled = interactionEnabled,
+                        reactionEnabled = reactionEnabled,
+                        onSelect = { onSelectMessage(message.messageId) },
                         onReact = { reaction -> onReact(message.messageId, reaction) },
-                        onDelete = { onDelete(message.messageId) },
                     )
                 }
             }
         }
-        if (snapshot.typingParticipants.isNotEmpty()) {
+        if (snapshot.typingAvailability == PrivateActivityFeedAvailability.UNAVAILABLE) {
+            Text(
+                text = "Typing status temporarily unavailable.",
+                modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.compact),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (snapshot.typingParticipants.isNotEmpty()) {
             Text(
                 text = privateTypingLabel(snapshot),
                 modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.compact),
@@ -88,20 +102,30 @@ internal fun PrivateMessageTimeline(
 @Composable
 private fun PrivateMessageBubble(
     message: PrivateMessageSnapshot,
-    enabled: Boolean,
-    onReply: () -> Unit,
-    onEdit: () -> Unit,
+    interactionEnabled: Boolean,
+    reactionEnabled: Boolean,
+    onSelect: () -> Unit,
     onReact: (String) -> Unit,
-    onDelete: () -> Unit,
 ) {
     val tokens = SynapsePrivateDesignSystem.tokens
     val ownMessage = message.ownership == PrivateMessageOwnership.CURRENT_ACCOUNT
+    val hapticFeedback = LocalHapticFeedback.current
     Box(modifier = Modifier.fillMaxWidth()) {
         Surface(
             modifier =
                 Modifier
                     .align(if (ownMessage) Alignment.CenterEnd else Alignment.CenterStart)
-                    .widthIn(max = 560.dp),
+                    .widthIn(max = 560.dp)
+                    .combinedClickable(
+                        enabled = interactionEnabled,
+                        onClickLabel = "Message actions",
+                        onClick = onSelect,
+                        onLongClickLabel = "Message reactions and actions",
+                        onLongClick = {
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSelect()
+                        },
+                    ),
             color =
                 if (ownMessage) {
                     MaterialTheme.colorScheme.primaryContainer
@@ -157,30 +181,9 @@ private fun PrivateMessageBubble(
                             FilterChip(
                                 selected = reaction.selectionState == PrivateReactionSelectionState.SELECTED,
                                 onClick = { onReact(reaction.reaction.canonical) },
-                                enabled = enabled,
+                                enabled = reactionEnabled,
                                 label = { Text("${reaction.reaction.canonical} ${reaction.count}") },
                             )
-                        }
-                    }
-                }
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(tokens.spacing.compact),
-                ) {
-                    TextButton(onClick = onReply, enabled = enabled) {
-                        Text("Reply")
-                    }
-                    QUICK_REACTIONS.forEach { reaction ->
-                        TextButton(onClick = { onReact(reaction) }, enabled = enabled) {
-                            Text(reaction)
-                        }
-                    }
-                    if (ownMessage) {
-                        TextButton(onClick = onEdit, enabled = enabled) {
-                            Text("Edit")
-                        }
-                        TextButton(onClick = onDelete, enabled = enabled) {
-                            Text("Delete for everyone")
                         }
                     }
                 }
@@ -211,5 +214,3 @@ internal fun privateRemainingTimeLabel(
         else -> "${remaining.toDays()}d"
     }
 }
-
-private val QUICK_REACTIONS = listOf("👍", "❤️", "😂")

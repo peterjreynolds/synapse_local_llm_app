@@ -521,9 +521,9 @@ private fun SubmissionNotice(
             PrivateAccountSubmissionState.TransportUnavailable ->
                 "The encrypted account connection is unavailable. Try again."
             PrivateAccountSubmissionState.LocalStateUnavailable ->
-                "The secure session vault is unavailable. Account access remains locked."
+                "Encrypted device setup is unavailable on this installation. Restart the app and try again."
             PrivateAccountSubmissionState.UnexpectedFailure ->
-                "Account access could not be verified. Try again when the connection is available."
+                "Account access could not be verified. Restart the app and try again."
         }
     if (notice == null) return
     val isSuccess = submission is PrivateAccountSubmissionState.AccessConfirmed

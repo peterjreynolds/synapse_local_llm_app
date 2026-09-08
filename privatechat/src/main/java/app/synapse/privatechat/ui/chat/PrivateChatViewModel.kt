@@ -254,14 +254,12 @@ class PrivateChatViewModel(
                 try {
                     chatGateway.observeRoomFeed(accountId).collect { observation ->
                         if (activeAccountId != accountId) return@collect
-                        stateStore.update { state ->
-                            when (observation) {
-                                is PrivateChatObservation.Available ->
-                                    acceptRoomFeedSnapshot(state, accountId, observation.snapshot)
+                        when (observation) {
+                            is PrivateChatObservation.Available ->
+                                acceptRoomFeedSnapshot(accountId, observation.snapshot)
 
-                                PrivateChatObservation.TransportUnavailable ->
-                                    state.copy(roomFeed = PrivateRoomFeedUiState.TransportUnavailable)
-                            }
+                            PrivateChatObservation.TransportUnavailable ->
+                                stateStore.update(PrivateChatUiReducer::markRoomFeedTransportUnavailable)
                         }
                     }
                 } catch (cancellation: CancellationException) {
@@ -275,15 +273,17 @@ class PrivateChatViewModel(
     }
 
     private fun acceptRoomFeedSnapshot(
-        state: PrivateChatUiState,
         accountId: PrivateAccountId,
         snapshot: app.synapse.privatechat.domain.chat.PrivateRoomFeedSnapshot,
-    ): PrivateChatUiState {
+    ) {
         if (snapshot.accountId != accountId) {
-            return state.copy(roomFeed = PrivateRoomFeedUiState.UnexpectedFailure)
+            stateStore.update { state -> state.copy(roomFeed = PrivateRoomFeedUiState.UnexpectedFailure) }
+            return
         }
         val sanitizedSnapshot = PrivateChatSnapshotPolicy.sanitizeRoomFeed(snapshot, clock.instant())
-        return PrivateChatUiReducer.acceptRoomFeed(state, sanitizedSnapshot)
+        stateStore.update { state -> PrivateChatUiReducer.acceptRoomFeed(state, sanitizedSnapshot) }
+        messageActions.acceptRecoveredMutations(sanitizedSnapshot.recoveredMutationIds)
+        socialCoordinator.acceptRecoveredMutations(sanitizedSnapshot.recoveredMutationIds)
     }
 
     private fun observeConversation(
@@ -301,7 +301,7 @@ class PrivateChatViewModel(
 
                             PrivateChatObservation.TransportUnavailable ->
                                 stateStore.update { state ->
-                                    state.copy(conversation = PrivateConversationUiState.TransportUnavailable)
+                                    PrivateChatUiReducer.markConversationTransportUnavailable(state)
                                 }
                         }
                     }
@@ -328,8 +328,10 @@ class PrivateChatViewModel(
         }
         val sanitizedSnapshot = PrivateChatSnapshotPolicy.sanitizeConversation(snapshot, clock.instant())
         stateStore.update { state ->
-            state.copy(conversation = PrivateConversationUiState.Available(sanitizedSnapshot))
+            PrivateChatUiReducer.acceptConversation(state, sanitizedSnapshot)
         }
+        messageActions.acceptRecoveredMutations(sanitizedSnapshot.recoveredMutationIds)
+        socialCoordinator.acceptRecoveredMutations(sanitizedSnapshot.recoveredMutationIds)
         activitySharingCoordinator.acknowledgeRoomReadIfEnabled(sanitizedSnapshot.room)
     }
 
@@ -340,6 +342,7 @@ class PrivateChatViewModel(
         conversationJob = null
         mutationCoordinator.cancelPendingMutation()
         roomActions.cancelPendingInvitation()
+        messageActions.resetForAccountTransition()
         activitySharingCoordinator.reset()
         expiringContentCoordinator.deactivateAccount()
         socialCoordinator.deactivateAccount()

@@ -68,6 +68,38 @@ class PerEnvelopeDeviceLocalContentEnvelopeCipherTest {
     }
 
     @Test
+    fun erasedAuthoritativeKeyDoesNotHideAnEnvelopeWhoseKeyStillExists() {
+        val retainedStorage = MemoryRotatingStateStorage()
+        val erasedStorage = MemoryRotatingStateStorage()
+        val clock = MutableClock(Instant.parse("2026-08-25T01:30:00Z"))
+        val retainedCipher = cipher(retainedStorage, clock)
+        val erasedCipher = cipher(erasedStorage, clock)
+        val retainedPlaintext = "retained room title".encodeToByteArray()
+        val retainedEnvelope = retainedCipher.encryptLocalEnvelope(retainedPlaintext)
+        retainedCipher.markEnvelopeDurablyReferenced(retainedEnvelope)
+        val erasedEnvelope = erasedCipher.encryptLocalEnvelope("erased room title".encodeToByteArray())
+        erasedCipher.markEnvelopeDurablyReferenced(erasedEnvelope)
+
+        retainedCipher.reconcileRetainedEnvelopeKeys(
+            authoritativeCiphertexts = listOf(retainedEnvelope, erasedEnvelope),
+            pendingCiphertexts = emptyList(),
+            observedAt = clock.instant(),
+        )
+
+        assertArrayEquals(retainedPlaintext, retainedCipher.decryptLocalEnvelope(retainedEnvelope))
+        assertThrows(DeviceLocalContentEnvelopeUnavailableException::class.java) {
+            retainedCipher.decryptLocalEnvelope(erasedEnvelope)
+        }
+        assertThrows(DeviceLocalContentEnvelopeUnavailableException::class.java) {
+            retainedCipher.reconcileRetainedEnvelopeKeys(
+                authoritativeCiphertexts = listOf(retainedEnvelope),
+                pendingCiphertexts = listOf(erasedEnvelope),
+                observedAt = clock.instant(),
+            )
+        }
+    }
+
+    @Test
     fun pollSnapshotTakenBeforePendingCommitCannotEraseCreationLease() {
         val storage = MemoryRotatingStateStorage()
         val clock = MutableClock(Instant.parse("2026-08-25T02:00:00Z"))

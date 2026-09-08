@@ -3,6 +3,7 @@ package app.synapse.privatechat.domain.account
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -16,7 +17,7 @@ class PrivateAccountAccessContractsTest {
                     usernameInput = "  Peter_01  ",
                     passwordInput = VALID_PASSWORD,
                     passwordConfirmationInput = VALID_PASSWORD,
-                    invitationCodeInput = "  ${"A".repeat(32)}  ",
+                    invitationCodeInput = "  ${"A".repeat(43)}  ",
                 ),
             )
 
@@ -30,7 +31,7 @@ class PrivateAccountAccessContractsTest {
             is PrivateAccountAccessCommand.RegisterWithInvite -> {
                 assertEquals("Peter", command.displayName.canonical)
                 assertEquals("peter_01", command.username.canonical)
-                assertEquals("A".repeat(32), command.invitationCode.canonical)
+                assertEquals("A".repeat(43), command.invitationCode.canonical)
                 assertEquals(VALID_PASSWORD, command.password.exposeForAuthentication())
             }
 
@@ -47,7 +48,7 @@ class PrivateAccountAccessContractsTest {
                     usernameInput = "peter_01",
                     passwordInput = VALID_PASSWORD,
                     passwordConfirmationInput = "a-different-password",
-                    invitationCodeInput = "A".repeat(32),
+                    invitationCodeInput = "A".repeat(43),
                 ),
             )
 
@@ -69,8 +70,37 @@ class PrivateAccountAccessContractsTest {
     }
 
     @Test
+    fun `account boundary rejects invite and password shapes the backend rejects`() {
+        val shortInvite = registrationDraft(invitationCode = "A".repeat(42))
+        val oversizedUtf8Password = "🙂".repeat(33)
+        val oversizedPassword =
+            registrationDraft(
+                password = oversizedUtf8Password,
+                invitationCode = "A".repeat(43),
+            )
+        val controlPassword =
+            registrationDraft(
+                password = "correct-horse\n-battery",
+                invitationCode = "A".repeat(43),
+            )
+
+        assertRejectedField(shortInvite, PrivateAccountInputField.INVITATION_CODE)
+        assertRejectedField(oversizedPassword, PrivateAccountInputField.PASSWORD)
+        assertRejectedField(controlPassword, PrivateAccountInputField.PASSWORD)
+    }
+
+    @Test
+    fun `account password accepts eight characters and rejects seven`() {
+        val accepted = registrationDraft(password = "12345678", invitationCode = "A".repeat(43))
+        val rejected = registrationDraft(password = "1234567", invitationCode = "A".repeat(43))
+
+        assertTrue(validatePrivateAccountAccessDraft(accepted) is PrivateAccountAccessValidation.Accepted)
+        assertRejectedField(rejected, PrivateAccountInputField.PASSWORD)
+    }
+
+    @Test
     fun `account drafts and commands redact invitation and password secrets`() {
-        val invitationCode = "A".repeat(32)
+        val invitationCode = "A".repeat(43)
         val draft =
             PrivateAccountAccessDraft.RegisterWithInvite(
                 displayNameInput = "Peter",
@@ -109,5 +139,27 @@ class PrivateAccountAccessContractsTest {
 
     private companion object {
         const val VALID_PASSWORD = "correct-horse-battery"
+
+        fun registrationDraft(
+            password: String = VALID_PASSWORD,
+            invitationCode: String,
+        ): PrivateAccountAccessDraft.RegisterWithInvite =
+            PrivateAccountAccessDraft.RegisterWithInvite(
+                displayNameInput = "Peter",
+                usernameInput = "peter_01",
+                passwordInput = password,
+                passwordConfirmationInput = password,
+                invitationCodeInput = invitationCode,
+            )
+
+        fun assertRejectedField(
+            draft: PrivateAccountAccessDraft,
+            expectedField: PrivateAccountInputField,
+        ) {
+            when (val validation = validatePrivateAccountAccessDraft(draft)) {
+                is PrivateAccountAccessValidation.Accepted -> fail("Expected rejected account draft")
+                is PrivateAccountAccessValidation.Rejected -> assertEquals(expectedField, validation.field)
+            }
+        }
     }
 }
