@@ -9,6 +9,9 @@ import app.synapse.privatechat.crypto.SignalProtocolAdapterOwner
 import app.synapse.privatechat.crypto.SignalPublicPreKeyBundle
 import app.synapse.privatechat.crypto.StoredSignalPendingOutboundMutation
 import app.synapse.privatechat.crypto.local.DeviceLocalContentEnvelopeCipher
+import app.synapse.privatechat.data.supabase.SupabaseHttpRequest
+import app.synapse.privatechat.data.supabase.SupabaseHttpResponse
+import app.synapse.privatechat.data.supabase.SupabaseHttpTransport
 import app.synapse.privatechat.domain.chat.PrivateActivitySharingPreferences
 import app.synapse.privatechat.domain.chat.PrivateMessageRetention
 import app.synapse.privatechat.domain.chat.PrivatePresenceSharingState
@@ -22,6 +25,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -32,6 +41,92 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 class PrivateEncryptedMutationOutboxTest {
+    @Test
+    fun temporaryHttpFailuresRetainExactRequestForPollingRecovery() =
+        runTest {
+            for (status in listOf(401, 408, 425, 429, 500, 502, 503, 504, 599)) {
+                val backend =
+                    RecordingSendBackend { attempt ->
+                        if (attempt == 1) throw SupabasePrivateChatRequestRejectedException(status, "Temporary failure")
+                    }
+                val cipher = RecordingPendingSignalCipher()
+                val firstOutbox = createOutbox(cipher, backend)
+                val failure =
+                    runCatching {
+                        firstOutbox.execute(SESSION, FIRST_INTENT, FIRST_PLAINTEXT, LOCAL_RECIPIENTS)
+                    }.exceptionOrNull()
+                check(failure is SupabasePrivateChatRequestRejectedException)
+                assertEquals(1, cipher.listPendingOutboundMutations().size)
+                assertEquals(0, cipher.resetCount)
+
+                val reloadedOutbox = createOutbox(cipher, backend)
+                assertEquals(setOf(FIRST_INTENT.clientMutationId), reloadedOutbox.recoverPendingMutations(SESSION))
+                assertEquals(1, cipher.preparationCount)
+                assertEquals(0, cipher.resetCount)
+                assertEquals(listOf(FIRST_INTENT.clientMutationId, FIRST_INTENT.clientMutationId), backend.dispatchedMutationIds)
+                assertArrayEquals(backend.dispatchedCiphertexts[0], backend.dispatchedCiphertexts[1])
+                assertEquals(0, cipher.listPendingOutboundMutations().size)
+                backend.destroyRecordedCiphertexts()
+            }
+        }
+
+    @Test
+    fun permanentHttpRejectionsStillDiscardPendingAndResetSessions() =
+        runTest {
+            for (status in listOf(400, 403, 404, 409, 422)) {
+                val backend = RecordingSendBackend { throw SupabasePrivateChatRequestRejectedException(status, "Rejected") }
+                val cipher = RecordingPendingSignalCipher()
+                val failure =
+                    runCatching {
+                        createOutbox(cipher, backend).execute(SESSION, FIRST_INTENT, FIRST_PLAINTEXT, LOCAL_RECIPIENTS)
+                    }.exceptionOrNull()
+                check(failure is SupabasePrivateChatRequestRejectedException)
+                assertEquals(0, cipher.listPendingOutboundMutations().size)
+                assertEquals(1, cipher.resetCount)
+                backend.destroyRecordedCiphertexts()
+            }
+        }
+
+    @Test
+    fun acceptedMessageWithExhaustedGatewayResponsesRecoversThroughProductionRpcAdapter() =
+        runTest {
+            val transport = AcceptedMessageLostResponseTransport()
+            val contentApi =
+                SupabasePrivateContentMutationApi(
+                    SupabasePrivateChatMutationTransport(SupabasePrivateChatRequestExecutor(transport) {}),
+                )
+            val backend =
+                object : PrivateChatBackend by RecordingSendBackend({}) {
+                    override suspend fun sendMessage(
+                        session: PrivateChatAuthenticatedSession,
+                        roomId: UUID,
+                        clientMutationId: UUID,
+                        replyToMessageId: UUID?,
+                        envelopes: List<PrivateChatEncryptedEnvelope>,
+                    ): PrivateBackendMessageSendReceipt =
+                        contentApi.sendMessage(session, roomId, clientMutationId, replyToMessageId, envelopes)
+                }
+            val cipher = RecordingPendingSignalCipher()
+            val failure =
+                runCatching {
+                    createOutbox(cipher, backend).execute(SESSION, FIRST_INTENT, FIRST_PLAINTEXT, LOCAL_RECIPIENTS)
+                }.exceptionOrNull()
+            check(failure is SupabasePrivateChatRequestRejectedException)
+            assertEquals(503, failure.statusCode)
+            assertEquals(3, transport.requestBodies.size)
+            assertEquals(1, cipher.listPendingOutboundMutations().size)
+
+            val recovered = createOutbox(cipher, backend).recoverPendingMutations(SESSION)
+
+            assertEquals(setOf(FIRST_INTENT.clientMutationId), recovered)
+            assertEquals(4, transport.requestBodies.size)
+            assertEquals(1, transport.requestBodies.distinct().size)
+            assertEquals(1, transport.acceptedMutations.size)
+            assertEquals(1, cipher.preparationCount)
+            assertEquals(0, cipher.resetCount)
+            assertEquals(0, cipher.listPendingOutboundMutations().size)
+        }
+
     @Test
     fun createdRoomPendingRequestRetainsItsChosenRoomIdentity() {
         val roomId = UUID.fromString("31000000-0000-4000-8000-000000000003")
@@ -224,6 +319,8 @@ private class RecordingPendingSignalCipher : PrivateChatSignalCipher {
     private var pending: StoredSignalPendingOutboundMutation? = null
     var preparationCount: Int = 0
         private set
+    var resetCount: Int = 0
+        private set
 
     override fun localAddress(): SignalDeviceAddress = SESSION.localSignalAddress
 
@@ -264,6 +361,7 @@ private class RecordingPendingSignalCipher : PrivateChatSignalCipher {
         key: SignalPendingOutboundMutationKey,
         expectedOperationDigest: ByteArray,
     ) {
+        resetCount += 1
         confirmPendingOutboundMutation(key, expectedOperationDigest)
     }
 
@@ -454,6 +552,34 @@ private class RecordingSendBackend(
     ): PrivateBackendProfileRecord = error("Not used")
 
     override suspend fun publishPresence(session: PrivateChatAuthenticatedSession): PrivateBackendPresenceRecord = error("Not used")
+}
+
+/** Models durable server acceptance followed by three lost gateway responses, then deduplicated recovery. */
+private class AcceptedMessageLostResponseTransport : SupabaseHttpTransport {
+    val requestBodies = mutableListOf<JsonObject>()
+    val acceptedMutations = mutableSetOf<String>()
+
+    override suspend fun execute(request: SupabaseHttpRequest): SupabaseHttpResponse {
+        assertEquals(listOf("rest", "v1", "rpc", "send_message"), request.pathSegments)
+        val body = requireNotNull(request.jsonBody).jsonObject
+        requestBodies += body
+        val mutationId = body.getValue("p_client_message_id").jsonPrimitive.content
+        acceptedMutations += mutationId
+        if (requestBodies.size <= 3) return SupabaseHttpResponse(503, null)
+        return SupabaseHttpResponse(
+            200,
+            JsonArray(
+                listOf(
+                    buildJsonObject {
+                        put("message_id", "60000000-0000-4000-8000-000000000006")
+                        put("room_id", body.getValue("p_room_id"))
+                        put("client_mutation_id", mutationId)
+                        put("expires_at", NOW.plusSeconds(86_400).toString())
+                    },
+                ),
+            ),
+        )
+    }
 }
 
 private val NOW = Instant.parse("2026-08-25T12:00:00Z")
