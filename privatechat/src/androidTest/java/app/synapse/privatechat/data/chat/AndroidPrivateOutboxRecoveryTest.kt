@@ -54,13 +54,15 @@ class AndroidPrivateOutboxRecoveryTest {
                 val failure =
                     runCatching {
                         outbox(senderContext, sender, acceptedRequest, 503).execute(
-                            session("expired-response-token-material"),
+                            session("header.original.signature-material"),
                             INTENT,
                             PLAINTEXT,
                             listOf(SENDER, RECEIVER).map { PrivateChatRecipientDevice(it, SignalEnvelope.CURRENT_PROTOCOL_VERSION) },
                         )
                     }.exceptionOrNull()
-                check(failure is SupabasePrivateChatRequestRejectedException)
+                if (failure !is SupabasePrivateChatRequestRejectedException) {
+                    throw AssertionError("Expected the injected HTTP failure", failure)
+                }
                 assertEquals(503, failure.statusCode)
                 assertEquals(1, sender.requireAdapterForStoredIdentity().listPendingOutboundMutations().size)
                 assertTrue(sender.requireAdapterForStoredIdentity().hasPairwiseSession(RECEIVER))
@@ -76,7 +78,7 @@ class AndroidPrivateOutboxRecoveryTest {
                 check(request is PrivatePendingEncryptedMutation.SendMessage)
                 val recovered =
                     outbox(senderContext, sender, acceptedRequest, 200)
-                        .recoverPendingMutations(session("refreshed-access-token-material"))
+                        .recoverPendingMutations(session("header.refreshed.signature-material"))
                 assertEquals(setOf(INTENT.clientMutationId), recovered)
                 assertTrue(senderAdapter.listPendingOutboundMutations().isEmpty())
                 assertTrue(senderAdapter.hasPairwiseSession(RECEIVER))
