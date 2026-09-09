@@ -41,6 +41,7 @@ jobs:
           node --test \
             scripts/ci/build-synapse-private-update-metadata.test.mjs \
             scripts/ci/resolve-synapse-release-version.test.mjs \
+            scripts/ci/verify-synapse-private-jni.test.mjs \
             scripts/ci/run-idempotent-release-command-with-retry.test.mjs
 
       - name: Resolve monotonic release version
@@ -123,6 +124,12 @@ jobs:
       - name: Assemble rolling APK
         shell: bash
         run: bash scripts/ci/run-gradle-with-retry.sh :privatechat:assembleRolling --stacktrace
+
+      - name: Verify packaged encryption JNI contracts before publication
+        shell: bash
+        run: |
+          node scripts/ci/verify-synapse-private-jni.mjs "$APK_PATH" \
+            "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
 
       - name: Verify APK and build update metadata
         shell: bash

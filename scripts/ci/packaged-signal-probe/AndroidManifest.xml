@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="app.synapse.privatechat.packagedprobe">
+    <uses-sdk android:minSdkVersion="25" android:targetSdkVersion="36" />
+    <application android:label="Synapse APK encryption probe" />
+    <instrumentation
+        android:name="app.synapse.privatechat.data.chat.PackagedSignalProbe"
+        android:targetPackage="app.synapse.privatechat" />
+</manifest>

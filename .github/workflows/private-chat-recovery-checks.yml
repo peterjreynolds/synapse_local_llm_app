@@ -11,6 +11,9 @@ on:
     paths:
       - privatechat/**
       - .github/workflows/private-chat-recovery-checks.yml
+      - scripts/ci/verify-synapse-private-jni*
+      - scripts/ci/build-packaged-signal-probe.sh
+      - scripts/ci/packaged-signal-probe/**
 
 permissions:
   contents: read
@@ -25,6 +28,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -42,5 +48,14 @@ jobs:
             -storepass android -keypass android -alias androiddebugkey \
             -keyalg RSA -keysize 2048 -validity 2 \
             -dname "CN=Synapse CI Test Only"
-      - name: Unit tests, style, lint, and debug build only
+      - name: Unit tests, style, lint, and debug build
         run: ./gradlew :privatechat:test :privatechat:ktlintCheck :privatechat:lintDebug :privatechat:assembleDebug --stacktrace
+      - name: Verify minified APK encryption boundary
+        shell: bash
+        run: |
+          node --test scripts/ci/verify-synapse-private-jni.test.mjs
+          bash scripts/ci/build-packaged-signal-probe.sh
+          ./gradlew :privatechat:assembleRolling --stacktrace
+          node scripts/ci/verify-synapse-private-jni.mjs \
+            privatechat/build/outputs/apk/rolling/privatechat-rolling.apk \
+            "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
