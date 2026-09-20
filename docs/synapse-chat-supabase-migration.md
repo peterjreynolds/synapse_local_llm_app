@@ -45,12 +45,12 @@ cryptography, or database boundary is changed in this slice.
 | Calls, ringing, ringtones, video preview | Original code is donor material only. Supabase signaling, identity binding, permissions, media lifecycle, and device tests are still required. No call controls are presented as working. |
 | Attachments and voice messages | Need encrypted upload/download and expiration contracts before UI enablement. |
 | Owner device camera/mic sharing | Not implemented here. Requires explicit opt-in, authenticated/revocable device access, visible sensor status and Stop controls. No hidden capture or force-stop bypass. |
-| Release | No rolling release or update metadata is changed by this slice. A new version requires the existing publication workflow and artifact/signature receipts. |
+| Release | Version 0.1.2045 (code 2045) publishes this navigation through the existing Private APK workflow. Source and artifact receipts are recorded below. |
 
 Calling must respect `synapse-private-security-contract.md`. Its current relay-only
-privacy policy is not weakened by this UI work. A separate owner-device direct-first
-mode, if implemented, needs explicit peer-IP disclosure and its own reviewed contract.
-A Raspberry Pi is the proposed relay host, not a configured or verified deployment.
+privacy policy is not weakened by this UI work. An opt-in direct calling mode,
+if approved and implemented, needs explicit peer-IP disclosure to both callers
+and its own reviewed contract. No Raspberry Pi or other relay is configured.
 
 The next calling slice should preserve the separation already visible in the donor
 contracts: `RemoteDirectCallGateway` owns call state/signaling,
@@ -101,3 +101,40 @@ success is not proof of a live two-phone send, calling, or a published release.
   This is a development build with the default code 2031, **not a published update**.
 - CI now builds the instrumentation APK and runs the navigation suite on API 25.
   CI execution and publication are distinct from the local checks above.
+
+### Published release receipt, 2026-09-20
+
+The initial hosted navigation run failed before Gradle because
+`android-actions/setup-android@v3` requested the retired SDK package `tools`.
+Both Private workflows now request `platform-tools` explicitly. The required
+Android and publication gates remain in place.
+
+- Source commit and rolling release tag:
+  `3305614acd3dc1ca6ceaedb000b35a91278ff568`.
+- [Hosted recovery checks](https://github.com/peterjreynolds/synapse_local_llm_app/actions/runs/35489691045):
+  passed, including unit/style/lint/debug gates, six API 25 navigation tests,
+  minified assembly, and the literal libsignal JNI callback checks.
+- [Private publication workflow](https://github.com/peterjreynolds/synapse_local_llm_app/actions/runs/35489710133):
+  passed, including release contracts, unit/style/lint gates, minified assembly,
+  JNI/package/signature/ABI checks, publication, and release receipt readback.
+- Version: `0.1.2045`, code `2045`; package `app.synapse.privatechat`;
+  minimum Android API `25`; ABIs `arm64-v8a`, `armeabi-v7a`, `x86_64`.
+- [Public APK](https://github.com/peterjreynolds/synapse_local_llm_app/releases/download/synapse-private/Synapse-Private.apk):
+  27,273,564 bytes; SHA-256
+  `9a0bebb88268b86cbec9d2f2f87060cd327304e6f475944229b31dee7600b006`.
+- [Update metadata](https://github.com/peterjreynolds/synapse_local_llm_app/releases/download/synapse-private/Synapse-Private-update.json):
+  SHA-256 `4719a32e52f1f9c1eba7fb76a20f82063ba6b170fd987c126b7cee4a38028066`.
+- Signing certificate SHA-256:
+  `6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b`.
+- An independent anonymous download matched the GitHub asset digests and update
+  metadata. `aapt` confirmed the package/version/API/ABI values, and `apksigner`
+  verified the downloaded APK for API 25 with warnings treated as errors.
+- The exact public APK was installed on an isolated Android 7.1.1/API 25
+  x86_64 emulator. The standalone packaged Signal probe reported
+  `PASS: packaged JNI reached loadSession and rejected the absent session` and
+  `INSTRUMENTATION_CODE: -1`. This exercises the minified native callback that
+  caused the earlier immediate-send failure; it is not a full live-message test.
+
+This release adds navigation, not calling or attachments. Release notes now
+explicitly say that voice and video calls are not implemented. Hosted navigation
+fixtures are not live two-phone message or call tests.
