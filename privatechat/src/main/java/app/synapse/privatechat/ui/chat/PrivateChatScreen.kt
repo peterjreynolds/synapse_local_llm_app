@@ -45,89 +45,98 @@ fun PrivateChatScreen(
     ) {
         navigationActions.showRoomList()
     }
-    Box(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors =
-                            listOf(
-                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f),
-                                MaterialTheme.colorScheme.background,
-                            ),
-                        radius = 1_100f,
-                    ),
-                ),
-    ) {
-        Column(
+    PrivateChatNavigationDrawer(
+        state = state,
+        navigationActions = navigationActions,
+        onCreateAccountInvitation = socialActions.createOneUseAccountInvitation,
+    ) { onOpenNavigation ->
+        Box(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .imePadding(),
+                    .background(MaterialTheme.colorScheme.background)
+                    .background(
+                        Brush.radialGradient(
+                            colors =
+                                listOf(
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f),
+                                    MaterialTheme.colorScheme.background,
+                                ),
+                            radius = 1_100f,
+                        ),
+                    ),
         ) {
-            BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                val showTwoPanes = maxWidth >= PRIVATE_TWO_PANE_MINIMUM_WIDTH
-                if (showTwoPanes) {
-                    Row(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .imePadding(),
+            ) {
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    val showTwoPanes = maxWidth >= PRIVATE_TWO_PANE_MINIMUM_WIDTH
+                    if (showTwoPanes) {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            PrivateRoomListPane(
+                                roomFeedState = state.roomFeed,
+                                socialState = state.social,
+                                selectedRoomId = state.selectedRoomId,
+                                navigationActions = navigationActions,
+                                onOpenNavigation = onOpenNavigation,
+                                modifier = Modifier.width(PRIVATE_ROOM_LIST_WIDTH),
+                            )
+                            VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            PrivateConversationPane(
+                                state = state,
+                                showBackButton = false,
+                                navigationActions = navigationActions,
+                                messageActions = messageActions,
+                                roomActions = roomActions,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    } else if (state.selectedRoomId == null) {
                         PrivateRoomListPane(
                             roomFeedState = state.roomFeed,
                             socialState = state.social,
-                            selectedRoomId = state.selectedRoomId,
+                            selectedRoomId = null,
                             navigationActions = navigationActions,
-                            modifier = Modifier.width(PRIVATE_ROOM_LIST_WIDTH),
+                            onOpenNavigation = onOpenNavigation,
+                            modifier = Modifier.fillMaxSize(),
                         )
-                        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    } else {
                         PrivateConversationPane(
                             state = state,
-                            showBackButton = false,
+                            showBackButton = true,
                             navigationActions = navigationActions,
                             messageActions = messageActions,
                             roomActions = roomActions,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
-                } else if (state.selectedRoomId == null) {
-                    PrivateRoomListPane(
-                        roomFeedState = state.roomFeed,
-                        socialState = state.social,
-                        selectedRoomId = null,
-                        navigationActions = navigationActions,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    PrivateConversationPane(
-                        state = state,
-                        showBackButton = true,
-                        navigationActions = navigationActions,
-                        messageActions = messageActions,
-                        roomActions = roomActions,
-                        modifier = Modifier.fillMaxSize(),
-                    )
                 }
+                PrivateChatOperationNotice(
+                    operation = state.operation,
+                    onDismiss = onDismissOperationNotice,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
             }
-            PrivateChatOperationNotice(
-                operation = state.operation,
-                onDismiss = onDismissOperationNotice,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            PrivateRoomInvitationDialog(
+                invitationState = state.roomInvitation,
+                onDismiss = roomActions.dismissInvitation,
+            )
+            PrivateAccountInvitationDialog(
+                invitationState = state.accountInvitation,
+                onDismiss = socialActions.dismissAccountInvitation,
+            )
+            PrivateSocialOverlay(
+                state = state,
+                accountSessionActions = accountSessionActions,
+                navigationActions = navigationActions,
+                socialActions = socialActions,
+                onDismissOperationNotice = onDismissOperationNotice,
             )
         }
-        PrivateRoomInvitationDialog(
-            invitationState = state.roomInvitation,
-            onDismiss = roomActions.dismissInvitation,
-        )
-        PrivateAccountInvitationDialog(
-            invitationState = state.accountInvitation,
-            onDismiss = socialActions.dismissAccountInvitation,
-        )
-        PrivateSocialOverlay(
-            state = state,
-            accountSessionActions = accountSessionActions,
-            navigationActions = navigationActions,
-            socialActions = socialActions,
-            onDismissOperationNotice = onDismissOperationNotice,
-        )
     }
 }
 

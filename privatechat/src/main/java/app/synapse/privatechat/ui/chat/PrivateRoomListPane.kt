@@ -20,13 +20,14 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -69,6 +70,7 @@ internal fun PrivateRoomListPane(
     socialState: PrivateSocialUiState,
     selectedRoomId: PrivateRoomId?,
     navigationActions: PrivateChatNavigationActions,
+    onOpenNavigation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val tokens = SynapsePrivateDesignSystem.tokens
@@ -83,6 +85,7 @@ internal fun PrivateRoomListPane(
             Spacer(Modifier.height(tokens.spacing.small))
             PrivateChatsHeader(
                 socialState = socialState,
+                onOpenNavigation = onOpenNavigation,
                 onOpenProfile = navigationActions.showProfile,
             )
             Spacer(Modifier.height(tokens.spacing.small))
@@ -171,22 +174,23 @@ internal fun PrivateRoomListPane(
                     )
             }
         }
-        FloatingActionButton(
+        ExtendedFloatingActionButton(
             onClick = navigationActions.showCreateConversation,
             modifier =
                 Modifier
                     .align(Alignment.BottomEnd)
                     .padding(tokens.spacing.spacious)
-                    .semantics { contentDescription = "Start or join a conversation" },
-        ) {
-            Icon(Icons.Default.Edit, contentDescription = null)
-        }
+                    .semantics { contentDescription = "New chat. Start or join a conversation" },
+            icon = { Icon(Icons.Default.Edit, contentDescription = null) },
+            text = { Text("New chat") },
+        )
     }
 }
 
 @Composable
 private fun PrivateChatsHeader(
     socialState: PrivateSocialUiState,
+    onOpenNavigation: () -> Unit,
     onOpenProfile: () -> Unit,
 ) {
     val tokens = SynapsePrivateDesignSystem.tokens
@@ -196,6 +200,29 @@ private fun PrivateChatsHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.medium),
     ) {
+        IconButton(onClick = onOpenNavigation) {
+            Icon(
+                Icons.Default.Menu,
+                contentDescription = "Open navigation",
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Synapse Chat",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = socialSnapshot?.profile?.username?.let { username -> "Signed in as @$username" } ?: "Synapse Private",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Surface(
             onClick = onOpenProfile,
             modifier =
@@ -213,18 +240,6 @@ private fun PrivateChatsHeader(
                     fontWeight = FontWeight.Bold,
                 )
             }
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Chats",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = socialSnapshot?.profile?.username?.let { username -> "@$username" } ?: "Synapse Private",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -272,7 +287,7 @@ private fun AvailableRoomFeed(
             title = if (snapshot.rooms.isEmpty()) "No conversations yet" else "No conversations match",
             detail =
                 if (snapshot.rooms.isEmpty()) {
-                    "Tap the pencil button to start a direct chat, create a group, or join with a code."
+                    "Tap New chat to start a direct chat, create a group, or join with a code."
                 } else {
                     "Clear the search or change the filters."
                 },
