@@ -384,6 +384,8 @@ select ok(
    where schemaname = 'public'
      and tablename = 'presence_state'
      and policyname = 'presence_state_select_room_peer_before_expiry')
+    like '%private.can_view_presence_state(device_id)%'
+  and pg_get_functiondef('private.can_view_presence_state(uuid)'::regprocedure)
     like '%viewer_membership.room_id = present_membership.room_id%',
   'presence visibility is restricted to users sharing a current room'
 );
@@ -392,6 +394,8 @@ select ok(
    where schemaname = 'public'
      and tablename = 'presence_state'
      and policyname = 'presence_state_select_room_peer_before_expiry')
+    like '%private.can_view_presence_state(device_id)%'
+  and pg_get_functiondef('private.can_view_presence_state(uuid)'::regprocedure)
     like '%presence_sharing_enabled%',
   'presence becomes unreadable immediately when its owner opts out'
 );
@@ -400,6 +404,8 @@ select ok(
    where schemaname = 'public'
      and tablename = 'typing_state'
      and policyname = 'typing_state_select_member_before_expiry')
+    like '%private.can_view_typing_state(room_id, device_id)%'
+  and pg_get_functiondef('private.can_view_typing_state(uuid,uuid)'::regprocedure)
     like '%typing_indicators_enabled%',
   'typing state becomes unreadable immediately when its owner opts out'
 );
@@ -590,19 +596,27 @@ select is(
   14,
   'advisor-identified foreign keys have covering indexes'
 );
-select is(
+select ok(
   (
-    select count(*)::integer
+    select count(*) = 3
     from pg_policies
     where schemaname = 'public'
       and policyname in (
         'profiles_update_self', 'message_receipts_insert_recipient',
-        'presence_state_select_room_peer_before_expiry', 'attachments_insert_sender'
+        'attachments_insert_sender'
       )
       and lower(coalesce(qual, '') || coalesce(with_check, '')) like '%select auth.uid()%'
-  ),
-  4,
-  'advisor-identified RLS policies use initplan auth lookups'
+  )
+  and (
+    select qual like '%private.can_view_presence_state(device_id)%'
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'presence_state'
+      and policyname = 'presence_state_select_room_peer_before_expiry'
+  )
+  and lower(pg_get_functiondef('private.can_view_presence_state(uuid)'::regprocedure))
+    like '%select auth.uid()%',
+  'advisor-identified RLS policies and delegated predicates use initplan auth lookups'
 );
 select ok(
   (
