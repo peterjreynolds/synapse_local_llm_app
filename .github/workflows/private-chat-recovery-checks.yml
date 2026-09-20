@@ -39,6 +39,9 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - uses: android-actions/setup-android@v3
+        with:
+          # The action defaults to the retired SDK package "tools"; command-line tools are installed separately.
+          packages: platform-tools
       - name: Install Android platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - name: Create disposable test signing key

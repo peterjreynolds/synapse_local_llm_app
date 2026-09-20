@@ -86,6 +86,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action defaults to the retired SDK package "tools"; command-line tools are installed separately.
+          packages: platform-tools
 
       - name: Install Android SDK packages
         shell: bash
@@ -243,7 +246,7 @@ jobs:
             "SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256." \
             "Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" \
             "This app contains no Cinder, local model, or AI runtime. Signal is not affiliated with or endorsing this app." \
-            "Private calling requires a configured TURN-only relay and fails closed when no relay is available.")"
+            "Voice and video calling are not implemented in this build.")"
 
           if [ "$SYNAPSE_RELEASE_EXISTS" = "1" ]; then
             SYNAPSE_RELEASE_OPERATION="upload Synapse Private APK" \
