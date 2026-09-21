@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MoreVert
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -43,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.synapse.privatechat.domain.call.PrivateCallMediaKind
 import app.synapse.privatechat.domain.chat.PrivateMessageRetention
 import app.synapse.privatechat.domain.chat.PrivateRoomArchiveState
 import app.synapse.privatechat.domain.chat.PrivateRoomKind
@@ -50,6 +53,7 @@ import app.synapse.privatechat.domain.chat.PrivateRoomMetadataState
 import app.synapse.privatechat.domain.chat.PrivateRoomMuteState
 import app.synapse.privatechat.domain.chat.PrivateRoomPinState
 import app.synapse.privatechat.domain.chat.PrivateRoomSummary
+import app.synapse.privatechat.ui.call.PrivateCallUiActions
 import app.synapse.privatechat.ui.theme.SynapsePrivateDesignSystem
 
 @Composable
@@ -60,6 +64,7 @@ internal fun PrivateConversationHeader(
     invitationCreating: Boolean,
     navigationActions: PrivateChatNavigationActions,
     roomActions: PrivateRoomUiActions,
+    callActions: PrivateCallUiActions? = null,
 ) {
     val tokens = SynapsePrivateDesignSystem.tokens
     var showMenu by remember(room.roomId) { mutableStateOf(false) }
@@ -98,6 +103,20 @@ internal fun PrivateConversationHeader(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        if (callActions != null && room.kind == PrivateRoomKind.DIRECT && room.participantCount == 2) {
+            IconButton(
+                onClick = { callActions.start(room, PrivateCallMediaKind.VOICE) },
+                enabled = mutationEnabled && callActions.available,
+            ) {
+                Icon(Icons.Default.Call, contentDescription = "Voice call")
+            }
+            IconButton(
+                onClick = { callActions.start(room, PrivateCallMediaKind.VIDEO) },
+                enabled = mutationEnabled && callActions.available,
+            ) {
+                Icon(Icons.Default.Videocam, contentDescription = "Video call")
+            }
         }
         Box {
             IconButton(

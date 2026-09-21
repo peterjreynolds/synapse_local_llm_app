@@ -8,3 +8,26 @@ Synapse Private source: https://github.com/peterjreynolds/synapse_local_llm_app
 
 Signal does not sponsor, support, or endorse this application. The libsignal
 maintainers describe third-party use as unsupported and its APIs as unstable.
+
+Synapse Private also includes io.github.webrtc-sdk:android:144.7559.09.
+
+Copyright (c) 2011, The WebRTC project authors. All rights reserved.
+The published Android artifact identifies its license as BSD-3-Clause.
+The WebRTC SDK Android packaging repository is MIT-licensed:
+Copyright (c) 2023 WebRTC SDKs.
+
+The unmodified, version-matched upstream notices accompany this APK:
+- WebRTC-THIRD-PARTY.md: WebRTC BSD license and bundled third-party notices.
+- WebRTC-SDK-MIT.txt: Android packaging repository MIT license.
+
+Android packaging revision:
+https://github.com/webrtc-sdk/android/tree/a46e9a7f63ce2b531252313f4e81754998e78f9a
+WebRTC source revision identified by the packaging release changelog:
+https://github.com/webrtc-sdk/webrtc/tree/b1800a61db8320af5c14456c13622d8b85b1ed39
+Version-matched notice bundle:
+https://github.com/webrtc-sdk/android/blob/a46e9a7f63ce2b531252313f4e81754998e78f9a/Licenses/WEBRTC.md
+
+WebRTC, Google, and WebRTC SDKs do not sponsor or endorse Synapse Private.
+Full license conditions, attribution, and warranty disclaimers are retained in
+the accompanying notice files. These source references are not a claim that
+Synapse independently reproduced or audited the upstream native binaries.

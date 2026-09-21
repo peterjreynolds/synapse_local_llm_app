@@ -188,6 +188,7 @@ jobs:
           for abi in arm64-v8a armeabi-v7a x86_64; do
             printf 'lib/%s/libandroidx.graphics.path.so\n' "$abi"
             printf 'lib/%s/libsignal_jni.so\n' "$abi"
+            printf 'lib/%s/libjingle_peerconnection_so.so\n' "$abi"
           done | sort > "$expected_native_entries"
           unzip -Z1 "$APK_PATH" | grep '^lib/' | sort > "$actual_native_entries"
           diff -u "$expected_native_entries" "$actual_native_entries"
@@ -221,6 +222,23 @@ jobs:
           printf '%s\n' "$actual_version_code" > apk-version-code.txt
           printf '%s\n' "$actual_signer_sha256" > apk-signer-sha256.txt
 
+      - name: Build Android interface tests
+        run: ./gradlew :privatechat:assembleDebugAndroidTest --stacktrace
+
+      - name: Enable emulator acceleration
+        run: sudo chmod a+rw /dev/kvm
+
+      - name: Verify call consent and packaged native media on Android 7.1
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 25
+          target: default
+          arch: x86_64
+          disable-animations: true
+          script: |
+            ./gradlew :privatechat:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.synapse.privatechat.ui.chat.PrivateChatNavigationTest,app.synapse.privatechat.ui.call.PrivateCallEntryUiTest,app.synapse.privatechat.data.call.media.AndroidPrivateCallVideoLifecycleTest --stacktrace
+            bash scripts/ci/run-private-packaged-probes.sh "$APK_PATH"
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -246,7 +264,8 @@ jobs:
             "SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256." \
             "Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" \
             "This app contains no Cinder, local model, or AI runtime. Signal is not affiliated with or endorsing this app." \
-            "Voice and video calling are not implemented in this build.")"
+            "Includes opt-in direct encrypted voice/video calls with peer safety-number checks. Both participants must keep the app open for incoming calls; active calls use a visible notification with Hang up." \
+            "Direct calls disclose network addresses to the other participant and can fail on restrictive mobile networks. No TURN relay or closed-app incoming-call delivery is configured.")"
 
           if [ "$SYNAPSE_RELEASE_EXISTS" = "1" ]; then
             SYNAPSE_RELEASE_OPERATION="upload Synapse Private APK" \

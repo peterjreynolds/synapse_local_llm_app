@@ -16,6 +16,9 @@ on:
       - scripts/ci/verify-synapse-private-jni*
       - scripts/ci/build-packaged-signal-probe.sh
       - scripts/ci/packaged-signal-probe/**
+      - scripts/ci/build-packaged-webrtc-probe.sh
+      - scripts/ci/packaged-webrtc-probe/**
+      - scripts/ci/run-private-packaged-probes.sh
 
 permissions:
   contents: read
@@ -55,22 +58,23 @@ jobs:
             -dname "CN=Synapse CI Test Only"
       - name: Unit tests, style, lint, and debug build
         run: ./gradlew :privatechat:test :privatechat:ktlintCheck :privatechat:lintDebug :privatechat:assembleDebug :privatechat:assembleDebugAndroidTest --stacktrace
+      - name: Verify minified APK encryption boundary
+        shell: bash
+        run: |
+          node --test scripts/ci/verify-synapse-private-jni.test.mjs
+          ./gradlew :privatechat:assembleRolling --stacktrace
+          node scripts/ci/verify-synapse-private-jni.mjs \
+            privatechat/build/outputs/apk/rolling/privatechat-rolling.apk \
+            "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
-      - name: Verify navigation on Android 7.1
+      - name: Verify navigation consent and minified native media on Android 7.1
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 25
           target: default
           arch: x86_64
           disable-animations: true
-          script: ./gradlew :privatechat:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.synapse.privatechat.ui.chat.PrivateChatNavigationTest --stacktrace
-      - name: Verify minified APK encryption boundary
-        shell: bash
-        run: |
-          node --test scripts/ci/verify-synapse-private-jni.test.mjs
-          bash scripts/ci/build-packaged-signal-probe.sh
-          ./gradlew :privatechat:assembleRolling --stacktrace
-          node scripts/ci/verify-synapse-private-jni.mjs \
-            privatechat/build/outputs/apk/rolling/privatechat-rolling.apk \
-            "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          script: |
+            ./gradlew :privatechat:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.synapse.privatechat.ui.chat.PrivateChatNavigationTest,app.synapse.privatechat.ui.call.PrivateCallEntryUiTest,app.synapse.privatechat.data.call.media.AndroidPrivateCallVideoLifecycleTest --stacktrace
+            bash scripts/ci/run-private-packaged-probes.sh privatechat/build/outputs/apk/rolling/privatechat-rolling.apk

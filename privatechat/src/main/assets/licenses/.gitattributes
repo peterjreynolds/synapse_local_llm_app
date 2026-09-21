@@ -1,0 +1,4 @@
+# Owner: Synapse Private media dependency notices.
+# Preserve the exact upstream notice hash, including upstream whitespace.
+# Remove this one-file exception when the dependency notice bundle is retired.
+WebRTC-THIRD-PARTY.md -whitespace

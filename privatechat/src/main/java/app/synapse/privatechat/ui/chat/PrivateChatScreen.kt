@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import app.synapse.privatechat.ui.account.PrivateAccountSignOutUiState
+import app.synapse.privatechat.ui.call.PrivateCallUiActions
 
 @Composable
 fun PrivateChatScreen(
@@ -30,6 +31,7 @@ fun PrivateChatScreen(
     roomActions: PrivateRoomUiActions,
     socialActions: PrivateSocialUiActions,
     onDismissOperationNotice: () -> Unit,
+    callActions: PrivateCallUiActions? = null,
 ) {
     val overlayDismissAllowed =
         state.operation !is PrivateChatOperationUiState.Running &&
@@ -92,6 +94,7 @@ fun PrivateChatScreen(
                                 navigationActions = navigationActions,
                                 messageActions = messageActions,
                                 roomActions = roomActions,
+                                callActions = callActions,
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -111,6 +114,7 @@ fun PrivateChatScreen(
                             navigationActions = navigationActions,
                             messageActions = messageActions,
                             roomActions = roomActions,
+                            callActions = callActions,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
