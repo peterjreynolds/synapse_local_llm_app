@@ -60,7 +60,6 @@ android {
         )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
     }
 
     signingConfigs {
