@@ -107,7 +107,7 @@ internal class SupabasePrivateChatPollingApi(
                 typing = typing.await(),
                 presence = presence.await(),
             ).also { pollingState ->
-                requireCompleteCurrentDeviceEnvelopeSet(pollingState, session)
+                requireCurrentDeviceEnvelopeIntegrity(pollingState, session)
             }
         }
 
@@ -277,19 +277,19 @@ private fun SupabaseEncryptedEnvelopeRow.toEncryptedEnvelope(): PrivateChatEncry
         ciphertext.fill(0)
     }
 
-private fun requireCompleteCurrentDeviceEnvelopeSet(
+private fun requireCurrentDeviceEnvelopeIntegrity(
     state: PrivateBackendPollingState,
     session: PrivateChatAuthenticatedSession,
 ) {
     val localDeviceId = session.localSignalAddress.transportDeviceId
 
-    fun requireOneEnvelope(
+    fun requireAtMostOneEnvelope(
         recordName: String,
         recordId: UUID,
         envelopes: List<PrivateBackendEnvelopeRecord>,
     ) {
-        if (envelopes.count { record -> record.parentRecordId == recordId && record.envelope.recipientDeviceId == localDeviceId } != 1) {
-            malformedPollingRelation("$recordName does not have exactly one current-device envelope")
+        if (envelopes.count { record -> record.parentRecordId == recordId && record.envelope.recipientDeviceId == localDeviceId } > 1) {
+            malformedPollingRelation("$recordName has more than one current-device envelope")
         }
     }
     val roomIds = state.rooms.mapTo(HashSet(), PrivateBackendRoomRecord::roomId)
@@ -312,17 +312,17 @@ private fun requireCompleteCurrentDeviceEnvelopeSet(
     }
     state.messages.forEach { message ->
         if (message.currentRevision == 0) {
-            requireOneEnvelope("Message", message.messageId, state.messageEnvelopes)
+            requireAtMostOneEnvelope("Message", message.messageId, state.messageEnvelopes)
         } else {
             val revision =
                 state.messageRevisions.singleOrNull { candidate ->
                     candidate.messageId == message.messageId && candidate.revisionNumber == message.currentRevision
                 } ?: malformedPollingRelation("Current message revision is missing")
-            requireOneEnvelope("Message revision", revision.revisionId, state.messageRevisionEnvelopes)
+            requireAtMostOneEnvelope("Message revision", revision.revisionId, state.messageRevisionEnvelopes)
         }
     }
     state.reactions.forEach { reaction ->
-        requireOneEnvelope("Reaction", reaction.reactionId, state.reactionEnvelopes)
+        requireAtMostOneEnvelope("Reaction", reaction.reactionId, state.reactionEnvelopes)
     }
 }
 
