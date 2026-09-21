@@ -148,6 +148,10 @@ android {
                 // Exception scope: API 37 is visible to lint but unavailable from the public SDK feed.
                 // Owner: Synapse Private. Removal: delete once platforms;android-37 installs in CI.
                 "OldTargetApi",
+                // The production APK intentionally ships ARM only because the pinned WebRTC x86_64
+                // native library crashes on the API-25 x86_64 emulator before WebRTC initialization.
+                // Synapse Private is distributed to Android phones/tablets, not ChromeOS x86_64.
+                "ChromeOsAbiSupport",
             )
     }
 }
