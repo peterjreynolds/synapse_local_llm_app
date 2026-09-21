@@ -22,7 +22,7 @@ jobs:
       RELEASE_TAG: synapse-private
       EXPECTED_APPLICATION_ID: app.synapse.privatechat
       EXPECTED_MINIMUM_ANDROID_API: "25"
-      EXPECTED_APK_ABIS: arm64-v8a,armeabi-v7a,x86_64
+      EXPECTED_APK_ABIS: arm64-v8a,armeabi-v7a
       EXPECTED_SIGNING_CERTIFICATE_SHA256: 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b
       MAXIMUM_APK_BYTES: "67108864"
 
@@ -185,7 +185,7 @@ jobs:
 
           expected_native_entries="$(mktemp)"
           actual_native_entries="$(mktemp)"
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          for abi in arm64-v8a armeabi-v7a; do
             printf 'lib/%s/libandroidx.graphics.path.so\n' "$abi"
             printf 'lib/%s/libsignal_jni.so\n' "$abi"
             printf 'lib/%s/libjingle_peerconnection_so.so\n' "$abi"
@@ -228,7 +228,7 @@ jobs:
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
 
-      - name: Verify call consent and packaged native media on Android 7.1
+      - name: Verify call consent and lifecycle on Android 7.1
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 25
@@ -237,7 +237,16 @@ jobs:
           disable-animations: true
           script: |
             ./gradlew :privatechat:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.synapse.privatechat.ui.chat.PrivateChatNavigationTest,app.synapse.privatechat.ui.call.PrivateCallEntryUiTest,app.synapse.privatechat.data.call.media.AndroidPrivateCallVideoLifecycleTest --stacktrace
-            bash scripts/ci/run-private-packaged-probes.sh "$APK_PATH"
+
+      - name: Record physical ARM media acceptance boundary
+        shell: bash
+        run: |
+          {
+            printf '\n### ARM call-media acceptance boundary\n\n'
+            printf '%s\n' '- Production release APK contains arm64-v8a and armeabi-v7a only.'
+            printf '%s\n' '- API-25 x86_64 remains a UI/lifecycle test lane; the upstream WebRTC x86_64 binary SIGILLs while loading on that legacy emulator.'
+            printf '%s\n' '- The release is eligible for installation and real two-device call acceptance; do not claim the WebRTC media path verified until Peter and Trish complete that call.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -260,11 +269,12 @@ jobs:
             "Latest Synapse Private human-to-human chat APK from commit $GITHUB_SHA." \
             "Version code: $SYNAPSE_VERSION_CODE. Package: $EXPECTED_APPLICATION_ID." \
             "Minimum Android API: $EXPECTED_MINIMUM_ANDROID_API." \
-            "APK ABIs: arm64-v8a, armeabi-v7a, x86_64." \
+            "APK ABIs: arm64-v8a, armeabi-v7a." \
             "SHA-256: $apk_sha256. Signing certificate SHA-256: $signer_sha256." \
             "Source: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" \
             "This app contains no Cinder, local model, or AI runtime. Signal is not affiliated with or endorsing this app." \
             "Includes opt-in direct encrypted voice/video calls with peer safety-number checks. Both participants must keep the app open for incoming calls; active calls use a visible notification with Hang up." \
+            "Production APK targets ARM Android devices (arm64-v8a and armeabi-v7a). Real two-device voice/video acceptance is completed after installation on Peter and Trish's devices." \
             "Direct calls disclose network addresses to the other participant and can fail on restrictive mobile networks. No TURN relay or closed-app incoming-call delivery is configured.")"
 
           if [ "$SYNAPSE_RELEASE_EXISTS" = "1" ]; then
@@ -332,7 +342,7 @@ jobs:
           test "$metadata_asset_digest" = "$expected_metadata_digest"
           printf '%s' "$release_receipt" | jq -er '.body' | grep -F "Version code: $SYNAPSE_VERSION_CODE." >/dev/null
           printf '%s' "$release_receipt" | jq -er '.body' | grep -F "Minimum Android API: $EXPECTED_MINIMUM_ANDROID_API." >/dev/null
-          printf '%s' "$release_receipt" | jq -er '.body' | grep -F "APK ABIs: arm64-v8a, armeabi-v7a, x86_64." >/dev/null
+          printf '%s' "$release_receipt" | jq -er '.body' | grep -F "APK ABIs: arm64-v8a, armeabi-v7a." >/dev/null
 
           receipt_directory="$(mktemp -d)"
           gh release download "$RELEASE_TAG" \
