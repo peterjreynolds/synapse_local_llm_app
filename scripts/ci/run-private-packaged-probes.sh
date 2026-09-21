@@ -22,10 +22,13 @@ for component in \
   app.synapse.privatechat.packagedprobe/app.synapse.privatechat.data.chat.PackagedSignalProbe \
   app.synapse.privatechat.webrtcprobe/app.synapse.privatechat.data.chat.PackagedWebRtcProbe; do
   "${probe_adb[@]}" logcat -c
-  probe_receipt="$(timeout 180 "${probe_adb[@]}" shell am instrument -w -r "$component")"
+  probe_status=0
+  probe_receipt="$(timeout 180 "${probe_adb[@]}" shell am instrument -w -r "$component")" || probe_status=$?
   printf '%s\n' "$probe_receipt"
-  # adb can exit zero even when the target's native process crashes.
-  if ! (printf '%s\n' "$probe_receipt" | grep -F 'INSTRUMENTATION_RESULT: result=PASS:' >/dev/null && printf '%s\n' "$probe_receipt" | tr -d '\r' | grep -Fx 'INSTRUMENTATION_CODE: -1' >/dev/null); then
+  # adb can exit non-zero when the target process crashes. Capture that status so
+  # set -e cannot bypass the crash-buffer/runtime diagnostics below.
+  if [ "$probe_status" -ne 0 ] || ! (printf '%s\n' "$probe_receipt" | grep -F 'INSTRUMENTATION_RESULT: result=PASS:' >/dev/null && printf '%s\n' "$probe_receipt" | tr -d '\r' | grep -Fx 'INSTRUMENTATION_CODE: -1' >/dev/null); then
+    printf 'Probe instrumentation failed for %s (adb status %s)\n' "$component" "$probe_status" >&2
     printf '%s\n' '--- Android crash buffer ---' >&2
     "${probe_adb[@]}" logcat -b crash -d -v threadtime >&2 || true
     printf '%s\n' '--- Fatal runtime log tail ---' >&2
