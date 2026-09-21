@@ -21,9 +21,15 @@ webrtc_probe="$(bash "$repository_directory/scripts/ci/build-packaged-webrtc-pro
 for component in \
   app.synapse.privatechat.packagedprobe/app.synapse.privatechat.data.chat.PackagedSignalProbe \
   app.synapse.privatechat.webrtcprobe/app.synapse.privatechat.data.chat.PackagedWebRtcProbe; do
+  "${probe_adb[@]}" logcat -c
   probe_receipt="$(timeout 180 "${probe_adb[@]}" shell am instrument -w -r "$component")"
   printf '%s\n' "$probe_receipt"
   # adb can exit zero even when the target's native process crashes.
-  printf '%s\n' "$probe_receipt" | grep -F 'INSTRUMENTATION_RESULT: result=PASS:' >/dev/null
-  printf '%s\n' "$probe_receipt" | tr -d '\r' | grep -Fx 'INSTRUMENTATION_CODE: -1' >/dev/null
+  if ! (printf '%s\n' "$probe_receipt" | grep -F 'INSTRUMENTATION_RESULT: result=PASS:' >/dev/null && printf '%s\n' "$probe_receipt" | tr -d '\r' | grep -Fx 'INSTRUMENTATION_CODE: -1' >/dev/null); then
+    printf '%s\n' '--- Android crash buffer ---' >&2
+    "${probe_adb[@]}" logcat -b crash -d -v threadtime >&2 || true
+    printf '%s\n' '--- Fatal runtime log tail ---' >&2
+    "${probe_adb[@]}" logcat -d -v threadtime -t 500 '*:S' 'AndroidRuntime:E' 'libc:F' 'DEBUG:F' 'crash_dump64:I' 'crash_dump32:I' >&2 || true
+    exit 1
+  fi
 done
