@@ -68,7 +68,7 @@ jobs:
             "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
       - name: Enable emulator acceleration
         run: sudo chmod a+rw /dev/kvm
-      - name: Verify navigation consent and minified native media on Android 7.1
+      - name: Verify navigation consent and call lifecycle on Android 7.1
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 25
@@ -76,5 +76,16 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
-            ./gradlew :privatechat:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.synapse.privatechat.ui.chat.PrivateChatNavigationTest,app.synapse.privatechat.ui.call.PrivateCallEntryUiTest,app.synapse.privatechat.data.call.media.AndroidPrivateCallVideoLifecycleTest --stacktrace
-            bash scripts/ci/run-private-packaged-probes.sh privatechat/build/outputs/apk/rolling/privatechat-rolling.apk
+            if ! ./gradlew :privatechat:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.synapse.privatechat.ui.chat.PrivateChatNavigationTest,app.synapse.privatechat.ui.call.PrivateCallEntryUiTest,app.synapse.privatechat.data.call.media.AndroidPrivateCallVideoLifecycleTest --stacktrace; then
+              echo "::error title=API-25 connected instrumentation failed::PrivateChatNavigationTest, PrivateCallEntryUiTest, or AndroidPrivateCallVideoLifecycleTest failed."
+              exit 1
+            fi
+      - name: Record physical ARM media acceptance boundary
+        shell: bash
+        run: |
+          {
+            printf '\n### ARM call-media acceptance boundary\n\n'
+            printf '%s\n' '- Production rolling APKs contain arm64-v8a and armeabi-v7a only.'
+            printf '%s\n' '- API-25 x86_64 remains a UI/lifecycle compatibility test lane; the upstream WebRTC x86_64 binary SIGILLs while loading on that legacy emulator.'
+            printf '%s\n' '- Voice/video WebRTC runtime acceptance must be completed on the two physical ARM Android devices before claiming the real call path verified.'
+          } >> "$GITHUB_STEP_SUMMARY"
