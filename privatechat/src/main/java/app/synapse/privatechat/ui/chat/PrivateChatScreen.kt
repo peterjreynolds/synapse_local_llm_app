@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import app.synapse.privatechat.domain.account.PrivateAccountId
 import app.synapse.privatechat.ui.account.PrivateAccountSignOutUiState
+import app.synapse.privatechat.ui.call.PrivateCallUiActions
 
 @Composable
 fun PrivateChatScreen(
@@ -41,6 +42,7 @@ fun PrivateChatScreen(
     roomActions: PrivateRoomUiActions,
     socialActions: PrivateSocialUiActions,
     onDismissOperationNotice: () -> Unit,
+    callActions: PrivateCallUiActions? = null,
 ) {
     var showPeople by remember { mutableStateOf(false) }
     LaunchedEffect(state.selectedRoomId) { if (state.selectedRoomId != null) showPeople = false }
@@ -109,6 +111,7 @@ fun PrivateChatScreen(
                             navigationActions = navigationActions,
                             messageActions = messageActions,
                             roomActions = roomActions,
+                            callActions = callActions,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -127,6 +130,7 @@ fun PrivateChatScreen(
                         navigationActions = navigationActions,
                         messageActions = messageActions,
                         roomActions = roomActions,
+                        callActions = callActions,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }

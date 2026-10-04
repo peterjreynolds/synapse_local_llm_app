@@ -60,10 +60,6 @@ android {
         )
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
     }
 
     signingConfigs {
@@ -80,15 +76,27 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            ndk {
+                abiFilters.clear()
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
+            ndk {
+                abiFilters.clear()
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            }
         }
         create("rolling") {
             initWith(getByName("release"))
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
+            ndk {
+                abiFilters.clear()
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
         }
     }
 
@@ -140,6 +148,10 @@ android {
                 // Exception scope: API 37 is visible to lint but unavailable from the public SDK feed.
                 // Owner: Synapse Private. Removal: delete once platforms;android-37 installs in CI.
                 "OldTargetApi",
+                // The production APK intentionally ships ARM only because the pinned WebRTC x86_64
+                // native library crashes on the API-25 x86_64 emulator before WebRTC initialization.
+                // Synapse Private is distributed to Android phones/tablets, not ChromeOS x86_64.
+                "ChromeOsAbiSupport",
             )
     }
 }
@@ -217,10 +229,15 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     implementation("org.signal:libsignal-android:0.101.0")
     implementation("org.signal:libsignal-client:0.101.0")
+    implementation("io.github.webrtc-sdk:android:144.7559.15")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")

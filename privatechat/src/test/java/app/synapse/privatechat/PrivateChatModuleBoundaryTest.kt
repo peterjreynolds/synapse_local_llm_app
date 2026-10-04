@@ -181,7 +181,7 @@ class PrivateChatModuleBoundaryTest {
     }
 
     @Test
-    fun `debug APK contains only production Signal Android native libraries`() {
+    fun `debug APK contains only pinned encryption media and graphics native libraries`() {
         val debugApk = File(requireNotNull(System.getProperty("privatechat.debugApk")))
         assertTrue("Debug APK was not assembled at ${debugApk.path}", debugApk.isFile)
 
@@ -200,10 +200,13 @@ class PrivateChatModuleBoundaryTest {
             setOf(
                 "lib/arm64-v8a/libandroidx.graphics.path.so",
                 "lib/arm64-v8a/libsignal_jni.so",
+                "lib/arm64-v8a/libjingle_peerconnection_so.so",
                 "lib/armeabi-v7a/libandroidx.graphics.path.so",
                 "lib/armeabi-v7a/libsignal_jni.so",
+                "lib/armeabi-v7a/libjingle_peerconnection_so.so",
                 "lib/x86_64/libandroidx.graphics.path.so",
                 "lib/x86_64/libsignal_jni.so",
+                "lib/x86_64/libjingle_peerconnection_so.so",
             )
 
         assertEquals(
@@ -211,6 +214,33 @@ class PrivateChatModuleBoundaryTest {
             expectedNativeArtifacts,
             nativeArtifacts.toSet(),
         )
+    }
+
+    @Test
+    fun `capture permissions belong only to explicit calls with visible foreground status`() {
+        val manifest = moduleDirectory.resolve("src/main/AndroidManifest.xml").readText()
+        val permissionSet = extractDeclaredPermissions(manifest)
+        assertEquals(
+            setOf(
+                "android.permission.INTERNET",
+                "android.permission.ACCESS_NETWORK_STATE",
+                "android.permission.REQUEST_INSTALL_PACKAGES",
+                "android.permission.RECORD_AUDIO",
+                "android.permission.CAMERA",
+                "android.permission.MODIFY_AUDIO_SETTINGS",
+                "android.permission.POST_NOTIFICATIONS",
+                "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+                "android.permission.FOREGROUND_SERVICE_CAMERA",
+            ),
+            permissionSet,
+        )
+        val callService = Regex("<service\\s+[\\s\\S]*?/>").findAll(manifest).single().value
+        assertTrue(callService.contains(".data.call.media.PrivateCallForegroundService"))
+        assertTrue(callService.contains("android:exported=\"false\""))
+        assertTrue(callService.contains("android:foregroundServiceType=\"microphone|camera\""))
+        assertFalse(manifest.contains("<receiver"))
+        assertTrue(manifest.contains("User-started calls own capture"))
     }
 
     private fun extractDeclaredPermissions(manifest: String): Set<String> =

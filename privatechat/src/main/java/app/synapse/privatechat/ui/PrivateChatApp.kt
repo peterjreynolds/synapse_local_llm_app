@@ -15,6 +15,7 @@ import app.synapse.privatechat.ui.account.PrivateAccountAccessScreen
 import app.synapse.privatechat.ui.account.PrivateAccountAccessViewModel
 import app.synapse.privatechat.ui.account.PrivateAccountSessionGateScreen
 import app.synapse.privatechat.ui.account.PrivateAccountSessionUiState
+import app.synapse.privatechat.ui.call.PrivateCallViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatRoute
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
 import app.synapse.privatechat.ui.diagnostics.PrivateDiagnosticsExportButton
@@ -27,12 +28,18 @@ fun PrivateChatApp(
     chatViewModel: PrivateChatViewModel,
     appUpdateViewModel: PrivateAppUpdateViewModel,
     exportConnectionDiagnostics: () -> String,
+    callViewModel: PrivateCallViewModel,
     onOpenAppInstaller: (PrivateAppUpdateDownloadReceipt) -> PrivateAppInstallerLaunchOutcome,
 ) {
     val accountAccessState by accountAccessViewModel.uiState.collectAsStateWithLifecycle()
     val appUpdateState by appUpdateViewModel.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(appUpdateViewModel) {
         appUpdateViewModel.checkOnceOnAppOpen()
+    }
+    LaunchedEffect(accountAccessState.session) {
+        if (accountAccessState.session !is PrivateAccountSessionUiState.Active) {
+            callViewModel.deactivateAccount()
+        }
     }
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
@@ -49,9 +56,13 @@ fun PrivateChatApp(
                     PrivateChatRoute(
                         accountSession = session.receipt,
                         viewModel = chatViewModel,
+                        callViewModel = callViewModel,
                         signOutState = accountAccessState.signOut,
                         onSignOut = {
-                            accountAccessViewModel.signOutPrivateAccount(chatViewModel::deactivateAccount)
+                            accountAccessViewModel.signOutPrivateAccount {
+                                callViewModel.deactivateAccount()
+                                chatViewModel.deactivateAccount()
+                            }
                         },
                     )
 
