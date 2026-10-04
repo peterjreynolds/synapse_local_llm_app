@@ -14,6 +14,35 @@ internal class EncryptedPrivateSessionRepository(
             state?.installationId ?: persistNewInstallationIdentity()
         }
 
+    fun registrationSeed(): PrivateInstallationId =
+        synchronized(monitor) {
+            loadOrCreateInstallationId()
+            requireNotNull(state).registrationSeed
+        }
+
+    fun pendingUsername(): String? = synchronized(monitor) { state?.pendingUsername }
+
+    // Retire the old device durably BEFORE erasing its Signal keys. A crash leaves a
+    // signed-out state that must finish erasure before a new account attempt can begin.
+    fun retirePendingIdentity() =
+        synchronized(monitor) {
+            val existing = requireNotNull(state)
+            check(existing.registeredSession == null)
+            val replacement = PrivateSessionVaultState(installationIdGenerator(), null, existing.registrationSeed)
+            persistState(replacement)
+            state = replacement
+        }
+
+    fun beginAccountAccess(username: String) =
+        synchronized(monitor) {
+            loadOrCreateInstallationId()
+            val existing = requireNotNull(state)
+            check(existing.registeredSession == null && existing.pendingUsername == null)
+            val replacement = existing.copy(pendingUsername = username)
+            persistState(replacement)
+            state = replacement
+        }
+
     fun loadRegisteredSession(): RegisteredPrivateAccountSession? =
         synchronized(monitor) {
             state?.registeredSession?.copyForStorage()
@@ -40,7 +69,7 @@ internal class EncryptedPrivateSessionRepository(
                 } else {
                     PrivateSessionPersistenceOutcome.REPLACED
                 }
-            val replacementState = PrivateSessionVaultState(existingState.installationId, session.copyForStorage())
+            val replacementState = existingState.copy(registeredSession = session.copyForStorage(), pendingUsername = null)
             persistState(replacementState)
             state = replacementState
             PrivateSessionPersistenceReceipt(
@@ -54,7 +83,7 @@ internal class EncryptedPrivateSessionRepository(
         synchronized(monitor) {
             val existingState = state
             if (existingState?.registeredSession == null) return@synchronized PrivateSessionClearReceipt.ALREADY_EMPTY
-            val clearedState = PrivateSessionVaultState(existingState.installationId, registeredSession = null)
+            val clearedState = PrivateSessionVaultState(installationIdGenerator(), registeredSession = null)
             persistState(clearedState)
             state = clearedState
             PrivateSessionClearReceipt.CLEARED
@@ -90,10 +119,15 @@ internal class EncryptedPrivateSessionRepository(
             } ?: return null
         return try {
             val decoded = PrivateSessionVaultCodec.decodeVersioned(plaintext)
-            if (decoded.migrationRequired) {
-                persistState(decoded.state)
-            }
-            decoded.state.copyForStorage()
+            val migrated =
+                if (decoded.migrationRequired && decoded.state.registeredSession == null) {
+                    // Preserve the old invite redemption seed, but never reuse its transport UUID.
+                    decoded.state.copy(installationId = installationIdGenerator())
+                } else {
+                    decoded.state
+                }
+            if (decoded.migrationRequired) persistState(migrated)
+            migrated.copyForStorage()
         } finally {
             plaintext.fill(0)
         }

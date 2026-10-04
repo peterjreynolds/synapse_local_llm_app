@@ -10,6 +10,12 @@ internal class SignalProtocolAdapterOwner(
     private val monitor = Any()
     private var ownedAdapter: OwnedSignalProtocolAdapter? = null
 
+    fun eraseForDeviceRetirement() =
+        synchronized(monitor) {
+            stateRepository.eraseForDeviceRetirement()
+            ownedAdapter = null
+        }
+
     fun storedLocalAddress(): SignalDeviceAddress? = synchronized(monitor) { stateRepository.loadLocalIdentity()?.address }
 
     fun adapterFor(address: SignalDeviceAddress): SignalProtocolAdapter =

@@ -193,9 +193,7 @@ internal class RegisteredPrivateAccountSession private constructor(
             require(expiresAt.nano == 0 && expiresAt.epochSecond in 1..MAX_EXPIRY_EPOCH_SECONDS) {
                 "Session expiry is outside the supported range"
             }
-            require(AUTHENTICATION_USERNAME_PATTERN.matches(authenticationUsername)) {
-                "Authentication username is malformed"
-            }
+            requireCanonicalAuthenticationUsername(authenticationUsername)
             require(
                 pseudonymousDisplayName ==
                     Normalizer.normalize(pseudonymousDisplayName, Normalizer.Form.NFKC).trim(),
@@ -222,7 +220,6 @@ internal class RegisteredPrivateAccountSession private constructor(
         }
 
         private val NIL_UUID = UUID(0L, 0L)
-        private val AUTHENTICATION_USERNAME_PATTERN = Regex("^[a-z][a-z0-9_]{2,31}$")
         private const val LEGACY_VALIDATION_USERNAME = "legacy_session"
         private const val MAX_DISPLAY_NAME_CHARACTERS = 64
         private const val MAX_EXPIRY_EPOCH_SECONDS = 253_402_300_799L
@@ -251,3 +248,9 @@ internal class PrivateSessionStateUnavailableException(
     message: String,
     cause: Throwable? = null,
 ) : IllegalStateException(message, cause)
+
+internal fun requireCanonicalAuthenticationUsername(username: String) {
+    require(AUTHENTICATION_USERNAME_PATTERN.matches(username)) { "Authentication username is malformed" }
+}
+
+private val AUTHENTICATION_USERNAME_PATTERN = Regex("^[a-z][a-z0-9_]{2,31}$")

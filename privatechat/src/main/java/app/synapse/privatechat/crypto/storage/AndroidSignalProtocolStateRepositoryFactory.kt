@@ -1,9 +1,11 @@
 package app.synapse.privatechat.crypto.storage
 
 import android.content.Context
-import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
 import app.synapse.privatechat.security.storage.AndroidAtomicEncryptedStateFile
 import app.synapse.privatechat.security.storage.AndroidKeystoreAes256KeyProvider
+import app.synapse.privatechat.security.storage.RotatingAesGcmEncryptedStateKeySlot
+import app.synapse.privatechat.security.storage.RotatingAesGcmEncryptedStateStorage
+import app.synapse.privatechat.security.storage.RotatingEncryptedStateKeySlotId
 import java.io.File
 
 object AndroidSignalProtocolStateRepositoryFactory {
@@ -14,12 +16,21 @@ object AndroidSignalProtocolStateRepositoryFactory {
     fun create(context: Context): EncryptedSignalProtocolStateRepository {
         val stateFile = AndroidAtomicEncryptedStateFile(File(context.noBackupFilesDir, STATE_FILE_NAME))
         return EncryptedSignalProtocolStateRepository(
-            encryptedStateFile = stateFile,
-            stateCipher =
-                Aes256GcmEncryptedStateCipher(
-                    keyProvider = AndroidKeystoreAes256KeyProvider(KEY_ALIAS),
-                    keyCreationAllowed = stateFile::permitsEncryptionKeyCreation,
-                    authenticatedContext = AUTHENTICATED_CONTEXT,
+            encryptedStateStorage =
+                RotatingAesGcmEncryptedStateStorage(
+                    encryptedStateFile = stateFile,
+                    primaryKeySlot =
+                        RotatingAesGcmEncryptedStateKeySlot(
+                            keyProvider = AndroidKeystoreAes256KeyProvider(KEY_ALIAS),
+                            authenticatedContext = AUTHENTICATED_CONTEXT,
+                        ),
+                    secondaryKeySlot =
+                        RotatingAesGcmEncryptedStateKeySlot(
+                            keyProvider = AndroidKeystoreAes256KeyProvider("synapse.private.signal-state.slot-b.v1"),
+                            authenticatedContext = "synapse.private.signal-state.slot-b.v1",
+                        ),
+                    maximumPlaintextBytes = SignalStateCodec.MAX_TOTAL_PLAINTEXT_BYTES,
+                    legacySingleSlot = RotatingEncryptedStateKeySlotId.PRIMARY,
                 ),
         )
     }

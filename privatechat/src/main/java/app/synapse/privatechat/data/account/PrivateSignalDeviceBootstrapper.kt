@@ -7,6 +7,8 @@ import java.util.UUID
 internal class PrivateSignalDeviceBootstrapper(
     private val adapterOwner: SignalProtocolAdapterOwner,
 ) {
+    fun eraseForDeviceRetirement() = adapterOwner.eraseForDeviceRetirement()
+
     fun preparePublicBundle(reservation: PrivateDeviceRegistrationReservation) =
         synchronized(adapterOwner) {
             val reservedAddress =

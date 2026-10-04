@@ -4,6 +4,7 @@ import java.util.UUID
 
 /** Deterministic state repository for JVM tests only. */
 internal class InMemorySignalProtocolStateRepository : SignalProtocolStateRepository {
+    var erasureFailure: Exception? = null
     private val monitor = Any()
     private var localIdentity: StoredLocalSignalIdentity? = null
     private var remoteIdentities = mutableMapOf<SignalProtocolStateAddress, ByteArray>()
@@ -15,6 +16,19 @@ internal class InMemorySignalProtocolStateRepository : SignalProtocolStateReposi
     private var pendingOutboundMutations =
         mutableMapOf<SignalPendingOutboundMutationKey, StoredSignalPendingOutboundMutation>()
     private var identityToStoreBeforeNextRemoteIdentityWrite: PendingRemoteIdentityWrite? = null
+
+    override fun eraseForDeviceRetirement() =
+        synchronized(monitor) {
+            erasureFailure?.let { throw it }
+            localIdentity = null
+            remoteIdentities.clear()
+            sessions.clear()
+            preKeys.clear()
+            signedPreKeys.clear()
+            kyberPreKeys.clear()
+            consumedKyberBaseKeys.clear()
+            pendingOutboundMutations.clear()
+        }
 
     override fun <T> writeTransaction(block: () -> T): T =
         synchronized(monitor) {

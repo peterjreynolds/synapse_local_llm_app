@@ -43,6 +43,8 @@ internal class SupabasePrivateAccountGateway(
                     throw cancellation
                 } catch (_: SupabaseTransportException) {
                     PrivateAccountAccessOutcome.TransportUnavailable
+                } catch (_: PrivateAccountLocalStateUnavailableException) {
+                    PrivateAccountAccessOutcome.LocalStateUnavailable
                 } catch (_: PrivateSessionStateUnavailableException) {
                     PrivateAccountAccessOutcome.LocalStateUnavailable
                 } catch (_: SignalProtocolStateCorruptedException) {
@@ -95,15 +97,20 @@ internal class SupabasePrivateAccountGateway(
                         sessionRepository.loadRegisteredSession()
                             ?: run {
                                 purgeLocalConversationState()
+                                if (sessionRepository.pendingUsername() != null) sessionRepository.retirePendingIdentity()
+                                signalDeviceBootstrapper.eraseForDeviceRetirement()
                                 return@withLock PrivateAccountSignOutOutcome.AlreadySignedOut
                             }
                     purgeLocalConversationState()
                     sessionRepository.clearAuthenticatedSession()
+                    signalDeviceBootstrapper.eraseForDeviceRetirement()
                     PrivateAccountSignOutOutcome.LocallySignedOut(
                         remoteRevocation = bestEffortRemoteSessionRevocation(storedSession),
                     )
                 } catch (cancellation: CancellationException) {
                     throw cancellation
+                } catch (_: SignalProtocolStateCorruptedException) {
+                    PrivateAccountSignOutOutcome.LocalStateUnavailable
                 } catch (_: PrivateAccountLocalStateUnavailableException) {
                     PrivateAccountSignOutOutcome.LocalStateUnavailable
                 } catch (_: PrivateSessionStateUnavailableException) {
@@ -116,6 +123,7 @@ internal class SupabasePrivateAccountGateway(
 
     private suspend fun signedOutAfterPurgingLocalState(): PrivateAccountSessionOutcome {
         purgeLocalConversationState()
+        if (sessionRepository.pendingUsername() == null) signalDeviceBootstrapper.eraseForDeviceRetirement()
         return PrivateAccountSessionOutcome.SignedOut
     }
 
@@ -190,11 +198,17 @@ internal class SupabasePrivateAccountGateway(
         if (sessionRepository.loadRegisteredSession() != null) {
             return PrivateAccountAccessOutcome.Denied(ACCOUNT_SWITCH_REQUIRES_SIGN_OUT_MESSAGE)
         }
+        if (sessionRepository.pendingUsername() != command.username.canonical) {
+            if (sessionRepository.pendingUsername() != null) sessionRepository.retirePendingIdentity()
+            purgeLocalConversationState()
+            signalDeviceBootstrapper.eraseForDeviceRetirement()
+            sessionRepository.beginAccountAccess(command.username.canonical)
+        }
         val installationId = sessionRepository.loadOrCreateInstallationId()
         val registrationRedemptionId =
             when (command) {
                 is PrivateAccountAccessCommand.RegisterWithInvite ->
-                    PrivateRegistrationRedemptionIdFactory.derive(installationId, command.invitationCode)
+                    PrivateRegistrationRedemptionIdFactory.derive(sessionRepository.registrationSeed(), command.invitationCode)
 
                 is PrivateAccountAccessCommand.SignIn -> null
             }
@@ -208,7 +222,9 @@ internal class SupabasePrivateAccountGateway(
                     )
             ) {
                 is PrivateAccountBackendOutcome.Confirmed -> outcome.receipt
-                is PrivateAccountBackendOutcome.Rejected -> return PrivateAccountAccessOutcome.Denied(outcome.userMessage)
+                is PrivateAccountBackendOutcome.Rejected -> return PrivateAccountAccessOutcome.Denied(
+                    accessRejectionMessage(command, outcome.userMessage),
+                )
             }
         val publicBundle = signalDeviceBootstrapper.preparePublicBundle(authentication.reservation)
         val deviceBinding =
@@ -223,7 +239,9 @@ internal class SupabasePrivateAccountGateway(
                     )
             ) {
                 is PrivateAccountBackendOutcome.Confirmed -> outcome.receipt
-                is PrivateAccountBackendOutcome.Rejected -> return PrivateAccountAccessOutcome.Denied(outcome.userMessage)
+                is PrivateAccountBackendOutcome.Rejected -> return PrivateAccountAccessOutcome.Denied(
+                    accessRejectionMessage(command, outcome.userMessage),
+                )
             }
         val authenticatedAccountId = UUID.fromString(authentication.reservation.accountId.canonical)
         val confirmedRegistration =
@@ -247,6 +265,17 @@ internal class SupabasePrivateAccountGateway(
         sessionRepository.persistAfterDeviceRegistration(registeredSession)
         return PrivateAccountAccessOutcome.Confirmed(registeredSession.toActiveReceipt())
     }
+
+    private fun accessRejectionMessage(
+        command: PrivateAccountAccessCommand,
+        rejection: String,
+    ): String =
+        when (command) {
+            is PrivateAccountAccessCommand.RegisterWithInvite ->
+                "Registration could not be completed. Retry with the same invite and account details, " +
+                    "or sign in with the same username and password if registration already completed."
+            is PrivateAccountAccessCommand.SignIn -> rejection
+        }
 
     private suspend fun refreshSession(session: RegisteredPrivateAccountSession): PrivateAccountSessionOutcome {
         val expectedAccountId = PrivateAccountId(session.accountId.toString())
@@ -282,6 +311,7 @@ internal class SupabasePrivateAccountGateway(
                 if (outcome.reason == PrivateBackendRejectionReason.ACCESS_DENIED) {
                     purgeLocalConversationState()
                     sessionRepository.clearAuthenticatedSession()
+                    signalDeviceBootstrapper.eraseForDeviceRetirement()
                     PrivateAccountSessionOutcome.SignedOut
                 } else {
                     PrivateAccountSessionOutcome.VerificationRejected(outcome.userMessage)
@@ -296,6 +326,8 @@ internal class SupabasePrivateAccountGateway(
             throw cancellation
         } catch (_: SupabaseTransportException) {
             PrivateAccountSessionOutcome.TransportUnavailable
+        } catch (_: SignalProtocolStateCorruptedException) {
+            PrivateAccountSessionOutcome.LocalStateUnavailable
         } catch (_: PrivateSessionStateUnavailableException) {
             PrivateAccountSessionOutcome.LocalStateUnavailable
         } catch (_: PrivateAccountLocalStateUnavailableException) {

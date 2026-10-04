@@ -10,22 +10,32 @@ import app.synapse.privatechat.crypto.SignalProtocolStateLimits
 import app.synapse.privatechat.crypto.SignalProtocolStateRepository
 import app.synapse.privatechat.crypto.StoredLocalSignalIdentity
 import app.synapse.privatechat.crypto.StoredSignalPendingOutboundMutation
-import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
-import app.synapse.privatechat.security.storage.EncryptedStateCipher
-import app.synapse.privatechat.security.storage.EncryptedStateFile
+import app.synapse.privatechat.security.storage.CryptographicallyErasableEncryptedStateStorage
 import java.util.UUID
 
 /**
  * Single-owner durable Signal state store. Plaintext state exists only in process memory and the
- * complete serialized snapshot is authenticated and encrypted before it crosses [EncryptedStateFile].
+ * complete serialized snapshot is authenticated and encrypted before it crosses the storage boundary.
  */
 class EncryptedSignalProtocolStateRepository internal constructor(
-    private val encryptedStateFile: EncryptedStateFile,
-    private val stateCipher: EncryptedStateCipher,
+    private val encryptedStateStorage: CryptographicallyErasableEncryptedStateStorage,
 ) : SignalProtocolStateRepository {
     private val monitor = Any()
     private var transactionDepth = 0
+    private var durableStateExpected = false
     private var state = loadState()
+
+    override fun eraseForDeviceRetirement() =
+        synchronized(monitor) {
+            check(transactionDepth == 0) { "Cannot retire Signal identity during a transaction" }
+            try {
+                encryptedStateStorage.replaceAfterCryptographicErasure(null)
+                state = MutableSignalState()
+                durableStateExpected = false
+            } catch (error: Exception) {
+                throw SignalProtocolStateCorruptedException("Signal device erasure failed", error)
+            }
+        }
 
     override fun <T> writeTransaction(block: () -> T): T =
         synchronized(monitor) {
@@ -267,12 +277,14 @@ class EncryptedSignalProtocolStateRepository internal constructor(
     private fun persistState() {
         val plaintext = SignalStateCodec.encode(state)
         try {
-            val ciphertext = stateCipher.encrypt(plaintext)
-            try {
-                encryptedStateFile.replace(ciphertext)
-            } finally {
-                ciphertext.fill(0)
+            if (durableStateExpected) {
+                val persisted =
+                    encryptedStateStorage.readDecryptedState()
+                        ?: throw SignalProtocolStateCorruptedException("Previously committed Signal state is missing")
+                persisted.fill(0)
             }
+            encryptedStateStorage.replaceEncryptedState(plaintext)
+            durableStateExpected = true
         } catch (error: Throwable) {
             throw SignalProtocolStateCorruptedException("Signal state commit failed", error)
         } finally {
@@ -281,23 +293,14 @@ class EncryptedSignalProtocolStateRepository internal constructor(
     }
 
     private fun loadState(): MutableSignalState {
-        val ciphertext =
+        val plaintext =
             try {
-                encryptedStateFile.read(MAX_ENCRYPTED_STATE_BYTES)
+                encryptedStateStorage.readDecryptedState()
             } catch (error: Exception) {
                 throw SignalProtocolStateCorruptedException("Signal state could not be read", error)
             } ?: return MutableSignalState()
-        if (ciphertext.size > MAX_ENCRYPTED_STATE_BYTES) {
-            throw SignalProtocolStateCorruptedException("Encrypted Signal state exceeds the size limit")
-        }
-        val plaintext =
-            try {
-                stateCipher.decrypt(ciphertext)
-            } catch (error: Exception) {
-                throw SignalProtocolStateCorruptedException("Signal state authentication failed", error)
-            }
         return try {
-            SignalStateCodec.decode(plaintext)
+            SignalStateCodec.decode(plaintext).also { durableStateExpected = true }
         } finally {
             plaintext.fill(0)
         }
@@ -310,8 +313,6 @@ class EncryptedSignalProtocolStateRepository internal constructor(
         const val MAX_REMOTE_IDENTITY_BYTES = 256
         const val MAX_BASE_KEY_BYTES = 256
         const val MAX_PENDING_OUTBOUND_MUTATIONS = 4
-        const val MAX_ENCRYPTED_STATE_BYTES =
-            SignalStateCodec.MAX_TOTAL_PLAINTEXT_BYTES + Aes256GcmEncryptedStateCipher.MAX_ENVELOPE_OVERHEAD_BYTES
     }
 }
 

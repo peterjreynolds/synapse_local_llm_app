@@ -3,6 +3,7 @@ package app.synapse.privatechat.data.account
 import app.synapse.privatechat.crypto.InMemorySignalProtocolStateRepository
 import app.synapse.privatechat.crypto.SignalDeviceId
 import app.synapse.privatechat.crypto.SignalProtocolAdapterOwner
+import app.synapse.privatechat.crypto.SignalProtocolStateCorruptedException
 import app.synapse.privatechat.data.session.EncryptedPrivateSessionRepository
 import app.synapse.privatechat.data.session.PrivateInstallationId
 import app.synapse.privatechat.data.supabase.SupabaseTransportException
@@ -25,11 +26,14 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -275,14 +279,10 @@ class SupabasePrivateAccountGatewayTest {
     fun localConversationPurgeFailureKeepsSessionAndSkipsRemoteLogout() {
         val sessionRepository = sessionRepository()
         val backend = RecordingPrivateAccountBackend()
-        val gateway =
-            gateway(
-                backend,
-                InMemorySignalProtocolStateRepository(),
-                sessionRepository,
-                RecordingLocalStateInvalidator(failure = IllegalStateException("simulated cache purge failure")),
-            )
+        val invalidator = RecordingLocalStateInvalidator()
+        val gateway = gateway(backend, InMemorySignalProtocolStateRepository(), sessionRepository, invalidator)
         runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
+        invalidator.failure = IllegalStateException("simulated cache purge failure")
 
         val outcome = runBlocking { gateway.signOutPrivateAccount() }
 
@@ -322,7 +322,7 @@ class SupabasePrivateAccountGatewayTest {
         val outcome = runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
 
         assertEquals(
-            PrivateAccountAccessOutcome.Denied("Invite is invalid or expired."),
+            PrivateAccountAccessOutcome.Denied(REGISTRATION_RECOVERY_MESSAGE),
             outcome,
         )
         assertNull(backend.deviceBindingCommand)
@@ -344,7 +344,7 @@ class SupabasePrivateAccountGatewayTest {
         val outcome = runBlocking { gateway.requestPrivateAccountAccess(registrationCommand()) }
 
         assertEquals(
-            PrivateAccountAccessOutcome.Denied("Device reservation expired."),
+            PrivateAccountAccessOutcome.Denied(REGISTRATION_RECOVERY_MESSAGE),
             outcome,
         )
         assertNotNull(signalRepository.loadLocalIdentity())
@@ -394,6 +394,165 @@ class SupabasePrivateAccountGatewayTest {
             assertTrue(backend.deviceRegistrationThreadName?.startsWith(ACCOUNT_OPERATION_THREAD_NAME) == true)
         } finally {
             dispatcher.close()
+        }
+    }
+
+    @Test
+    fun signOutAccountAThenRegisterAccountBRetiresDeviceAndSignalIdentity() =
+        runBlocking {
+            val storage = MemoryCryptographicallyErasableStateStorage()
+            val sessions = EncryptedPrivateSessionRepository(storage)
+            val signal = InMemorySignalProtocolStateRepository()
+            val backend = RecoverableAccountBackend()
+            val gateway = gateway(backend, signal, sessions)
+            assertTrue(gateway.requestPrivateAccountAccess(registrationCommand()) is PrivateAccountAccessOutcome.Confirmed)
+            val accountADevice = requireNotNull(sessions.loadRegisteredSession()).installationId
+            val accountAKeys = requireNotNull(signal.loadLocalIdentity()).serializedIdentityKeyPair
+            assertTrue(gateway.signOutPrivateAccount() is PrivateAccountSignOutOutcome.LocallySignedOut)
+            assertNull(signal.loadLocalIdentity())
+            assertNotEquals(accountADevice, sessions.loadOrCreateInstallationId())
+            val accountB =
+                registrationCommand().copy(
+                    username = PrivateUsername("account_b"),
+                    invitationCode = PrivateInvitationCode("B".repeat(43)),
+                )
+            assertTrue(gateway.requestPrivateAccountAccess(accountB) is PrivateAccountAccessOutcome.Confirmed)
+            assertEquals(UUID.fromString(OTHER_ACCOUNT_ID.canonical), sessions.loadRegisteredSession()?.accountId)
+            assertNotEquals(accountADevice, sessions.loadRegisteredSession()?.installationId)
+            assertTrue(!accountAKeys.contentEquals(requireNotNull(signal.loadLocalIdentity()).serializedIdentityKeyPair))
+        }
+
+    @Test
+    fun lostBindingResponseRestartsWithSameDeviceRedemptionAndSignalIdentity() =
+        runBlocking {
+            val storage = MemoryCryptographicallyErasableStateStorage()
+            var sessions = EncryptedPrivateSessionRepository(storage)
+            val signal = InMemorySignalProtocolStateRepository()
+            val backend = RecoverableAccountBackend().apply { loseNextBindingResponse = true }
+            var gateway = gateway(backend, signal, sessions)
+            assertSame(PrivateAccountAccessOutcome.TransportUnavailable, gateway.requestPrivateAccountAccess(registrationCommand()))
+            val pendingDevice = sessions.loadOrCreateInstallationId()
+            val pendingKeys = requireNotNull(signal.loadLocalIdentity()).serializedIdentityKeyPair
+            val redemption = backend.redemptions.single()
+            assertNull(sessions.loadRegisteredSession())
+            sessions = EncryptedPrivateSessionRepository(storage)
+            gateway = gateway(backend, signal, sessions)
+            assertSame(PrivateAccountSessionOutcome.SignedOut, gateway.restorePrivateAccountSession())
+            assertArrayEquals(pendingKeys, requireNotNull(signal.loadLocalIdentity()).serializedIdentityKeyPair)
+            assertTrue(gateway.requestPrivateAccountAccess(registrationCommand()) is PrivateAccountAccessOutcome.Confirmed)
+            assertEquals(pendingDevice, sessions.loadRegisteredSession()?.installationId)
+            assertEquals(listOf(redemption, redemption), backend.redemptions)
+            assertArrayEquals(pendingKeys, requireNotNull(signal.loadLocalIdentity()).serializedIdentityKeyPair)
+            assertEquals(1, backend.deviceOwners.size)
+        }
+
+    @Test
+    fun legacySignedOutVaultRotatesDeviceButReplaysOriginalInviteRedemption() =
+        runBlocking {
+            val storage = MemoryCryptographicallyErasableStateStorage()
+            val legacy = ByteArrayOutputStream()
+            DataOutputStream(legacy).use { encoded ->
+                encoded.writeInt(0x53504131)
+                encoded.writeInt(2)
+                encoded.writeLong(INSTALLATION_ID.uuid.mostSignificantBits)
+                encoded.writeLong(INSTALLATION_ID.uuid.leastSignificantBits)
+                encoded.writeBoolean(false)
+            }
+            storage.replaceEncryptedState(legacy.toByteArray())
+            val sessions = EncryptedPrivateSessionRepository(storage)
+            assertNotEquals(INSTALLATION_ID, sessions.loadOrCreateInstallationId())
+            val backend = RecoverableAccountBackend()
+            backend.deviceOwners[INSTALLATION_ID.uuid] = OTHER_ACCOUNT_ID
+            val signal = InMemorySignalProtocolStateRepository()
+            PrivateSignalDeviceBootstrapper(SignalProtocolAdapterOwner(signal)).preparePublicBundle(RESERVATION)
+            val legacyKeys = requireNotNull(signal.loadLocalIdentity()).serializedIdentityKeyPair
+            val gateway = gateway(backend, signal, sessions)
+            assertTrue(gateway.requestPrivateAccountAccess(registrationCommand()) is PrivateAccountAccessOutcome.Confirmed)
+            assertEquals(PrivateRegistrationRedemptionIdFactory.derive(INSTALLATION_ID, INVITATION_CODE), backend.redemptions.single())
+            assertEquals(OTHER_ACCOUNT_ID, backend.deviceOwners[INSTALLATION_ID.uuid])
+            assertTrue(!legacyKeys.contentEquals(requireNotNull(signal.loadLocalIdentity()).serializedIdentityKeyPair))
+        }
+
+    @Test
+    fun changingPendingAccountRetiresItsIdentityWithoutChangingInviteRetrySeed() =
+        runBlocking {
+            val sessions = EncryptedPrivateSessionRepository(MemoryCryptographicallyErasableStateStorage())
+            val signal = InMemorySignalProtocolStateRepository()
+            val backend = RecoverableAccountBackend().apply { loseNextBindingResponse = true }
+            val gateway = gateway(backend, signal, sessions)
+            gateway.requestPrivateAccountAccess(registrationCommand())
+            val pendingDevice = sessions.loadOrCreateInstallationId()
+            val seed = sessions.registrationSeed()
+            val accountB =
+                registrationCommand().copy(
+                    username = PrivateUsername("account_b"),
+                    invitationCode = PrivateInvitationCode("B".repeat(43)),
+                )
+            assertTrue(gateway.requestPrivateAccountAccess(accountB) is PrivateAccountAccessOutcome.Confirmed)
+            assertNotEquals(pendingDevice, sessions.loadRegisteredSession()?.installationId)
+            assertEquals(seed, sessions.registrationSeed())
+        }
+
+    @Test
+    fun interruptedSignalErasureNeverRestoresRetiredAccountAndCanFinishOnRestart() =
+        runBlocking {
+            val storage = MemoryCryptographicallyErasableStateStorage()
+            val sessions = EncryptedPrivateSessionRepository(storage)
+            val signal = InMemorySignalProtocolStateRepository()
+            val backend = RecoverableAccountBackend()
+            val gateway = gateway(backend, signal, sessions)
+            gateway.requestPrivateAccountAccess(registrationCommand())
+            val retiredDevice = sessions.loadOrCreateInstallationId()
+            signal.erasureFailure = SignalProtocolStateCorruptedException("simulated erasure failure")
+            assertSame(PrivateAccountSignOutOutcome.LocalStateUnavailable, gateway.signOutPrivateAccount())
+            assertNull(sessions.loadRegisteredSession())
+            assertNotEquals(retiredDevice, sessions.loadOrCreateInstallationId())
+            signal.erasureFailure = null
+            val restarted = gateway(backend, signal, EncryptedPrivateSessionRepository(storage))
+            assertSame(PrivateAccountSessionOutcome.SignedOut, restarted.restorePrivateAccountSession())
+            assertNull(signal.loadLocalIdentity())
+            assertTrue(restarted.requestPrivateAccountAccess(signInCommand()) is PrivateAccountAccessOutcome.Confirmed)
+        }
+
+    private inner class RecoverableAccountBackend : PrivateAccountBackend by RecordingPrivateAccountBackend() {
+        val deviceOwners = mutableMapOf<UUID, PrivateAccountId>()
+        val redemptions = mutableListOf<UUID?>()
+        var loseNextBindingResponse = false
+
+        override suspend fun authenticate(
+            command: PrivateAccountAccessCommand,
+            transportDeviceId: UUID,
+            registrationRedemptionId: UUID?,
+        ): PrivateAccountBackendOutcome<UnboundPrivateAccountSession> {
+            redemptions += registrationRedemptionId
+            val account = if (command.username == USERNAME) ACCOUNT_ID else OTHER_ACCOUNT_ID
+            check(deviceOwners[transportDeviceId]?.let { it != account } != true)
+            return PrivateAccountBackendOutcome.Confirmed(
+                UnboundPrivateAccountSession(
+                    reservation = RESERVATION.copy(accountId = account, transportDeviceId = transportDeviceId),
+                    tokens = PrivateBackendSessionTokens(EXPIRES_AT, ACCESS_TOKEN, REFRESH_TOKEN),
+                ),
+            )
+        }
+
+        override suspend fun registerDevice(
+            command: PrivateDeviceBindingCommand,
+        ): PrivateAccountBackendOutcome<PrivateDeviceBindingReceipt> {
+            val reservation = command.reservation
+            deviceOwners[reservation.transportDeviceId] = reservation.accountId
+            if (loseNextBindingResponse) {
+                loseNextBindingResponse = false
+                throw SupabaseTransportException(SupabaseTransportFailure.NETWORK_UNAVAILABLE, "lost binding response")
+            }
+            return PrivateAccountBackendOutcome.Confirmed(
+                PrivateDeviceBindingReceipt(
+                    reservation.accountId,
+                    reservation.transportDeviceId,
+                    reservation.signalDeviceId,
+                    DISPLAY_NAME,
+                    BOUND_AT,
+                ),
+            )
         }
     }
 
@@ -542,7 +701,7 @@ class SupabasePrivateAccountGatewayTest {
 
     private class RecordingLocalStateInvalidator(
         private val events: MutableList<String>? = null,
-        private val failure: Exception? = null,
+        var failure: Exception? = null,
     ) : PrivateAccountLocalStateInvalidator {
         override suspend fun purgeForSessionInvalidation(): PrivateAccountLocalStatePurgeReceipt {
             events?.add("purgeLocalState")
@@ -573,6 +732,10 @@ class SupabasePrivateAccountGatewayTest {
     }
 
     private companion object {
+        const val REGISTRATION_RECOVERY_MESSAGE =
+            "Registration could not be completed. Retry with the same invite and account details, " +
+                "or sign in with the same username and password if registration already completed."
+
         val ACCOUNT_UUID: UUID = UUID.fromString("10000000-0000-4000-8000-000000000001")
         val ACCOUNT_ID = PrivateAccountId(ACCOUNT_UUID.toString())
         val OTHER_ACCOUNT_ID =
