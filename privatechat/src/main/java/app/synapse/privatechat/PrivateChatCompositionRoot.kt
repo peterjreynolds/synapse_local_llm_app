@@ -33,6 +33,7 @@ import app.synapse.privatechat.data.chat.SupabasePrivateChatMutationTransport
 import app.synapse.privatechat.data.chat.SupabasePrivateChatPollingApi
 import app.synapse.privatechat.data.chat.SupabasePrivateChatRequestExecutor
 import app.synapse.privatechat.data.chat.SupabasePrivateContentMutationApi
+import app.synapse.privatechat.data.chat.SupabasePrivatePeopleGateway
 import app.synapse.privatechat.data.chat.SupabasePrivateRoomMutationApi
 import app.synapse.privatechat.data.chat.SupabasePrivateSocialGateway
 import app.synapse.privatechat.data.chat.SupabasePrivateSocialMutationApi
@@ -47,7 +48,9 @@ import app.synapse.privatechat.data.update.UrlConnectionPrivateUpdateSource
 import app.synapse.privatechat.domain.account.PrivateAccountGateway
 import app.synapse.privatechat.domain.chat.PrivateChatGateway
 import app.synapse.privatechat.domain.chat.PrivateClientMutationId
+import app.synapse.privatechat.domain.chat.PrivatePeopleGateway
 import app.synapse.privatechat.domain.chat.PrivateSocialGateway
+import app.synapse.privatechat.domain.chat.UnavailablePrivatePeopleGateway
 import app.synapse.privatechat.ui.account.PrivateAccountAccessViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
 import app.synapse.privatechat.ui.update.PrivateAppUpdateViewModel
@@ -59,6 +62,7 @@ class PrivateChatCompositionRoot private constructor(
     accountGateway: PrivateAccountGateway,
     chatGateway: PrivateChatGateway,
     socialGateway: PrivateSocialGateway,
+    peopleGateway: PrivatePeopleGateway,
     updateRepository: GitHubPrivateAppUpdateRepository,
     updateDownloader: AndroidPrivateAppUpdateDownloader,
     clock: Clock,
@@ -76,6 +80,7 @@ class PrivateChatCompositionRoot private constructor(
                 PrivateChatViewModel(
                     chatGateway = chatGateway,
                     socialGateway = socialGateway,
+                    peopleGateway = peopleGateway,
                     mutationIdFactory = { PrivateClientMutationId(UUID.randomUUID().toString()) },
                     clock = clock,
                 )
@@ -109,6 +114,7 @@ class PrivateChatCompositionRoot private constructor(
                 accountGateway = runtime.accountGateway,
                 chatGateway = runtime.chatGateway,
                 socialGateway = runtime.socialGateway,
+                peopleGateway = runtime.peopleGateway,
                 updateRepository =
                     GitHubPrivateAppUpdateRepository(
                         transferSource = updateTransferSource,
@@ -226,6 +232,13 @@ class PrivateChatCompositionRoot private constructor(
                         snapshotAssembler = snapshotAssembler,
                         mutations = chatMutations,
                     ),
+                peopleGateway =
+                    SupabasePrivatePeopleGateway(
+                        execution,
+                        mutationTransport,
+                        pollingRepository::invalidateRecentState,
+                        clock,
+                    ),
                 socialGateway =
                     SupabasePrivateSocialGateway(
                         execution = execution,
@@ -249,4 +262,6 @@ private data class PrivateChatRuntime(
     val accountGateway: PrivateAccountGateway,
     val chatGateway: PrivateChatGateway,
     val socialGateway: PrivateSocialGateway,
+    val peopleGateway: PrivatePeopleGateway =
+        UnavailablePrivatePeopleGateway,
 )

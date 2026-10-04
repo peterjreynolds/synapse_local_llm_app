@@ -29,6 +29,7 @@ enum class PrivateRoomMuteState {
 }
 
 enum class PrivateRoomMetadataState {
+    PARTICIPANT_LABEL,
     AVAILABLE,
     PENDING,
     UNAVAILABLE_ON_DEVICE,

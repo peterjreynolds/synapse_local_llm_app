@@ -123,6 +123,10 @@ internal sealed interface PrivateBackendActivityFeed<out Record> {
         override val records: List<Record>,
     ) : PrivateBackendActivityFeed<Record>
 
+    data object Unavailable : PrivateBackendActivityFeed<Nothing> {
+        override val records: List<Nothing> = emptyList()
+    }
+
     data object AccessDenied : PrivateBackendActivityFeed<Nothing> {
         override val records: List<Nothing> = emptyList()
     }

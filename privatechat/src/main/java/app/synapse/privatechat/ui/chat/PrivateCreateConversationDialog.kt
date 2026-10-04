@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material3.AlertDialog
@@ -82,11 +81,9 @@ internal fun PrivateCreateConversationDialog(
                             onSelect = { selectedRoute -> route = selectedRoute },
                         )
 
-                    PrivateNewConversationRoute.CREATE_DIRECT,
                     PrivateNewConversationRoute.CREATE_GROUP,
                     ->
                         PrivateCreateConversationForm(
-                            route = route,
                             roomTitle = roomTitle,
                             retention = retention,
                             enabled = actionsEnabled,
@@ -116,14 +113,6 @@ internal fun PrivateCreateConversationDialog(
         confirmButton = {
             when (route) {
                 PrivateNewConversationRoute.CHOOSER -> Unit
-                PrivateNewConversationRoute.CREATE_DIRECT ->
-                    Button(
-                        onClick = { onCreateRoom(PrivateRoomKind.DIRECT, roomTitle, retention) },
-                        enabled = actionsEnabled && roomTitle.isNotBlank(),
-                    ) {
-                        Text("Create chat")
-                    }
-
                 PrivateNewConversationRoute.CREATE_GROUP ->
                     Button(
                         onClick = { onCreateRoom(PrivateRoomKind.GROUP, roomTitle, retention) },
@@ -158,13 +147,7 @@ private fun PrivateNewConversationChooser(
     onSelect: (PrivateNewConversationRoute) -> Unit,
 ) {
     Column {
-        PrivateNewConversationChoice(
-            title = "New direct chat",
-            detail = "Start a private one-to-one conversation",
-            icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
-            enabled = enabled,
-            onClick = { onSelect(PrivateNewConversationRoute.CREATE_DIRECT) },
-        )
+        Text("For a one-to-one chat, choose someone in the People tab.")
         PrivateNewConversationChoice(
             title = "New group",
             detail = "Create a conversation for several people",
@@ -201,19 +184,17 @@ private fun PrivateNewConversationChoice(
 
 @Composable
 private fun PrivateCreateConversationForm(
-    route: PrivateNewConversationRoute,
     roomTitle: String,
     retention: PrivateMessageRetention,
     enabled: Boolean,
     onRoomTitleChanged: (String) -> Unit,
     onRetentionChanged: (PrivateMessageRetention) -> Unit,
 ) {
-    val isDirect = route == PrivateNewConversationRoute.CREATE_DIRECT
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
             value = roomTitle,
             onValueChange = onRoomTitleChanged,
-            label = { Text(if (isDirect) "Friend or chat name" else "Group name") },
+            label = { Text("Group name") },
             enabled = enabled,
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -225,12 +206,7 @@ private fun PrivateCreateConversationForm(
             onChangeRetention = onRetentionChanged,
         )
         Text(
-            text =
-                if (isDirect) {
-                    "After creating the chat, open its menu and choose Invite person."
-                } else {
-                    "After creating the group, use its menu to invite people and manage members."
-                },
+            text = "After creating the group, use its menu to invite people and manage members.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -239,7 +215,6 @@ private fun PrivateCreateConversationForm(
 
 internal enum class PrivateNewConversationRoute {
     CHOOSER,
-    CREATE_DIRECT,
     CREATE_GROUP,
     JOIN_WITH_CODE,
 }
@@ -247,7 +222,6 @@ internal enum class PrivateNewConversationRoute {
 private fun privateNewConversationTitle(route: PrivateNewConversationRoute): String =
     when (route) {
         PrivateNewConversationRoute.CHOOSER -> "New conversation"
-        PrivateNewConversationRoute.CREATE_DIRECT -> "New direct chat"
         PrivateNewConversationRoute.CREATE_GROUP -> "New group"
         PrivateNewConversationRoute.JOIN_WITH_CODE -> "Join a conversation"
     }
