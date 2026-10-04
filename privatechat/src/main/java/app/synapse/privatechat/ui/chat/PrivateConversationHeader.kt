@@ -290,7 +290,9 @@ internal fun privateRoomMembershipLabel(room: PrivateRoomSummary): String =
 
 private fun privateConversationSubtitle(room: PrivateRoomSummary): String =
     when (room.metadataState) {
-        PrivateRoomMetadataState.AVAILABLE -> privateRoomMembershipLabel(room)
+        PrivateRoomMetadataState.PARTICIPANT_LABEL,
+        PrivateRoomMetadataState.AVAILABLE,
+        -> privateRoomMembershipLabel(room)
         PrivateRoomMetadataState.PENDING -> "Loading encrypted details…"
         PrivateRoomMetadataState.UNAVAILABLE_ON_DEVICE -> "Encrypted details unavailable on this device"
     }

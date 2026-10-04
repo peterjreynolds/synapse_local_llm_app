@@ -19,6 +19,7 @@ fun PrivateChatRoute(
     onSignOut: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val peopleState by viewModel.peopleState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
 
     LaunchedEffect(accountSession.accountId) {
@@ -46,6 +47,8 @@ fun PrivateChatRoute(
 
     PrivateChatScreen(
         state = state,
+        peopleState = peopleState,
+        onOpenDirectChat = viewModel::openDirectChat,
         accountSessionActions =
             PrivateAccountSessionUiActions(
                 signOutState = signOutState,

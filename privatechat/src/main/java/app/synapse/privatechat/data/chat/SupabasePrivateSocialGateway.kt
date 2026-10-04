@@ -14,28 +14,20 @@ import app.synapse.privatechat.domain.chat.PublishPrivatePresenceCommand
 import app.synapse.privatechat.domain.chat.RedeemPrivateRoomInvitationCommand
 import app.synapse.privatechat.domain.chat.RemovePrivateGroupMemberCommand
 import app.synapse.privatechat.domain.chat.UpdatePrivateProfileCommand
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.isActive
 
 internal class SupabasePrivateSocialGateway(
     private val execution: PrivateChatGatewayExecution,
     private val pollingRepository: PrivateChatPollingRepository,
     private val snapshotAssembler: PrivateChatSnapshotAssembler,
     private val mutations: PrivateSocialMutationCoordinator,
-    private val waitForNextPoll: suspend () -> Unit = { delay(DEFAULT_SOCIAL_POLL_INTERVAL_MILLIS) },
+    private val waitForNextPoll: suspend (Long) -> Unit = { delay(it) },
 ) : PrivateSocialGateway {
     override fun observeSocial(accountId: PrivateAccountId): Flow<PrivateChatObservation<PrivateSocialSnapshot>> =
-        flow {
-            while (currentCoroutineContext().isActive) {
-                emit(
-                    execution.observe(accountId) { session ->
-                        snapshotAssembler.social(pollingRepository.load(session))
-                    },
-                )
-                waitForNextPoll()
+        observePrivateChatSnapshots(waitForNextPoll) {
+            execution.observe(accountId) { session ->
+                snapshotAssembler.social(pollingRepository.load(session))
             }
         }
 
@@ -72,5 +64,3 @@ internal class SupabasePrivateSocialGateway(
         command: PublishPrivatePresenceCommand,
     ): PrivateChatMutationOutcome<PrivateSocialMutationReceipt.PresencePublished> = mutations.publishPresence(command)
 }
-
-private const val DEFAULT_SOCIAL_POLL_INTERVAL_MILLIS = 5_000L

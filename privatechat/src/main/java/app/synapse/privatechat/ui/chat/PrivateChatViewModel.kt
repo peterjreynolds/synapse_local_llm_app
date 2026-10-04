@@ -11,6 +11,7 @@ import app.synapse.privatechat.domain.chat.PrivateClientMutationIdFactory
 import app.synapse.privatechat.domain.chat.PrivateConversationSnapshot
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageRetention
+import app.synapse.privatechat.domain.chat.PrivatePeopleGateway
 import app.synapse.privatechat.domain.chat.PrivatePresenceSharingState
 import app.synapse.privatechat.domain.chat.PrivateRoomArchiveState
 import app.synapse.privatechat.domain.chat.PrivateRoomId
@@ -21,6 +22,7 @@ import app.synapse.privatechat.domain.chat.PrivateRoomMuteState
 import app.synapse.privatechat.domain.chat.PrivateRoomPinState
 import app.synapse.privatechat.domain.chat.PrivateSocialGateway
 import app.synapse.privatechat.domain.chat.PrivateTypingState
+import app.synapse.privatechat.domain.chat.UnavailablePrivatePeopleGateway
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +34,8 @@ class PrivateChatViewModel(
     socialGateway: PrivateSocialGateway,
     mutationIdFactory: PrivateClientMutationIdFactory,
     private val clock: Clock,
+    peopleGateway: PrivatePeopleGateway =
+        UnavailablePrivatePeopleGateway,
 ) : ViewModel() {
     private val stateStore = PrivateChatUiStateStore()
     private val mutationCoordinator = PrivateConfirmedMutationCoordinator(viewModelScope, stateStore)
@@ -92,6 +96,20 @@ class PrivateChatViewModel(
             presencePublisher = presencePublisher,
         )
 
+    private var pendingDirectRoomId: PrivateRoomId? = null
+    private val peopleCoordinator: PrivatePeopleCoordinator =
+        PrivatePeopleCoordinator(peopleGateway, viewModelScope, clock) { roomId ->
+            pendingDirectRoomId = roomId
+            val feed = stateStore.current.roomFeed as? PrivateRoomFeedUiState.Available
+            if (feed?.snapshot?.rooms?.any { it.roomId == roomId } == true) {
+                pendingDirectRoomId = null
+                selectRoom(roomId)
+            }
+        }
+    val peopleState = peopleCoordinator.state
+
+    fun openDirectChat(targetAccountId: PrivateAccountId) = peopleCoordinator.openChat(targetAccountId)
+
     val uiState: StateFlow<PrivateChatUiState> = stateStore.state
 
     fun activateAccount(accountId: PrivateAccountId) {
@@ -107,6 +125,7 @@ class PrivateChatViewModel(
         )
         expiringContentCoordinator.activateAccount(accountId)
         socialCoordinator.activateAccount(accountId)
+        peopleCoordinator.activateAccount(accountId)
         observeRoomFeed(accountId)
     }
 
@@ -120,11 +139,13 @@ class PrivateChatViewModel(
     fun enterForeground() {
         expiringContentCoordinator.enterForeground()
         socialCoordinator.enterForeground()
+        peopleCoordinator.enterForeground()
     }
 
     fun leaveForeground() {
         roomActions.cancelPendingInvitation()
         socialCoordinator.leaveForeground()
+        peopleCoordinator.leaveForeground()
         stateStore.update(PrivateChatSnapshotPolicy::clearInvitationSecretsForBackground)
         expiringContentCoordinator.leaveForeground()
     }
@@ -138,6 +159,7 @@ class PrivateChatViewModel(
         }
         if (stateStore.current.selectedRoomId == roomId) return
 
+        peopleCoordinator.acknowledgeRoomOpened()
         activitySharingCoordinator.publishTypingStateIfEnabled(PrivateTypingState.INACTIVE)
         conversationJob?.cancel()
         stateStore.update { state ->
@@ -282,6 +304,12 @@ class PrivateChatViewModel(
         }
         val sanitizedSnapshot = PrivateChatSnapshotPolicy.sanitizeRoomFeed(snapshot, clock.instant())
         stateStore.update { state -> PrivateChatUiReducer.acceptRoomFeed(state, sanitizedSnapshot) }
+        pendingDirectRoomId?.let { roomId ->
+            if (sanitizedSnapshot.rooms.any { it.roomId == roomId }) {
+                pendingDirectRoomId = null
+                selectRoom(roomId)
+            }
+        }
         messageActions.acceptRecoveredMutations(sanitizedSnapshot.recoveredMutationIds)
         socialCoordinator.acceptRecoveredMutations(sanitizedSnapshot.recoveredMutationIds)
     }
@@ -346,6 +374,8 @@ class PrivateChatViewModel(
         activitySharingCoordinator.reset()
         expiringContentCoordinator.deactivateAccount()
         socialCoordinator.deactivateAccount()
+        peopleCoordinator.deactivateAccount()
+        pendingDirectRoomId = null
     }
 
     private fun currentActivitySharingPreferences(): PrivateActivitySharingPreferences? =

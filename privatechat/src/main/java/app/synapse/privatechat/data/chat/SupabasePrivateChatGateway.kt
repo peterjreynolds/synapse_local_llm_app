@@ -18,21 +18,18 @@ import app.synapse.privatechat.domain.chat.PrivateRoomFeedSnapshot
 import app.synapse.privatechat.domain.chat.PrivateRoomId
 import app.synapse.privatechat.domain.chat.PublishPrivateTypingStateCommand
 import app.synapse.privatechat.domain.chat.SendPrivateMessageCommand
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.isActive
 
 internal class SupabasePrivateChatGateway(
     private val execution: PrivateChatGatewayExecution,
     private val pollingRepository: PrivateChatPollingRepository,
     private val snapshotAssembler: PrivateChatSnapshotAssembler,
     private val mutations: PrivateChatMutationCoordinator,
-    private val waitForNextPoll: suspend () -> Unit = { delay(DEFAULT_POLL_INTERVAL_MILLIS) },
+    private val waitForNextPoll: suspend (Long) -> Unit = { delay(it) },
 ) : PrivateChatGateway {
     override fun observeRoomFeed(accountId: PrivateAccountId): Flow<PrivateChatObservation<PrivateRoomFeedSnapshot>> =
-        pollingFlow {
+        observePrivateChatSnapshots(waitForNextPoll) {
             execution.observe(accountId) { session ->
                 snapshotAssembler.roomFeed(pollingRepository.load(session))
             }
@@ -42,7 +39,7 @@ internal class SupabasePrivateChatGateway(
         accountId: PrivateAccountId,
         roomId: PrivateRoomId,
     ): Flow<PrivateChatObservation<PrivateConversationSnapshot>> =
-        pollingFlow {
+        observePrivateChatSnapshots(waitForNextPoll) {
             execution.observe(accountId) { session ->
                 snapshotAssembler.conversation(
                     state = pollingRepository.load(session),
@@ -90,16 +87,4 @@ internal class SupabasePrivateChatGateway(
     override suspend fun createOneUseRoomInvitation(
         command: CreatePrivateOneUseRoomInvitationCommand,
     ): PrivateChatMutationOutcome<PrivateChatMutationReceipt.OneUseRoomInvitationCreated> = mutations.createOneUseRoomInvitation(command)
-
-    private fun <Snapshot> pollingFlow(
-        loadObservation: suspend () -> PrivateChatObservation<Snapshot>,
-    ): Flow<PrivateChatObservation<Snapshot>> =
-        flow {
-            while (currentCoroutineContext().isActive) {
-                emit(loadObservation())
-                waitForNextPoll()
-            }
-        }
 }
-
-private const val DEFAULT_POLL_INTERVAL_MILLIS = 5_000L

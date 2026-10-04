@@ -118,4 +118,4 @@ internal class PrivatePresencePublisher(
     }
 }
 
-private const val PRIVATE_PRESENCE_REPUBLICATION_MILLIS = 60_000L
+private const val PRIVATE_PRESENCE_REPUBLICATION_MILLIS = 25_000L

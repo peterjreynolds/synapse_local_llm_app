@@ -14,16 +14,27 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
+import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
+import app.synapse.privatechat.domain.account.PrivateAccountId
 import app.synapse.privatechat.ui.account.PrivateAccountSignOutUiState
 
 @Composable
 fun PrivateChatScreen(
     state: PrivateChatUiState,
+    peopleState: PrivatePeopleUiState,
+    onOpenDirectChat: (PrivateAccountId) -> Unit,
     accountSessionActions: PrivateAccountSessionUiActions,
     navigationActions: PrivateChatNavigationActions,
     messageActions: PrivateMessageUiActions,
@@ -31,6 +42,8 @@ fun PrivateChatScreen(
     socialActions: PrivateSocialUiActions,
     onDismissOperationNotice: () -> Unit,
 ) {
+    var showPeople by remember { mutableStateOf(false) }
+    LaunchedEffect(state.selectedRoomId) { if (state.selectedRoomId != null) showPeople = false }
     val overlayDismissAllowed =
         state.operation !is PrivateChatOperationUiState.Running &&
             !(
@@ -67,7 +80,18 @@ fun PrivateChatScreen(
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .imePadding(),
         ) {
+            PrimaryTabRow(selectedTabIndex = if (showPeople) 1 else 0) {
+                Tab(selected = !showPeople, onClick = { showPeople = false }, text = { Text("Chats") })
+                Tab(selected = showPeople, onClick = {
+                    navigationActions.showRoomList()
+                    showPeople = true
+                }, text = { Text("People") })
+            }
             BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                if (showPeople) {
+                    PrivatePeoplePane(peopleState, onOpenDirectChat)
+                    return@BoxWithConstraints
+                }
                 val showTwoPanes = maxWidth >= PRIVATE_TWO_PANE_MINIMUM_WIDTH
                 if (showTwoPanes) {
                     Row(modifier = Modifier.fillMaxSize()) {

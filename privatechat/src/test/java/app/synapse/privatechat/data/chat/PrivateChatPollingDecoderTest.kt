@@ -84,6 +84,61 @@ class PrivateChatPollingDecoderTest {
         }
     }
 
+    @Test
+    fun directRoutingRoomUsesPeerPublicLabelWithoutInventingDecryptedMetadata() {
+        val address = SignalDeviceAddress(OWNER_ID, DEVICE_ID, SignalDeviceId.fromWire(7))
+        val session =
+            PrivateChatAuthenticatedSession.fromAuthenticatedDevice(
+                OWNER_ID,
+                DEVICE_ID,
+                address.protocolDeviceId,
+                "peter_01",
+                "header.payload.signature",
+                NOW.plusSeconds(3600),
+            )
+        val original = pollingState(address)
+        val direct =
+            original.copy(
+                rooms = listOf(roomRecord().copy(kind = PrivateRoomKind.DIRECT, creationClientMutationId = null)),
+                profiles =
+                    original.profiles +
+                        PrivateBackendProfileRecord(
+                            OTHER_OWNER_ID,
+                            "Rebecca",
+                            PrivatePresenceSharingState.DISABLED,
+                            PrivateActivitySharingPreferences(),
+                        ),
+                roomMembers =
+                    original.roomMembers +
+                        PrivateBackendRoomMemberRecord(
+                            ROOM_ID,
+                            OTHER_OWNER_ID,
+                            PrivateRoomMemberRole.MEMBER,
+                            NOW,
+                        ),
+                roomMetadataEnvelopes = emptyList(),
+            )
+        val decoder =
+            PrivateChatPollingDecoder(
+                PrivateChatEnvelopeCipher(LocalAddressOnlySignalCipher(address), MissingLocalEnvelopeKeyCipher),
+                PrivateDecryptedPayloadCacheRepository(EmptyPayloadCacheStorage),
+            )
+        val resolved = decoder.decode(session, direct, NOW)
+        val room = PrivateChatSnapshotAssembler().roomFeed(resolved).rooms.single()
+        assertEquals("Rebecca", room.title)
+        assertEquals(2, room.participantCount)
+        assertEquals(PrivateRoomMetadataState.PARTICIPANT_LABEL, room.metadataState)
+        val legacy = decoder.decode(session, direct.copy(roomMembers = original.roomMembers), NOW)
+        assertEquals(
+            "Encrypted conversation",
+            PrivateChatSnapshotAssembler()
+                .roomFeed(legacy)
+                .rooms
+                .single()
+                .title,
+        )
+    }
+
     private fun createdMetadata(
         mutationId: UUID,
         ownerId: UUID,

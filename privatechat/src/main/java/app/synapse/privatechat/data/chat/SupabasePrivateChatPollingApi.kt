@@ -3,6 +3,7 @@ package app.synapse.privatechat.data.chat
 import app.synapse.privatechat.data.supabase.SupabaseHttpMethod
 import app.synapse.privatechat.data.supabase.SupabaseHttpRequest
 import app.synapse.privatechat.data.supabase.SupabaseHttpResponse
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.buildJsonObject
@@ -159,9 +160,12 @@ internal class SupabasePrivateChatPollingApi(
     private suspend fun <Record> loadActivityFeed(loadRecords: suspend () -> List<Record>): PrivateBackendActivityFeed<Record> =
         try {
             PrivateBackendActivityFeed.Available(loadRecords())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (rejection: SupabasePrivateChatRequestRejectedException) {
-            if (rejection.statusCode != HTTP_FORBIDDEN) throw rejection
-            PrivateBackendActivityFeed.AccessDenied
+            if (rejection.statusCode == HTTP_FORBIDDEN) PrivateBackendActivityFeed.AccessDenied else PrivateBackendActivityFeed.Unavailable
+        } catch (_: Exception) {
+            PrivateBackendActivityFeed.Unavailable
         }
 
     private suspend fun getTable(

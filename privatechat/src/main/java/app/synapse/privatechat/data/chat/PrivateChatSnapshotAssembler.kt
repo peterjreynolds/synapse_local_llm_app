@@ -18,8 +18,10 @@ import app.synapse.privatechat.domain.chat.PrivateReplyPreview
 import app.synapse.privatechat.domain.chat.PrivateRoomArchiveState
 import app.synapse.privatechat.domain.chat.PrivateRoomFeedSnapshot
 import app.synapse.privatechat.domain.chat.PrivateRoomId
+import app.synapse.privatechat.domain.chat.PrivateRoomKind
 import app.synapse.privatechat.domain.chat.PrivateRoomMemberRole
 import app.synapse.privatechat.domain.chat.PrivateRoomMemberSnapshot
+import app.synapse.privatechat.domain.chat.PrivateRoomMetadataState
 import app.synapse.privatechat.domain.chat.PrivateRoomMuteState
 import app.synapse.privatechat.domain.chat.PrivateRoomPinState
 import app.synapse.privatechat.domain.chat.PrivateRoomSummary
@@ -205,10 +207,20 @@ internal class PrivateChatSnapshotAssembler {
             messages.maxWithOrNull(
                 compareBy({ message -> message.record.createdAt }, { message -> message.record.messageId }),
             )
+        val peerLabel =
+            if (room.record.kind == PrivateRoomKind.DIRECT &&
+                room.record.creationClientMutationId == null &&
+                room.record.metadataRevision == 1 &&
+                members.size == 2
+            ) {
+                profiles[members.single { it.accountId != currentAccountId }.accountId]?.displayName
+            } else {
+                null
+            }
         return PrivateRoomSummary(
             roomId = room.record.roomId.toDomainRoomId(),
             kind = room.record.kind,
-            title = room.title,
+            title = peerLabel ?: room.title,
             participantCount = members.size,
             retention = room.record.retention,
             archiveState = preference?.archiveState ?: PrivateRoomArchiveState.ACTIVE,
@@ -226,7 +238,12 @@ internal class PrivateChatSnapshotAssembler {
                         expiresAt = message.record.expiresAt,
                     )
                 },
-            metadataState = room.metadataState,
+            metadataState =
+                if (peerLabel != null) {
+                    PrivateRoomMetadataState.PARTICIPANT_LABEL
+                } else {
+                    room.metadataState
+                },
         )
     }
 
@@ -348,5 +365,7 @@ private fun malformedSnapshot(message: String): Nothing = throw SupabasePrivateC
 private fun PrivateBackendActivityFeed<*>.toDomainAvailability(): PrivateActivityFeedAvailability =
     when (this) {
         is PrivateBackendActivityFeed.Available -> PrivateActivityFeedAvailability.AVAILABLE
-        PrivateBackendActivityFeed.AccessDenied -> PrivateActivityFeedAvailability.UNAVAILABLE
+        PrivateBackendActivityFeed.Unavailable,
+        PrivateBackendActivityFeed.AccessDenied,
+        -> PrivateActivityFeedAvailability.UNAVAILABLE
     }

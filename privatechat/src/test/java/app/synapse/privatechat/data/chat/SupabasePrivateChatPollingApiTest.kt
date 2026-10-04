@@ -37,7 +37,7 @@ class SupabasePrivateChatPollingApiTest {
 
     @Test
     fun authenticationFailureStillFailsTheWholePoll() {
-        val api = pollingApi(mapOf("typing_state" to 401))
+        val api = pollingApi(mapOf("messages" to 401))
 
         val rejection =
             assertThrows(SupabasePrivateChatRequestRejectedException::class.java) {
@@ -46,6 +46,31 @@ class SupabasePrivateChatPollingApiTest {
 
         assertTrue(rejection.statusCode == 401)
     }
+
+    @Test
+    fun allActivityHttpFailuresRemainSeparateFromMessageHealth() =
+        runBlocking {
+            for (status in listOf(401, 429, 500, 503)) {
+                val api = pollingApi(mapOf("presence_state" to status, "typing_state" to status))
+                val state = api.loadPollingState(authenticatedSession(), POLL_TIME)
+                assertSame(PrivateBackendActivityFeed.Unavailable, state.presence)
+                assertSame(PrivateBackendActivityFeed.Unavailable, state.typing)
+            }
+        }
+
+    @Test
+    fun transientMessageFailureRecoversOnTheNextValidPoll() =
+        runBlocking {
+            val statuses = mutableMapOf("messages" to 503)
+            val api = pollingApi(statuses)
+            assertThrows(SupabasePrivateChatRequestRejectedException::class.java) {
+                runBlocking { api.loadPollingState(authenticatedSession(), POLL_TIME) }
+            }
+            statuses.clear()
+            val recovered = api.loadPollingState(authenticatedSession(), POLL_TIME)
+            assertTrue(recovered.messages.isEmpty())
+            assertTrue(recovered.presence is PrivateBackendActivityFeed.Available)
+        }
 
     private fun pollingApi(tableStatuses: Map<String, Int>): SupabasePrivateChatPollingApi =
         SupabasePrivateChatPollingApi(
