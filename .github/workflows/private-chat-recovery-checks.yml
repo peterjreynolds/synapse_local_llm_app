@@ -73,10 +73,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
-            if ! ./gradlew :privatechat:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.synapse.privatechat.ui.call.PrivateCallEntryUiTest,app.synapse.privatechat.data.call.media.AndroidPrivateCallVideoLifecycleTest --stacktrace; then
-              echo "::error title=API-25 connected instrumentation failed::PrivateCallEntryUiTest, or AndroidPrivateCallVideoLifecycleTest failed."
-              exit 1
-            fi
+            ./gradlew :privatechat:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.synapse.privatechat.ui.call.PrivateCallEntryUiTest,app.synapse.privatechat.data.call.media.AndroidPrivateCallVideoLifecycleTest --stacktrace
       - name: Record physical ARM media acceptance boundary
         shell: bash
         run: |
