@@ -93,3 +93,10 @@ History-slice validation: 315 JVM tests with no failures/errors/skips; ktlint,
 Android lint, debug build and minified rolling build passed. Regression tests
 cover erased keys, consumed envelopes, continued healthy payload decoding, and
 rejection of all other Signal failure kinds.
+
+Visible room-feed and conversation observers now stop when their UI leaves the
+foreground and resume on return. Only the explicit background owner retrieves
+messages while hidden. This prevents a previously selected conversation from
+publishing read acknowledgments merely because the background service keeps the
+process alive. The lifecycle regression checks subscription cancellation and
+resubscription; all 315 JVM tests, ktlint, Android lint and debug build passed.
