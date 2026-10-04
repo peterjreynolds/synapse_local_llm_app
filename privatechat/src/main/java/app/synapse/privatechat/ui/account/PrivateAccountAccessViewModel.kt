@@ -112,6 +112,7 @@ class PrivateAccountAccessViewModel(
     private val sessionOperationInFlight = AtomicBoolean(false)
     private var accountAccessJob: Job? = null
     private var scheduledSessionRefresh: Job? = null
+    private var sessionRetryAttempt = 0
     private var activeReceiptBeforeSignOut: PrivateAccountSessionReceipt.Active? = null
 
     val uiState: StateFlow<PrivateAccountAccessUiState> = mutableUiState.asStateFlow()
@@ -156,6 +157,10 @@ class PrivateAccountAccessViewModel(
     }
 
     fun onAppForegrounded() {
+        if (mutableUiState.value.session is PrivateAccountSessionUiState.TransportUnavailable) {
+            restorePersistedSession()
+            return
+        }
         val activeSession = mutableUiState.value.session as? PrivateAccountSessionUiState.Active ?: return
         val refreshAt = activeSession.receipt.expiresAt.minusSeconds(SESSION_REFRESH_LEAD_SECONDS)
         if (refreshAt.isAfter(clock.instant())) {
@@ -240,7 +245,26 @@ class PrivateAccountAccessViewModel(
                 session = outcome.toUiState(),
                 signOut = PrivateAccountSignOutUiState.Idle,
             )
-        synchronizeSessionRefreshSchedule()
+        if (outcome is PrivateAccountSessionOutcome.TransportUnavailable) {
+            scheduleSessionRecovery()
+        } else {
+            sessionRetryAttempt = 0
+            synchronizeSessionRefreshSchedule()
+        }
+    }
+
+    private fun scheduleSessionRecovery() {
+        cancelScheduledSessionRefresh()
+        val retryDelay = (5_000L * (1L shl sessionRetryAttempt.coerceAtMost(3))).coerceAtMost(30_000L)
+        sessionRetryAttempt = (sessionRetryAttempt + 1).coerceAtMost(3)
+        scheduledSessionRefresh =
+            viewModelScope.launch {
+                delay(retryDelay)
+                scheduledSessionRefresh = null
+                if (mutableUiState.value.session is PrivateAccountSessionUiState.TransportUnavailable) {
+                    restorePersistedSession()
+                }
+            }
     }
 
     private fun synchronizeSessionRefreshSchedule() {

@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
                     chatViewModel = chatViewModel,
                     appUpdateViewModel = appUpdateViewModel,
                     callViewModel = callViewModel,
+                    backgroundConnection = compositionRoot.backgroundConnection,
                     onOpenAppInstaller = appInstaller::openInstaller,
                     exportConnectionDiagnostics = compositionRoot::exportConnectionDiagnostics,
                 )
@@ -50,10 +51,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        compositionRoot.backgroundConnection.setForeground(true)
         accountAccessViewModel.onAppForegrounded()
     }
 
     override fun onStop() {
+        compositionRoot.backgroundConnection.setForeground(false)
         accountAccessViewModel.onAppBackgrounded()
         super.onStop()
     }

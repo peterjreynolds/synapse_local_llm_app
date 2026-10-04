@@ -1,6 +1,8 @@
 package app.synapse.privatechat.domain.chat
 
 import app.synapse.privatechat.domain.account.PrivateAccountId
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import java.time.Instant
 
 data class PrivateDirectoryPerson(
@@ -20,6 +22,8 @@ data class PrivateDirectConversationReceipt(
 )
 
 interface PrivatePeopleGateway {
+    fun observeDirectoryChanges(accountId: PrivateAccountId): Flow<Unit> = emptyFlow()
+
     suspend fun loadPeople(accountId: PrivateAccountId): PrivateChatObservation<List<PrivateDirectoryPerson>>
 
     suspend fun publishActivity(accountId: PrivateAccountId): PrivateChatMutationOutcome<Instant>

@@ -43,6 +43,8 @@ import app.synapse.privatechat.data.chat.SupabasePrivatePeopleGateway
 import app.synapse.privatechat.data.chat.SupabasePrivateRoomMutationApi
 import app.synapse.privatechat.data.chat.SupabasePrivateSocialGateway
 import app.synapse.privatechat.data.chat.SupabasePrivateSocialMutationApi
+import app.synapse.privatechat.data.connection.PrivateBackgroundConnection
+import app.synapse.privatechat.data.connection.SupabasePrivateDirectoryRealtime
 import app.synapse.privatechat.data.diagnostics.DiagnosticSupabaseHttpTransport
 import app.synapse.privatechat.data.diagnostics.PrivateConnectionDiagnostics
 import app.synapse.privatechat.data.session.AndroidPrivateSessionRepositoryFactory
@@ -64,7 +66,9 @@ import app.synapse.privatechat.ui.account.PrivateAccountAccessViewModel
 import app.synapse.privatechat.ui.call.PrivateCallViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
 import app.synapse.privatechat.ui.update.PrivateAppUpdateViewModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import java.time.Clock
 import java.util.UUID
 
@@ -80,6 +84,15 @@ class PrivateChatCompositionRoot private constructor(
     clock: Clock,
     private val diagnostics: PrivateConnectionDiagnostics,
 ) {
+    internal val backgroundConnection =
+        PrivateBackgroundConnection(
+            accountGateway,
+            peopleGateway,
+            chatGateway,
+            CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            diagnostics,
+        )
+
     fun exportConnectionDiagnostics(): String =
         diagnostics.exportReport(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, Build.VERSION.SDK_INT)
 
@@ -129,7 +142,12 @@ class PrivateChatCompositionRoot private constructor(
         }
 
     companion object {
-        fun create(context: Context): PrivateChatCompositionRoot {
+        @Volatile private var instance: PrivateChatCompositionRoot? = null
+
+        @Synchronized
+        fun create(context: Context): PrivateChatCompositionRoot = instance ?: build(context.applicationContext).also { instance = it }
+
+        private fun build(context: Context): PrivateChatCompositionRoot {
             val clock = Clock.systemUTC()
             val config =
                 SynapsePrivateBackendConfig.requireValid(
@@ -139,7 +157,7 @@ class PrivateChatCompositionRoot private constructor(
             val appContext = context.applicationContext
             val diagnostics = PrivateConnectionDiagnostics(clock)
             val transport = DiagnosticSupabaseHttpTransport(UrlConnectionSupabaseHttpTransport(config), diagnostics)
-            val runtime = createRuntime(appContext, transport, clock, diagnostics)
+            val runtime = createRuntime(appContext, transport, clock, diagnostics, config)
             val updateTransferSource = UrlConnectionPrivateUpdateSource()
             val deviceSupportedAbis = Build.SUPPORTED_ABIS.toSet()
             return PrivateChatCompositionRoot(
@@ -174,9 +192,10 @@ class PrivateChatCompositionRoot private constructor(
             transport: SupabaseHttpTransport,
             clock: Clock,
             diagnostics: PrivateConnectionDiagnostics,
+            config: SynapsePrivateBackendConfig,
         ): PrivateChatRuntime =
             try {
-                createAvailableRuntime(context, transport, clock, diagnostics)
+                createAvailableRuntime(context, transport, clock, diagnostics, config)
             } catch (_: PrivateSessionStateUnavailableException) {
                 unavailableRuntime()
             } catch (_: SignalProtocolStateCorruptedException) {
@@ -188,6 +207,7 @@ class PrivateChatCompositionRoot private constructor(
             transport: SupabaseHttpTransport,
             clock: Clock,
             diagnostics: PrivateConnectionDiagnostics,
+            config: SynapsePrivateBackendConfig,
         ): PrivateChatRuntime {
             val sessionRepository = AndroidPrivateSessionRepositoryFactory.create(context)
             val signalAdapterOwner =
@@ -283,6 +303,7 @@ class PrivateChatCompositionRoot private constructor(
                         mutationTransport,
                         pollingRepository::invalidateRecentState,
                         clock,
+                        SupabasePrivateDirectoryRealtime(config, sessionResolver, diagnostics)::changes,
                     ),
                 socialGateway =
                     SupabasePrivateSocialGateway(

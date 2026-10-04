@@ -232,13 +232,24 @@ class PrivateChatModuleBoundaryTest {
                 "android.permission.FOREGROUND_SERVICE",
                 "android.permission.FOREGROUND_SERVICE_MICROPHONE",
                 "android.permission.FOREGROUND_SERVICE_CAMERA",
+                "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
             ),
             permissionSet,
         )
-        val callService = Regex("<service\\s+[\\s\\S]*?/>").findAll(manifest).single().value
+        val callService =
+            Regex(
+                "<service\\s+[\\s\\S]*?/>",
+            ).findAll(manifest).single { it.value.contains("PrivateCallForegroundService") }.value
         assertTrue(callService.contains(".data.call.media.PrivateCallForegroundService"))
         assertTrue(callService.contains("android:exported=\"false\""))
         assertTrue(callService.contains("android:foregroundServiceType=\"microphone|camera\""))
+        val connectionService =
+            Regex("<service\\s+[\\s\\S]*?/>")
+                .findAll(manifest)
+                .single { it.value.contains("PrivateConnectionForegroundService") }
+                .value
+        assertTrue(connectionService.contains("android:foregroundServiceType=\"remoteMessaging\""))
+        assertTrue(connectionService.contains("android:exported=\"false\""))
         assertFalse(manifest.contains("<receiver"))
         assertTrue(manifest.contains("User-started calls own capture"))
     }

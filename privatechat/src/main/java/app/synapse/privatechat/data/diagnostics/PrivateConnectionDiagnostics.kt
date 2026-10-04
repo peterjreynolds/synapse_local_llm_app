@@ -4,6 +4,8 @@ import java.time.Clock
 
 internal enum class PrivateDiagnosticOperation {
     HTTP,
+    REALTIME,
+    BACKGROUND,
     SESSION,
     OBSERVE,
     MUTATE,

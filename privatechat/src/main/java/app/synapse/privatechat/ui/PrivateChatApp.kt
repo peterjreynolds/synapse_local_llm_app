@@ -9,6 +9,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.synapse.privatechat.data.connection.PrivateBackgroundConnection
 import app.synapse.privatechat.domain.update.PrivateAppInstallerLaunchOutcome
 import app.synapse.privatechat.domain.update.PrivateAppUpdateDownloadReceipt
 import app.synapse.privatechat.ui.account.PrivateAccountAccessScreen
@@ -18,17 +19,19 @@ import app.synapse.privatechat.ui.account.PrivateAccountSessionUiState
 import app.synapse.privatechat.ui.call.PrivateCallViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatRoute
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
+import app.synapse.privatechat.ui.connection.PrivateBackgroundConnectionButton
 import app.synapse.privatechat.ui.diagnostics.PrivateDiagnosticsExportButton
 import app.synapse.privatechat.ui.update.PrivateAppUpdateDialog
 import app.synapse.privatechat.ui.update.PrivateAppUpdateViewModel
 
 @Composable
-fun PrivateChatApp(
+internal fun PrivateChatApp(
     accountAccessViewModel: PrivateAccountAccessViewModel,
     chatViewModel: PrivateChatViewModel,
     appUpdateViewModel: PrivateAppUpdateViewModel,
     exportConnectionDiagnostics: () -> String,
     callViewModel: PrivateCallViewModel,
+    backgroundConnection: PrivateBackgroundConnection,
     onOpenAppInstaller: (PrivateAppUpdateDownloadReceipt) -> PrivateAppInstallerLaunchOutcome,
 ) {
     val accountAccessState by accountAccessViewModel.uiState.collectAsStateWithLifecycle()
@@ -37,6 +40,11 @@ fun PrivateChatApp(
         appUpdateViewModel.checkOnceOnAppOpen()
     }
     LaunchedEffect(accountAccessState.session) {
+        when (val session = accountAccessState.session) {
+            is PrivateAccountSessionUiState.Active -> backgroundConnection.activateAccount(session.receipt.accountId)
+            PrivateAccountSessionUiState.Restoring, PrivateAccountSessionUiState.TransportUnavailable -> Unit
+            else -> backgroundConnection.deactivateAccount()
+        }
         if (accountAccessState.session !is PrivateAccountSessionUiState.Active) {
             callViewModel.deactivateAccount()
         }
@@ -78,6 +86,9 @@ fun PrivateChatApp(
                         onRetry = accountAccessViewModel::retrySessionRestore,
                     )
             }
+        }
+        if (accountAccessState.session is PrivateAccountSessionUiState.Active) {
+            PrivateBackgroundConnectionButton(backgroundConnection)
         }
         Box(Modifier.navigationBarsPadding()) {
             PrivateDiagnosticsExportButton(exportConnectionDiagnostics)

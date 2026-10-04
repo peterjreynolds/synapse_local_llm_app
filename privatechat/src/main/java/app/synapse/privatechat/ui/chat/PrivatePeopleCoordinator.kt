@@ -9,12 +9,14 @@ import app.synapse.privatechat.domain.chat.PrivateRoomId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Clock
 import java.time.Instant
 
@@ -116,33 +118,41 @@ internal class PrivatePeopleCoordinator(
         if (!foreground || directoryJob?.isActive == true) return
         directoryJob =
             scope.launch {
-                var failures = 0
-                while (isActive) {
-                    val observation =
-                        try {
-                            gateway.loadPeople(actor)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            PrivateChatObservation.TransportUnavailable
-                        }
-                    when (observation) {
-                        is PrivateChatObservation.Available -> {
-                            failures = 0
-                            mutableState.update {
-                                it.copy(
-                                    people = observation.snapshot,
-                                    availability = PrivatePeopleAvailability.AVAILABLE,
-                                    now = clock.instant(),
-                                )
+                val changes = Channel<Unit>(Channel.CONFLATED)
+                val notifications = launch { gateway.observeDirectoryChanges(actor).collect { changes.trySend(Unit) } }
+                try {
+                    var failures = 0
+                    while (isActive) {
+                        val observation =
+                            try {
+                                gateway.loadPeople(actor)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                PrivateChatObservation.TransportUnavailable
+                            }
+                        when (observation) {
+                            is PrivateChatObservation.Available -> {
+                                failures = 0
+                                mutableState.update {
+                                    it.copy(
+                                        people = observation.snapshot,
+                                        availability = PrivatePeopleAvailability.AVAILABLE,
+                                        now = clock.instant(),
+                                    )
+                                }
+                            }
+                            PrivateChatObservation.TransportUnavailable -> {
+                                failures = (failures + 1).coerceAtMost(3)
+                                mutableState.update { it.copy(availability = PrivatePeopleAvailability.UNAVAILABLE, now = clock.instant()) }
                             }
                         }
-                        PrivateChatObservation.TransportUnavailable -> {
-                            failures = (failures + 1).coerceAtMost(3)
-                            mutableState.update { it.copy(availability = PrivatePeopleAvailability.UNAVAILABLE, now = clock.instant()) }
-                        }
+                        withTimeoutOrNull(10_000L * (1L shl failures)) { changes.receive() }
+                        delay(250L)
                     }
-                    delay(10_000L * (1L shl failures))
+                } finally {
+                    notifications.cancel()
+                    changes.close()
                 }
             }
         heartbeatJob =

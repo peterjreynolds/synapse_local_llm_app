@@ -230,6 +230,7 @@ dependencies {
     implementation("org.signal:libsignal-android:0.101.0")
     implementation("org.signal:libsignal-client:0.101.0")
     implementation("io.github.webrtc-sdk:android:144.7559.15")
+    implementation("com.squareup.okhttp3:okhttp:5.3.2")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 

@@ -30,7 +30,7 @@ internal fun PrivateAccountSessionGateScreen(
             PrivateAccountSessionUiState.Restoring -> "Opening your secure session…"
             PrivateAccountSessionUiState.SigningOut -> "Destroying local conversation and session state…"
             PrivateAccountSessionUiState.TransportUnavailable ->
-                "Your saved session needs verification, but the encrypted account connection is unavailable."
+                "Connection interrupted. Retrying your saved secure session automatically…"
 
             PrivateAccountSessionUiState.LocalStateUnavailable ->
                 "The secure session vault could not be opened. Synapse Private will not bypass or overwrite it."
