@@ -249,6 +249,7 @@ class PrivateChatCompositionRoot private constructor(
                     payloadCache = payloadCache,
                     pendingMutationRecovery = encryptedMutationOutbox,
                     clock = clock,
+                    diagnostics = diagnostics,
                 )
             val snapshotAssembler = PrivateChatSnapshotAssembler()
             val chatMutations =

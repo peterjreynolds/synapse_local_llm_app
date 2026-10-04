@@ -42,6 +42,7 @@ internal class PrivateChatSnapshotAssembler {
                 .map { room ->
                     roomSummary(
                         room = room,
+                        unavailableHistoryCount = state.unavailableHistoryByRoom[room.record.roomId] ?: 0,
                         members = membersByRoom[room.record.roomId].orEmpty(),
                         preference = preferencesByRoom[room.record.roomId],
                         messages = messagesByRoom[room.record.roomId].orEmpty(),
@@ -83,6 +84,7 @@ internal class PrivateChatSnapshotAssembler {
             room =
                 roomSummary(
                     room = room,
+                    unavailableHistoryCount = state.unavailableHistoryByRoom[roomId] ?: 0,
                     members = members,
                     preference = state.backend.roomPreferences.singleOrNull { preference -> preference.roomId == roomId },
                     messages = messages,
@@ -204,6 +206,7 @@ internal class PrivateChatSnapshotAssembler {
 
     private fun roomSummary(
         room: PrivateResolvedRoom,
+        unavailableHistoryCount: Int,
         members: List<PrivateBackendRoomMemberRecord>,
         preference: PrivateBackendRoomPreferenceRecord?,
         messages: List<PrivateResolvedMessage>,
@@ -227,6 +230,7 @@ internal class PrivateChatSnapshotAssembler {
             }
         return PrivateRoomSummary(
             roomId = room.record.roomId.toDomainRoomId(),
+            unavailableHistoryCount = unavailableHistoryCount,
             kind = room.record.kind,
             title = peerLabel ?: room.title,
             participantCount = members.size,

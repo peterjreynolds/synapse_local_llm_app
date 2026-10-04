@@ -118,6 +118,13 @@ private fun AvailableConversation(
                 modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.small),
             )
         }
+        if (snapshot.room.unavailableHistoryCount > 0) {
+            Text(
+                "${snapshot.room.unavailableHistoryCount} encrypted history items cannot be opened on this device.",
+                modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.small),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         PrivateMessageTimeline(
             snapshot = snapshot,
             interactionEnabled = localInteractionsEnabled,

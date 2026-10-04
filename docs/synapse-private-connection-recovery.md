@@ -79,3 +79,17 @@ and absence of a client publish policy. No directory activity occurred during th
 immediate observation window, so hosted notification delivery remains unobserved.
 Post-deployment advisors were unchanged: existing deny-all RLS information and the
 preexisting [leaked-password protection warning](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
+
+## Previously erased history
+
+For devices affected by the old cache-erasure behavior, a consumed Signal envelope
+or an explicitly erased local envelope key now contributes to a visible unavailable
+history count. It no longer prevents current chats from loading. This does not
+recover deleted plaintext. Invalid ciphertext, identity changes, inconsistent
+routing/context, and damaged vault errors still fail closed. Graph authorization
+and envelope cardinality validation run before this narrow history classification.
+
+History-slice validation: 315 JVM tests with no failures/errors/skips; ktlint,
+Android lint, debug build and minified rolling build passed. Regression tests
+cover erased keys, consumed envelopes, continued healthy payload decoding, and
+rejection of all other Signal failure kinds.

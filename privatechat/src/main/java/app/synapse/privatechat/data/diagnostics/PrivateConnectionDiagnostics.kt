@@ -6,6 +6,7 @@ internal enum class PrivateDiagnosticOperation {
     HTTP,
     REALTIME,
     BACKGROUND,
+    DECRYPT,
     SESSION,
     OBSERVE,
     MUTATE,
