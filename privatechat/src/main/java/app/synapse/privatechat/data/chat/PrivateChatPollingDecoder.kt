@@ -57,7 +57,6 @@ internal class PrivateChatPollingRepository(
             if (!session.isUsableAt(now)) {
                 recentState = null
                 pendingMutationRecovery.clearRecoveredMutationIds()
-                payloadCache.clearForSessionInvalidation()
                 throw SupabasePrivateChatResponseException("Authenticated chat session is unavailable")
             }
             val newlyRecoveredMutationIds = pendingMutationRecovery.recoverPendingMutations(session)

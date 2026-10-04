@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
                     chatViewModel = chatViewModel,
                     appUpdateViewModel = appUpdateViewModel,
                     onOpenAppInstaller = appInstaller::openInstaller,
+                    exportConnectionDiagnostics = compositionRoot::exportConnectionDiagnostics,
                 )
             }
         }

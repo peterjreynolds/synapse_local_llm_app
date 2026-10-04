@@ -1,8 +1,13 @@
 package app.synapse.privatechat.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.synapse.privatechat.domain.update.PrivateAppInstallerLaunchOutcome
 import app.synapse.privatechat.domain.update.PrivateAppUpdateDownloadReceipt
@@ -12,6 +17,7 @@ import app.synapse.privatechat.ui.account.PrivateAccountSessionGateScreen
 import app.synapse.privatechat.ui.account.PrivateAccountSessionUiState
 import app.synapse.privatechat.ui.chat.PrivateChatRoute
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
+import app.synapse.privatechat.ui.diagnostics.PrivateDiagnosticsExportButton
 import app.synapse.privatechat.ui.update.PrivateAppUpdateDialog
 import app.synapse.privatechat.ui.update.PrivateAppUpdateViewModel
 
@@ -20,6 +26,7 @@ fun PrivateChatApp(
     accountAccessViewModel: PrivateAccountAccessViewModel,
     chatViewModel: PrivateChatViewModel,
     appUpdateViewModel: PrivateAppUpdateViewModel,
+    exportConnectionDiagnostics: () -> String,
     onOpenAppInstaller: (PrivateAppUpdateDownloadReceipt) -> PrivateAppInstallerLaunchOutcome,
 ) {
     val accountAccessState by accountAccessViewModel.uiState.collectAsStateWithLifecycle()
@@ -27,36 +34,43 @@ fun PrivateChatApp(
     LaunchedEffect(appUpdateViewModel) {
         appUpdateViewModel.checkOnceOnAppOpen()
     }
-    when (val session = accountAccessState.session) {
-        PrivateAccountSessionUiState.SignedOut ->
-            PrivateAccountAccessScreen(
-                state = accountAccessState,
-                onSelectMode = accountAccessViewModel::selectAccessMode,
-                onSubmit = accountAccessViewModel::submitAccountAccess,
-                onDismissNotice = accountAccessViewModel::clearSubmissionNotice,
-            )
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f)) {
+            when (val session = accountAccessState.session) {
+                PrivateAccountSessionUiState.SignedOut ->
+                    PrivateAccountAccessScreen(
+                        state = accountAccessState,
+                        onSelectMode = accountAccessViewModel::selectAccessMode,
+                        onSubmit = accountAccessViewModel::submitAccountAccess,
+                        onDismissNotice = accountAccessViewModel::clearSubmissionNotice,
+                    )
 
-        is PrivateAccountSessionUiState.Active ->
-            PrivateChatRoute(
-                accountSession = session.receipt,
-                viewModel = chatViewModel,
-                signOutState = accountAccessState.signOut,
-                onSignOut = {
-                    accountAccessViewModel.signOutPrivateAccount(chatViewModel::deactivateAccount)
-                },
-            )
+                is PrivateAccountSessionUiState.Active ->
+                    PrivateChatRoute(
+                        accountSession = session.receipt,
+                        viewModel = chatViewModel,
+                        signOutState = accountAccessState.signOut,
+                        onSignOut = {
+                            accountAccessViewModel.signOutPrivateAccount(chatViewModel::deactivateAccount)
+                        },
+                    )
 
-        PrivateAccountSessionUiState.Restoring,
-        PrivateAccountSessionUiState.SigningOut,
-        PrivateAccountSessionUiState.TransportUnavailable,
-        PrivateAccountSessionUiState.LocalStateUnavailable,
-        is PrivateAccountSessionUiState.VerificationRejected,
-        PrivateAccountSessionUiState.VerificationFailed,
-        ->
-            PrivateAccountSessionGateScreen(
-                state = session,
-                onRetry = accountAccessViewModel::retrySessionRestore,
-            )
+                PrivateAccountSessionUiState.Restoring,
+                PrivateAccountSessionUiState.SigningOut,
+                PrivateAccountSessionUiState.TransportUnavailable,
+                PrivateAccountSessionUiState.LocalStateUnavailable,
+                is PrivateAccountSessionUiState.VerificationRejected,
+                PrivateAccountSessionUiState.VerificationFailed,
+                ->
+                    PrivateAccountSessionGateScreen(
+                        state = session,
+                        onRetry = accountAccessViewModel::retrySessionRestore,
+                    )
+            }
+        }
+        Box(Modifier.navigationBarsPadding()) {
+            PrivateDiagnosticsExportButton(exportConnectionDiagnostics)
+        }
     }
     PrivateAppUpdateDialog(
         state = appUpdateState,

@@ -72,6 +72,78 @@ class SupabasePrivateChatPollingApiTest {
             assertTrue(recovered.presence is PrivateBackendActivityFeed.Available)
         }
 
+    @Test
+    fun profilePollingNeverRequestsEncryptedHistoryOrPendingSends() =
+        runBlocking {
+            val requestedTables = mutableSetOf<String>()
+            val api =
+                SupabasePrivateChatPollingApi(
+                    SupabasePrivateChatRequestExecutor(
+                        object : SupabaseHttpTransport {
+                            override suspend fun execute(request: SupabaseHttpRequest): SupabaseHttpResponse {
+                                val table = request.pathSegments.last()
+                                check(table in setOf("profiles", "devices", "presence_state"))
+                                requestedTables += table
+                                return SupabaseHttpResponse(200, JsonArray(emptyList()))
+                            }
+                        },
+                    ),
+                )
+            api.loadSocialState(authenticatedSession(), POLL_TIME)
+            org.junit.Assert.assertEquals(setOf("profiles", "devices", "presence_state"), requestedTables)
+        }
+
+    @Test
+    fun historyNotEncryptedForThisDeviceDoesNotBlockNewMessages() =
+        runBlocking {
+            val olderMessage = "40000000-0000-4000-8000-000000000004"
+            val newMessage = "40000000-0000-4000-8000-000000000005"
+
+            fun message(id: String) =
+                buildJsonObject {
+                    put("id", id)
+                    put("room_id", "30000000-0000-4000-8000-000000000003")
+                    put("sender_user_id", ACCOUNT_ID.toString())
+                    put("sender_device_id", DEVICE_ID.toString())
+                    put("client_message_id", id)
+                    put("membership_epoch", 1)
+                    put("current_revision", 0)
+                    put("created_at", POLL_TIME.toString())
+                    put("expires_at", POLL_TIME.plusSeconds(300).toString())
+                }
+            val api =
+                SupabasePrivateChatPollingApi(
+                    SupabasePrivateChatRequestExecutor(
+                        object : SupabaseHttpTransport {
+                            override suspend fun execute(request: SupabaseHttpRequest): SupabaseHttpResponse =
+                                SupabaseHttpResponse(
+                                    200,
+                                    JsonArray(
+                                        when (request.pathSegments.last()) {
+                                            "messages" -> listOf(message(olderMessage), message(newMessage))
+                                            "message_envelopes" ->
+                                                listOf(
+                                                    buildJsonObject {
+                                                        put("message_id", newMessage)
+                                                        put("recipient_device_id", DEVICE_ID.toString())
+                                                        put("protocol_adapter_version", 1)
+                                                        put("signal_message_type", "LOCAL_AEAD")
+                                                        put("ciphertext", "\\x" + "01".repeat(29))
+                                                        put("created_at", POLL_TIME.toString())
+                                                    },
+                                                )
+                                            else -> emptyList()
+                                        },
+                                    ),
+                                )
+                        },
+                    ),
+                )
+            val state = api.loadPollingState(authenticatedSession(), POLL_TIME)
+            org.junit.Assert.assertEquals(listOf(UUID.fromString(newMessage)), state.messages.map { it.messageId })
+            org.junit.Assert.assertEquals(1, state.messageEnvelopes.size)
+        }
+
     private fun pollingApi(tableStatuses: Map<String, Int>): SupabasePrivateChatPollingApi =
         SupabasePrivateChatPollingApi(
             SupabasePrivateChatRequestExecutor(

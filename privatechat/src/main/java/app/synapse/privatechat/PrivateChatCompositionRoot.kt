@@ -37,6 +37,8 @@ import app.synapse.privatechat.data.chat.SupabasePrivatePeopleGateway
 import app.synapse.privatechat.data.chat.SupabasePrivateRoomMutationApi
 import app.synapse.privatechat.data.chat.SupabasePrivateSocialGateway
 import app.synapse.privatechat.data.chat.SupabasePrivateSocialMutationApi
+import app.synapse.privatechat.data.diagnostics.DiagnosticSupabaseHttpTransport
+import app.synapse.privatechat.data.diagnostics.PrivateConnectionDiagnostics
 import app.synapse.privatechat.data.session.AndroidPrivateSessionRepositoryFactory
 import app.synapse.privatechat.data.session.PrivateSessionStateUnavailableException
 import app.synapse.privatechat.data.supabase.SupabaseHttpTransport
@@ -66,7 +68,11 @@ class PrivateChatCompositionRoot private constructor(
     updateRepository: GitHubPrivateAppUpdateRepository,
     updateDownloader: AndroidPrivateAppUpdateDownloader,
     clock: Clock,
+    private val diagnostics: PrivateConnectionDiagnostics,
 ) {
+    fun exportConnectionDiagnostics(): String =
+        diagnostics.exportReport(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, Build.VERSION.SDK_INT)
+
     val accountAccessViewModelFactory: ViewModelProvider.Factory =
         viewModelFactory {
             initializer {
@@ -106,8 +112,9 @@ class PrivateChatCompositionRoot private constructor(
                     publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY,
                 )
             val appContext = context.applicationContext
-            val transport = UrlConnectionSupabaseHttpTransport(config)
-            val runtime = createRuntime(appContext, transport, clock)
+            val diagnostics = PrivateConnectionDiagnostics(clock)
+            val transport = DiagnosticSupabaseHttpTransport(UrlConnectionSupabaseHttpTransport(config), diagnostics)
+            val runtime = createRuntime(appContext, transport, clock, diagnostics)
             val updateTransferSource = UrlConnectionPrivateUpdateSource()
             val deviceSupportedAbis = Build.SUPPORTED_ABIS.toSet()
             return PrivateChatCompositionRoot(
@@ -131,6 +138,7 @@ class PrivateChatCompositionRoot private constructor(
                         deviceSupportedAbis = deviceSupportedAbis,
                     ),
                 clock = clock,
+                diagnostics = diagnostics,
             )
         }
 
@@ -138,9 +146,10 @@ class PrivateChatCompositionRoot private constructor(
             context: Context,
             transport: SupabaseHttpTransport,
             clock: Clock,
+            diagnostics: PrivateConnectionDiagnostics,
         ): PrivateChatRuntime =
             try {
-                createAvailableRuntime(context, transport, clock)
+                createAvailableRuntime(context, transport, clock, diagnostics)
             } catch (_: PrivateSessionStateUnavailableException) {
                 unavailableRuntime()
             } catch (_: SignalProtocolStateCorruptedException) {
@@ -151,6 +160,7 @@ class PrivateChatCompositionRoot private constructor(
             context: Context,
             transport: SupabaseHttpTransport,
             clock: Clock,
+            diagnostics: PrivateConnectionDiagnostics,
         ): PrivateChatRuntime {
             val sessionRepository = AndroidPrivateSessionRepositoryFactory.create(context)
             val signalAdapterOwner =
@@ -183,7 +193,7 @@ class PrivateChatCompositionRoot private constructor(
                     payloadCache = payloadCache,
                     clock = clock,
                 )
-            val execution = PrivateChatGatewayExecution(sessionResolver)
+            val execution = PrivateChatGatewayExecution(sessionResolver, diagnostics)
             val encryptedMutationOutbox = PrivateEncryptedMutationOutbox(envelopeCipher, chatBackend, clock)
             val pollingRepository =
                 PrivateChatPollingRepository(
@@ -242,7 +252,8 @@ class PrivateChatCompositionRoot private constructor(
                 socialGateway =
                     SupabasePrivateSocialGateway(
                         execution = execution,
-                        pollingRepository = pollingRepository,
+                        pollingApi = pollingApi,
+                        clock = clock,
                         snapshotAssembler = snapshotAssembler,
                         mutations = socialMutations,
                     ),
