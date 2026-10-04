@@ -178,15 +178,32 @@ class EncryptedPrivateSessionRepositoryTest {
         val stateCipher = cipher(file, keyProvider, SESSION_CONTEXT)
         file.replace(stateCipher.encrypt(encodeLegacyVault()))
 
-        val repository = repository(file, keyProvider) { error("Legacy identity must be preserved") }
+        val repository = repository(file, keyProvider) { OTHER_INSTALLATION_ID }
 
-        assertEquals(INSTALLATION_ID, repository.loadOrCreateInstallationId())
+        assertEquals(OTHER_INSTALLATION_ID, repository.loadOrCreateInstallationId())
         assertNull(repository.loadRegisteredSession())
         assertEquals(3, file.replaceCount)
         assertTrue(keyProvider.deletionCount >= 2)
         val reloaded = repository(file, keyProvider) { error("Migrated identity must be preserved") }
-        assertEquals(INSTALLATION_ID, reloaded.loadOrCreateInstallationId())
+        assertEquals(OTHER_INSTALLATION_ID, reloaded.loadOrCreateInstallationId())
         assertNull(reloaded.loadRegisteredSession())
+    }
+
+    @Test
+    fun versionTwoRegisteredVaultPreservesActiveDeviceAndTokensOnUpgrade() {
+        val file = MemoryEncryptedStateFile()
+        val keyProvider = MemoryEncryptedStateKeyProvider(key(42))
+        val current = PrivateSessionVaultCodec.encode(PrivateSessionVaultState(INSTALLATION_ID, registeredSession()))
+        // V3 adds the 16-byte redemption seed and one absent-pending marker after the device UUID.
+        val legacy = current.copyOfRange(0, 24) + current.copyOfRange(41, current.size)
+        java.nio.ByteBuffer
+            .wrap(legacy)
+            .putInt(4, 2)
+        file.replace(cipher(file, keyProvider, SESSION_CONTEXT).encrypt(legacy))
+        val migrated = repository(file, keyProvider) { error("Active device must not rotate") }
+        assertEquals(INSTALLATION_ID, migrated.loadOrCreateInstallationId())
+        assertEquals(ACCESS_TOKEN, migrated.loadRegisteredSession()?.accessTokenForAuthorization())
+        assertEquals(INSTALLATION_ID, migrated.registrationSeed())
     }
 
     @Test
@@ -264,12 +281,14 @@ class EncryptedPrivateSessionRepositoryTest {
     }
 
     @Test
-    fun clearIsAtomicAndPreservesInstallationIdentity() {
+    fun clearIsAtomicAndRetiresInstallationIdentity() {
         val file = MemoryEncryptedStateFile()
         val keyProvider = MemoryEncryptedStateKeyProvider(key(9))
-        val repository = repository(file, keyProvider) { INSTALLATION_ID }
+        var nextInstallationId = INSTALLATION_ID
+        val repository = repository(file, keyProvider) { nextInstallationId }
         repository.loadOrCreateInstallationId()
         repository.persistAfterDeviceRegistration(registeredSession())
+        nextInstallationId = OTHER_INSTALLATION_ID
         file.failNextReplace = true
 
         assertStateUnavailable { repository.clearAuthenticatedSession() }
@@ -282,7 +301,7 @@ class EncryptedPrivateSessionRepositoryTest {
         assertEquals(PrivateSessionClearReceipt.CLEARED, repository.clearAuthenticatedSession())
         assertEquals(PrivateSessionClearReceipt.ALREADY_EMPTY, repository.clearAuthenticatedSession())
         val reloaded = repository(file, keyProvider) { error("Identity must not regenerate") }
-        assertEquals(INSTALLATION_ID, reloaded.loadOrCreateInstallationId())
+        assertEquals(OTHER_INSTALLATION_ID, reloaded.loadOrCreateInstallationId())
         assertNull(reloaded.loadRegisteredSession())
     }
 

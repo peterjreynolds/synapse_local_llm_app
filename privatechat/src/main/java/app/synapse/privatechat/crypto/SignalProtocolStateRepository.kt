@@ -63,6 +63,9 @@ enum class RemoteIdentityWriteOutcome {
  * Returned and accepted byte arrays must be treated as owned copies.
  */
 interface SignalProtocolStateRepository {
+    /** Erases all device keys and sessions before another transport identity may be used. */
+    fun eraseForDeviceRetirement()
+
     fun <T> writeTransaction(block: () -> T): T
 
     fun loadLocalIdentity(): StoredLocalSignalIdentity?

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(104);
+select plan(105);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -269,6 +269,17 @@ select throws_ok(
   '23505',
   'one-time prekey identity does not match the registered device',
   'registration retry rejects one-time prekey id substitution'
+);
+
+select throws_ok(
+  $$select * from private.reserve_device_registration(
+    '10000000-0000-4000-8000-000000000002',
+    '60000000-0000-4000-8000-000000000004',
+    '20000000-0000-4000-8000-000000000002'
+  )$$,
+  '42501',
+  'device registration is not authorized',
+  'account B cannot reserve account A transport UUID after account creation'
 );
 
 select lives_ok(

@@ -14,8 +14,12 @@ import java.util.UUID
 internal data class PrivateSessionVaultState(
     val installationId: PrivateInstallationId,
     val registeredSession: RegisteredPrivateAccountSession?,
+    val registrationSeed: PrivateInstallationId = installationId,
+    val pendingUsername: String? = null,
 ) {
     init {
+        pendingUsername?.let(::requireCanonicalAuthenticationUsername)
+        require(registeredSession == null || pendingUsername == null) { "Registered session cannot retain pending account access" }
         require(registeredSession == null || registeredSession.installationId == installationId) {
             "Registered session belongs to a different installation"
         }
@@ -25,6 +29,8 @@ internal data class PrivateSessionVaultState(
         PrivateSessionVaultState(
             installationId = installationId,
             registeredSession = registeredSession?.copyForStorage(),
+            registrationSeed = registrationSeed,
+            pendingUsername = pendingUsername,
         )
 }
 
@@ -36,7 +42,7 @@ internal data class PrivateSessionVaultDecodeResult(
 internal object PrivateSessionVaultCodec {
     internal const val MAX_PLAINTEXT_BYTES = 20 * 1_024
     private const val MAGIC = 0x53504131
-    private const val VERSION = 2
+    private const val VERSION = 3
     private const val LEGACY_VERSION_WITHOUT_USERNAME = 1
     private const val MAX_ACCESS_TOKEN_BYTES = 8_192
     private const val MAX_REFRESH_TOKEN_BYTES = 8_192
@@ -49,6 +55,9 @@ internal object PrivateSessionVaultCodec {
             encoded.writeInt(MAGIC)
             encoded.writeInt(VERSION)
             encoded.writeUuid(state.installationId.uuid)
+            encoded.writeUuid(state.registrationSeed.uuid)
+            encoded.writeBoolean(state.pendingUsername != null)
+            state.pendingUsername?.let { encoded.writeBoundedUtf8(it, MAX_AUTHENTICATION_USERNAME_BYTES) }
             encoded.writeBoolean(state.registeredSession != null)
             state.registeredSession?.let { session ->
                 encoded.writeUuid(session.accountId)
@@ -73,7 +82,8 @@ internal object PrivateSessionVaultCodec {
             if (encoded.readInt() != MAGIC) corrupt("Private session state header is invalid")
             val result =
                 when (encoded.readInt()) {
-                    VERSION -> PrivateSessionVaultDecodeResult(readCurrentState(encoded), migrationRequired = false)
+                    VERSION -> PrivateSessionVaultDecodeResult(readCurrentState(encoded, scopedIdentity = true), migrationRequired = false)
+                    2 -> PrivateSessionVaultDecodeResult(readCurrentState(encoded, scopedIdentity = false), migrationRequired = true)
                     LEGACY_VERSION_WITHOUT_USERNAME ->
                         PrivateSessionVaultDecodeResult(
                             state = readLegacyStateWithoutUsername(encoded),
@@ -91,8 +101,14 @@ internal object PrivateSessionVaultCodec {
         }
     }
 
-    private fun readCurrentState(encoded: DataInputStream): PrivateSessionVaultState {
+    private fun readCurrentState(
+        encoded: DataInputStream,
+        scopedIdentity: Boolean,
+    ): PrivateSessionVaultState {
         val installationId = PrivateInstallationId.fromPersistence(encoded.readUuid())
+        val registrationSeed = if (scopedIdentity) PrivateInstallationId.fromPersistence(encoded.readUuid()) else installationId
+        val pendingUsername =
+            if (scopedIdentity && encoded.readBoolean()) encoded.readBoundedUtf8(MAX_AUTHENTICATION_USERNAME_BYTES) else null
         val registeredSession =
             if (encoded.readBoolean()) {
                 RegisteredPrivateAccountSession.fromPersistence(
@@ -108,7 +124,7 @@ internal object PrivateSessionVaultCodec {
             } else {
                 null
             }
-        return PrivateSessionVaultState(installationId, registeredSession)
+        return PrivateSessionVaultState(installationId, registeredSession, registrationSeed, pendingUsername)
     }
 
     private fun readLegacyStateWithoutUsername(encoded: DataInputStream): PrivateSessionVaultState {

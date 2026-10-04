@@ -9,8 +9,13 @@ import app.synapse.privatechat.crypto.SignalProtocolStateCorruptedException
 import app.synapse.privatechat.crypto.StoredLocalSignalIdentity
 import app.synapse.privatechat.crypto.StoredSignalPendingOutboundMutation
 import app.synapse.privatechat.security.storage.Aes256GcmEncryptedStateCipher
-import app.synapse.privatechat.security.storage.EncryptedStateFile
-import app.synapse.privatechat.security.storage.EncryptedStateKeyProvider
+import app.synapse.privatechat.security.storage.CryptographicallyErasableEncryptedStateStorage
+import app.synapse.privatechat.security.storage.DeletableEncryptedStateFile
+import app.synapse.privatechat.security.storage.DestructibleEncryptedStateKeyProvider
+import app.synapse.privatechat.security.storage.EncryptedStateCipher
+import app.synapse.privatechat.security.storage.RotatingAesGcmEncryptedStateKeySlot
+import app.synapse.privatechat.security.storage.RotatingAesGcmEncryptedStateStorage
+import app.synapse.privatechat.security.storage.RotatingEncryptedStateKeySlotId
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -31,14 +36,14 @@ class EncryptedSignalProtocolStateRepositoryTest {
         val file = MemoryEncryptedStateFile()
         val keyProvider = MemorySignalStateKeyProvider(key(1))
         val cipher = productionCipher(file, keyProvider)
-        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        val repository = repository(file, cipher)
         val session = "private session marker".encodeToByteArray()
         repository.insertLocalIdentityIfAbsent(localIdentity())
         repository.storeSession(REMOTE_ADDRESS, session)
 
         val persisted = requireNotNull(file.bytes)
         assertFalse(persisted.containsSubsequence(session))
-        val reloaded = EncryptedSignalProtocolStateRepository(file, cipher)
+        val reloaded = repository(file, cipher)
 
         assertArrayEquals(session, reloaded.loadSession(REMOTE_ADDRESS))
         assertEquals(LOCAL_ADDRESS, reloaded.loadLocalIdentity()?.address)
@@ -48,7 +53,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     fun wholeSnapshotReloadsEverySignalRecordCategory() {
         val file = MemoryEncryptedStateFile()
         val cipher = productionCipher(file, MemorySignalStateKeyProvider(key(14)))
-        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        val repository = repository(file, cipher)
         val preKeyId = SignalPreKeyId.fromWire(14)
 
         repository.writeTransaction {
@@ -61,7 +66,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
             repository.recordKyberPreKeyUse(preKeyId, preKeyId, byteArrayOf(6))
         }
 
-        val reloaded = EncryptedSignalProtocolStateRepository(file, cipher)
+        val reloaded = repository(file, cipher)
         assertEquals(LOCAL_ADDRESS, reloaded.loadLocalIdentity()?.address)
         assertArrayEquals(byteArrayOf(1), reloaded.loadRemoteIdentity(REMOTE_ADDRESS))
         assertArrayEquals(byteArrayOf(2), reloaded.loadSession(REMOTE_ADDRESS))
@@ -74,7 +79,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     @Test
     fun rejectsTamperedTruncatedAndWrongKeyState() {
         val file = MemoryEncryptedStateFile()
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, MemorySignalStateKeyProvider(key(2))))
+        val repository = repository(file, productionCipher(file, MemorySignalStateKeyProvider(key(2))))
         repository.storePreKey(SignalPreKeyId.fromWire(1), byteArrayOf(1, 2, 3))
         val valid = requireNotNull(file.bytes)
 
@@ -88,7 +93,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     fun failedAtomicWriteRollsBackMemoryAndDurableState() {
         val file = MemoryEncryptedStateFile()
         val cipher = productionCipher(file, MemorySignalStateKeyProvider(key(4)))
-        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        val repository = repository(file, cipher)
         val original = byteArrayOf(4, 5, 6)
         repository.storeSession(REMOTE_ADDRESS, original)
         file.failNextReplace = true
@@ -97,7 +102,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
         assertArrayEquals(original, repository.loadSession(REMOTE_ADDRESS))
         assertArrayEquals(
             original,
-            EncryptedSignalProtocolStateRepository(file, cipher).loadSession(REMOTE_ADDRESS),
+            repository(file, cipher).loadSession(REMOTE_ADDRESS),
         )
     }
 
@@ -105,7 +110,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     fun transactionFailureAndCommitFailureBothRestoreThePriorSnapshot() {
         val file = MemoryEncryptedStateFile()
         val cipher = productionCipher(file, MemorySignalStateKeyProvider(key(5)))
-        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        val repository = repository(file, cipher)
         val preKeyId = SignalPreKeyId.fromWire(9)
 
         assertThrows(IllegalStateException::class.java) {
@@ -121,21 +126,21 @@ class EncryptedSignalProtocolStateRepositoryTest {
             repository.writeTransaction { repository.storePreKey(preKeyId, byteArrayOf(2)) }
         }
         assertFalse(repository.containsPreKey(preKeyId))
-        assertFalse(EncryptedSignalProtocolStateRepository(file, cipher).containsPreKey(preKeyId))
+        assertFalse(repository(file, cipher).containsPreKey(preKeyId))
     }
 
     @Test
     fun senderRatchetAndPendingRequestShareOneDurableSnapshot() {
         val file = MemoryEncryptedStateFile()
         val cipher = productionCipher(file, MemorySignalStateKeyProvider(key(15)))
-        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        val repository = repository(file, cipher)
         val pending = pendingOutboundMutation()
         repository.writeTransaction {
             repository.storeSession(REMOTE_ADDRESS, byteArrayOf(1, 2, 3))
             assertTrue(repository.insertPendingOutboundMutationIfAbsent(pending))
         }
 
-        val reloaded = EncryptedSignalProtocolStateRepository(file, cipher)
+        val reloaded = repository(file, cipher)
         assertArrayEquals(byteArrayOf(1, 2, 3), reloaded.loadSession(REMOTE_ADDRESS))
         assertArrayEquals(
             pending.opaqueRequest,
@@ -147,7 +152,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     fun failedSnapshotCommitPersistsNeitherSenderRatchetNorPendingRequest() {
         val file = MemoryEncryptedStateFile()
         val cipher = productionCipher(file, MemorySignalStateKeyProvider(key(16)))
-        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        val repository = repository(file, cipher)
         repository.storeSession(REMOTE_ADDRESS, byteArrayOf(1))
         val pending = pendingOutboundMutation()
         file.failNextReplace = true
@@ -161,7 +166,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
 
         assertArrayEquals(byteArrayOf(1), repository.loadSession(REMOTE_ADDRESS))
         assertNull(repository.loadPendingOutboundMutation(pending.key))
-        val reloaded = EncryptedSignalProtocolStateRepository(file, cipher)
+        val reloaded = repository(file, cipher)
         assertArrayEquals(byteArrayOf(1), reloaded.loadSession(REMOTE_ADDRESS))
         assertNull(reloaded.loadPendingOutboundMutation(pending.key))
     }
@@ -169,7 +174,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     @Test
     fun remoteIdentityCompareAndStoreRejectsACompetingIdentity() {
         val file = MemoryEncryptedStateFile()
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, MemorySignalStateKeyProvider(key(6))))
+        val repository = repository(file, productionCipher(file, MemorySignalStateKeyProvider(key(6))))
         val first = byteArrayOf(1, 2, 3)
         val competing = byteArrayOf(4, 5, 6)
 
@@ -187,7 +192,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     @Test
     fun enforcesLengthBoundsBeforeMutation() {
         val file = MemoryEncryptedStateFile()
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, MemorySignalStateKeyProvider(key(7))))
+        val repository = repository(file, productionCipher(file, MemorySignalStateKeyProvider(key(7))))
         val tooLargeSession = ByteArray(1024 * 1_024 + 1)
 
         assertThrows(IllegalArgumentException::class.java) {
@@ -206,7 +211,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     @Test
     fun copiesMutableRecordsAtBothBoundaries() {
         val file = MemoryEncryptedStateFile()
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, MemorySignalStateKeyProvider(key(8))))
+        val repository = repository(file, productionCipher(file, MemorySignalStateKeyProvider(key(8))))
         val source = byteArrayOf(1, 2, 3)
         repository.storeSession(REMOTE_ADDRESS, source)
         source[0] = 9
@@ -219,7 +224,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     @Test
     fun copiesListedKeysAndConsumedKyberBaseKeysAtBothBoundaries() {
         val file = MemoryEncryptedStateFile()
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, MemorySignalStateKeyProvider(key(9))))
+        val repository = repository(file, productionCipher(file, MemorySignalStateKeyProvider(key(9))))
         val signedPreKeyId = SignalPreKeyId.fromWire(4)
         val signedPreKey = byteArrayOf(1, 2, 3)
         repository.storeSignedPreKey(signedPreKeyId, signedPreKey)
@@ -244,7 +249,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     @Test
     fun transactionCommitsOneWholeSnapshotAndNestedFailureRollsBackLocally() {
         val file = MemoryEncryptedStateFile()
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, MemorySignalStateKeyProvider(key(10))))
+        val repository = repository(file, productionCipher(file, MemorySignalStateKeyProvider(key(10))))
 
         repository.writeTransaction {
             repository.storePreKey(SignalPreKeyId.fromWire(1), byteArrayOf(1))
@@ -269,18 +274,18 @@ class EncryptedSignalProtocolStateRepositoryTest {
     fun missingOrInvalidatedExistingKeyNeverCreatesAReplacement() {
         val file = MemoryEncryptedStateFile()
         val keyProvider = MemorySignalStateKeyProvider(key(11))
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, keyProvider))
+        val repository = repository(file, productionCipher(file, keyProvider))
         repository.storeSession(REMOTE_ADDRESS, byteArrayOf(1))
 
         keyProvider.existingKey = null
         assertCorrupted {
-            EncryptedSignalProtocolStateRepository(file, productionCipher(file, keyProvider))
+            repository(file, productionCipher(file, keyProvider))
         }
         assertEquals(0, keyProvider.creationCount)
 
         keyProvider.loadFailure = IllegalStateException("simulated invalidated key")
         assertCorrupted {
-            EncryptedSignalProtocolStateRepository(file, productionCipher(file, keyProvider))
+            repository(file, productionCipher(file, keyProvider))
         }
         assertEquals(0, keyProvider.creationCount)
     }
@@ -289,7 +294,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     fun observedStateDeletionDoesNotReopenKeyCreation() {
         val file = MemoryEncryptedStateFile()
         val keyProvider = MemorySignalStateKeyProvider(key(12))
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, keyProvider))
+        val repository = repository(file, productionCipher(file, keyProvider))
         repository.storeSession(REMOTE_ADDRESS, byteArrayOf(1))
         file.simulateExternalDeletion()
         keyProvider.existingKey = null
@@ -304,7 +309,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
         val file = MemoryEncryptedStateFile()
         val keyProvider = MemorySignalStateKeyProvider(key(13))
         val cipher = productionCipher(file, keyProvider)
-        val repository = EncryptedSignalProtocolStateRepository(file, cipher)
+        val repository = repository(file, cipher)
         repository.storeSession(REMOTE_ADDRESS, byteArrayOf(1))
         keyProvider.loadFailure = IllegalStateException("simulated invalidated key")
 
@@ -315,7 +320,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
         keyProvider.loadFailure = null
         assertArrayEquals(
             byteArrayOf(1),
-            EncryptedSignalProtocolStateRepository(file, cipher).loadSession(REMOTE_ADDRESS),
+            repository(file, cipher).loadSession(REMOTE_ADDRESS),
         )
     }
 
@@ -323,7 +328,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
     fun emptyStoreCreatesOneKeyAndReusesItForLaterSnapshots() {
         val file = MemoryEncryptedStateFile()
         val keyProvider = MemorySignalStateKeyProvider()
-        val repository = EncryptedSignalProtocolStateRepository(file, productionCipher(file, keyProvider))
+        val repository = repository(file, productionCipher(file, keyProvider))
 
         repository.storePreKey(SignalPreKeyId.fromWire(1), byteArrayOf(1))
         repository.storePreKey(SignalPreKeyId.fromWire(2), byteArrayOf(2))
@@ -340,6 +345,41 @@ class EncryptedSignalProtocolStateRepositoryTest {
         assertCorrupted { SignalStateCodec.decode(encodeEmptyState(declaredEntries = 100_001)) }
         assertCorrupted { SignalStateCodec.decode(encodeEmptyState(declaredEntries = 1)) }
         assertCorrupted { SignalStateCodec.decode(encodeInvalidFirstRecordSize()) }
+    }
+
+    @Test
+    fun legacySignalSnapshotMigratesThenRetirementDestroysBothKeysAndEveryRecord() {
+        val file = MemoryEncryptedStateFile()
+        val primary = MemorySignalStateKeyProvider(key(51))
+        val secondary = MemorySignalStateKeyProvider()
+        val legacy = repository(file, productionCipher(file, primary))
+        legacy.insertLocalIdentityIfAbsent(localIdentity())
+        legacy.storeSession(REMOTE_ADDRESS, byteArrayOf(1, 2, 3))
+        val storage =
+            RotatingAesGcmEncryptedStateStorage(
+                encryptedStateFile = file,
+                primaryKeySlot = RotatingAesGcmEncryptedStateKeySlot(primary, "synapse.private.signal-state.v1"),
+                secondaryKeySlot = RotatingAesGcmEncryptedStateKeySlot(secondary, "synapse.private.signal-state.slot-b.v1"),
+                maximumPlaintextBytes = SignalStateCodec.MAX_TOTAL_PLAINTEXT_BYTES,
+                legacySingleSlot = RotatingEncryptedStateKeySlotId.PRIMARY,
+            )
+        val migrated = EncryptedSignalProtocolStateRepository(storage)
+        assertEquals(LOCAL_ADDRESS, migrated.loadLocalIdentity()?.address)
+        assertArrayEquals(byteArrayOf(1, 2, 3), migrated.loadSession(REMOTE_ADDRESS))
+        assertNull(primary.existingKey)
+        assertTrue(secondary.existingKey != null)
+        migrated.eraseForDeviceRetirement()
+        assertNull(primary.existingKey)
+        assertNull(secondary.existingKey)
+        assertNull(file.bytes)
+        assertNull(migrated.loadLocalIdentity())
+        assertNull(migrated.loadSession(REMOTE_ADDRESS))
+        assertNull(EncryptedSignalProtocolStateRepository(storage).loadLocalIdentity())
+        migrated.insertLocalIdentityIfAbsent(localIdentity())
+        assertTrue(primary.existingKey != null)
+        file.simulateExternalDeletion()
+        assertCorrupted { migrated.storeSession(REMOTE_ADDRESS, byteArrayOf(4)) }
+        assertNull(file.bytes)
     }
 
     private fun localIdentity(): StoredLocalSignalIdentity =
@@ -374,12 +414,30 @@ class EncryptedSignalProtocolStateRepositoryTest {
     ) {
         val file = MemoryEncryptedStateFile(persistedState)
         assertCorrupted {
-            EncryptedSignalProtocolStateRepository(
+            repository(
                 file,
                 productionCipher(file, MemorySignalStateKeyProvider(key)),
             )
         }
     }
+
+    // Preserve the repository transaction/cipher characterization tests independently of
+    // the rotating storage implementation, which has its own key-destruction tests.
+    private fun repository(
+        file: MemoryEncryptedStateFile,
+        cipher: EncryptedStateCipher,
+    ) = EncryptedSignalProtocolStateRepository(
+        object : CryptographicallyErasableEncryptedStateStorage {
+            override fun readDecryptedState(): ByteArray? =
+                file.read(SignalStateCodec.MAX_TOTAL_PLAINTEXT_BYTES + 128)?.let(cipher::decrypt)
+
+            override fun replaceEncryptedState(plaintext: ByteArray) = file.replace(cipher.encrypt(plaintext))
+
+            override fun replaceAfterCryptographicErasure(retainedPlaintext: ByteArray?) = error("Use rotating storage for erasure tests")
+
+            override fun deletePhysically() = error("Use rotating storage for erasure tests")
+        },
+    )
 
     private fun productionCipher(
         file: MemoryEncryptedStateFile,
@@ -423,7 +481,7 @@ class EncryptedSignalProtocolStateRepositoryTest {
 
     private class MemoryEncryptedStateFile(
         initialBytes: ByteArray? = null,
-    ) : EncryptedStateFile {
+    ) : DeletableEncryptedStateFile {
         var bytes: ByteArray? = initialBytes?.copyOf()
             private set
         var failNextReplace = false
@@ -450,6 +508,11 @@ class EncryptedSignalProtocolStateRepositoryTest {
             replaceCount += 1
         }
 
+        override fun deletePhysically() {
+            bytes = null
+            encryptedStateMayExist = false
+        }
+
         fun permitsEncryptionKeyCreation(): Boolean = !encryptedStateMayExist
 
         fun simulateExternalDeletion() {
@@ -459,10 +522,14 @@ class EncryptedSignalProtocolStateRepositoryTest {
 
     private class MemorySignalStateKeyProvider(
         var existingKey: SecretKey? = null,
-    ) : EncryptedStateKeyProvider {
+    ) : DestructibleEncryptedStateKeyProvider {
         var creationCount = 0
             private set
         var loadFailure: Exception? = null
+
+        override fun deleteKey() {
+            existingKey = null
+        }
 
         override fun loadExistingKey(): SecretKey? {
             loadFailure?.let { throw it }
