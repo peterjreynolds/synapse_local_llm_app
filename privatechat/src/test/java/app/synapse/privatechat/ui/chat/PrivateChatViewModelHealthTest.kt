@@ -123,6 +123,16 @@ class PrivateChatViewModelHealthTest {
                     PrivateChatConnectionUiState.CONNECTED,
                     (vm.uiState.value.conversation as PrivateConversationUiState.Available).connectionState,
                 )
+                assertEquals(1, feeds.subscriptionCount.value)
+                assertEquals(1, conversations.subscriptionCount.value)
+                vm.leaveForeground()
+                runCurrent()
+                assertEquals(0, feeds.subscriptionCount.value)
+                assertEquals(0, conversations.subscriptionCount.value)
+                vm.enterForeground()
+                runCurrent()
+                assertEquals(1, feeds.subscriptionCount.value)
+                assertEquals(1, conversations.subscriptionCount.value)
             } finally {
                 vm.leaveForeground()
                 vm.deactivateAccount()

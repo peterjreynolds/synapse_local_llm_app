@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="app.synapse.privatechat.webrtcprobe">
+    <uses-sdk android:minSdkVersion="25" android:targetSdkVersion="36" />
+    <application android:label="Synapse APK encrypted media probe" />
+    <instrumentation
+        android:name="app.synapse.privatechat.data.chat.PackagedWebRtcProbe"
+        android:targetPackage="app.synapse.privatechat" />
+</manifest>

@@ -42,6 +42,7 @@ internal class PrivateChatSnapshotAssembler {
                 .map { room ->
                     roomSummary(
                         room = room,
+                        unavailableHistoryCount = state.unavailableHistoryByRoom[room.record.roomId] ?: 0,
                         members = membersByRoom[room.record.roomId].orEmpty(),
                         preference = preferencesByRoom[room.record.roomId],
                         messages = messagesByRoom[room.record.roomId].orEmpty(),
@@ -83,6 +84,7 @@ internal class PrivateChatSnapshotAssembler {
             room =
                 roomSummary(
                     room = room,
+                    unavailableHistoryCount = state.unavailableHistoryByRoom[roomId] ?: 0,
                     members = members,
                     preference = state.backend.roomPreferences.singleOrNull { preference -> preference.roomId == roomId },
                     messages = messages,
@@ -119,13 +121,21 @@ internal class PrivateChatSnapshotAssembler {
         )
     }
 
-    fun social(state: PrivateResolvedPollingState): PrivateSocialSnapshot {
-        val ownProfile = currentProfile(state)
-        val currentAccountId = UUID.fromString(state.session.accountId.canonical)
-        val profiles = state.backend.profiles.associateBy(PrivateBackendProfileRecord::accountId)
-        val devices = state.backend.devices.associateBy { device -> device.address.transportDeviceId }
+    fun social(state: PrivateResolvedPollingState): PrivateSocialSnapshot =
+        social(state.session, PrivateBackendSocialState(state.backend.profiles, state.backend.devices, state.backend.presence))
+
+    fun social(
+        session: PrivateChatAuthenticatedSession,
+        state: PrivateBackendSocialState,
+    ): PrivateSocialSnapshot {
+        val ownProfile =
+            state.profiles.singleOrNull { it.accountId.toString() == session.accountId.canonical }
+                ?: malformedSnapshot("Current account profile is unavailable")
+        val currentAccountId = UUID.fromString(session.accountId.canonical)
+        val profiles = state.profiles.associateBy(PrivateBackendProfileRecord::accountId)
+        val devices = state.devices.associateBy { device -> device.address.transportDeviceId }
         val visiblePresence =
-            state.backend.presence
+            state.presence
                 .records
                 .map { presence ->
                     val accountId = devices.getValue(presence.deviceId).address.accountId
@@ -149,16 +159,16 @@ internal class PrivateChatSnapshotAssembler {
                         .thenBy { presence -> presence.accountId.canonical },
                 )
         return PrivateSocialSnapshot(
-            accountId = state.session.accountId,
+            accountId = session.accountId,
             profile =
                 PrivateProfileSnapshot(
-                    accountId = state.session.accountId,
+                    accountId = session.accountId,
                     displayName = ownProfile.displayName,
-                    username = state.session.authenticationUsername,
+                    username = session.authenticationUsername,
                 ),
             presenceSharing = ownProfile.presenceSharing,
             visiblePresence = visiblePresence,
-            presenceAvailability = state.backend.presence.toDomainAvailability(),
+            presenceAvailability = state.presence.toDomainAvailability(),
         )
     }
 
@@ -196,6 +206,7 @@ internal class PrivateChatSnapshotAssembler {
 
     private fun roomSummary(
         room: PrivateResolvedRoom,
+        unavailableHistoryCount: Int,
         members: List<PrivateBackendRoomMemberRecord>,
         preference: PrivateBackendRoomPreferenceRecord?,
         messages: List<PrivateResolvedMessage>,
@@ -219,6 +230,7 @@ internal class PrivateChatSnapshotAssembler {
             }
         return PrivateRoomSummary(
             roomId = room.record.roomId.toDomainRoomId(),
+            unavailableHistoryCount = unavailableHistoryCount,
             kind = room.record.kind,
             title = peerLabel ?: room.title,
             participantCount = members.size,

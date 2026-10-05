@@ -1,6 +1,7 @@
 package app.synapse.privatechat.data.chat
 
 import app.synapse.privatechat.crypto.local.DeviceLocalContentEnvelopeUnavailableException
+import app.synapse.privatechat.data.diagnostics.PrivateConnectionDiagnostics
 import app.synapse.privatechat.domain.chat.PrivateMessageId
 import app.synapse.privatechat.domain.chat.PrivateMessageText
 import app.synapse.privatechat.domain.chat.PrivateReactionCode
@@ -38,6 +39,7 @@ internal data class PrivateResolvedPollingState(
     val reactions: Map<UUID, PrivateResolvedReaction>,
     val loadedAt: Instant,
     val recoveredMutationIds: Set<UUID> = emptySet(),
+    val unavailableHistoryByRoom: Map<UUID, Int> = emptyMap(),
 )
 
 /** Serializes Signal envelope consumption while allowing every observer to reuse the durable cache. */
@@ -47,6 +49,7 @@ internal class PrivateChatPollingRepository(
     private val payloadCache: PrivateDecryptedPayloadCacheRepository,
     private val pendingMutationRecovery: PrivatePendingOutboundMutationRecovery,
     private val clock: Clock = Clock.systemUTC(),
+    private val diagnostics: PrivateConnectionDiagnostics = PrivateConnectionDiagnostics(clock),
 ) {
     private val pollingMutex = Mutex()
     private var recentState: PrivateResolvedPollingState? = null
@@ -57,7 +60,6 @@ internal class PrivateChatPollingRepository(
             if (!session.isUsableAt(now)) {
                 recentState = null
                 pendingMutationRecovery.clearRecoveredMutationIds()
-                payloadCache.clearForSessionInvalidation()
                 throw SupabasePrivateChatResponseException("Authenticated chat session is unavailable")
             }
             val newlyRecoveredMutationIds = pendingMutationRecovery.recoverPendingMutations(session)
@@ -74,7 +76,7 @@ internal class PrivateChatPollingRepository(
                 }
             }
             val backendState = backend.loadPollingState(session, now)
-            PrivateChatPollingDecoder(envelopeCipher, payloadCache)
+            PrivateChatPollingDecoder(envelopeCipher, payloadCache, diagnostics)
                 .decode(session, backendState, now)
                 .copy(recoveredMutationIds = recoveredMutationIds)
                 .also { resolved -> recentState = resolved }
@@ -96,6 +98,7 @@ internal class PrivateChatPollingRepository(
 internal class PrivateChatPollingDecoder(
     private val envelopeCipher: PrivateChatEnvelopeCipher,
     private val payloadCache: PrivateDecryptedPayloadCacheRepository,
+    private val diagnostics: PrivateConnectionDiagnostics = PrivateConnectionDiagnostics(),
 ) {
     fun decode(
         session: PrivateChatAuthenticatedSession,
@@ -103,6 +106,7 @@ internal class PrivateChatPollingDecoder(
         now: Instant,
     ): PrivateResolvedPollingState {
         val graph = PrivatePollingGraph.validate(session, state)
+        val unavailableHistory = PrivateUnavailableHistory(diagnostics)
         val authoritativePayloads = ArrayList<PrivateAuthoritativeEncryptedPayload>()
         val rooms =
             state.rooms.associate { room ->
@@ -134,17 +138,22 @@ internal class PrivateChatPollingDecoder(
                     )
                 val payload =
                     try {
-                        resolvePayload(session, graph, envelope, descriptor, now) { decoded ->
-                            validateRoomMetadata(decoded, room, envelope)
+                        unavailableHistory.decodeAvailable(room.roomId) {
+                            resolvePayload(session, graph, envelope, descriptor, now) { decoded ->
+                                validateRoomMetadata(decoded, room, envelope)
+                            }
                         }
                     } catch (_: DeviceLocalContentEnvelopeUnavailableException) {
-                        return@associate room.roomId to
-                            PrivateResolvedRoom(
-                                record = room,
-                                title = PENDING_ROOM_METADATA_TITLE,
-                                metadataState = PrivateRoomMetadataState.UNAVAILABLE_ON_DEVICE,
-                            )
+                        null
                     }
+                if (payload == null) {
+                    return@associate room.roomId to
+                        PrivateResolvedRoom(
+                            record = room,
+                            title = PENDING_ROOM_METADATA_TITLE,
+                            metadataState = PrivateRoomMetadataState.UNAVAILABLE_ON_DEVICE,
+                        )
+                }
                 authoritativePayloads += descriptor
                 room.roomId to
                     PrivateResolvedRoom(
@@ -154,48 +163,54 @@ internal class PrivateChatPollingDecoder(
                     )
             }
         val messages =
-            state.messages.associate { message ->
-                val reply = graph.replyByMessage[message.messageId]
-                val resolved =
-                    if (message.currentRevision == 0) {
-                        decodeInitialMessage(session, graph, message, reply, authoritativePayloads, now)
-                    } else {
-                        decodeMessageRevision(session, graph, message, reply, authoritativePayloads, now)
-                    }
-                message.messageId to resolved
-            }
+            state.messages
+                .mapNotNull { message ->
+                    val reply = graph.replyByMessage[message.messageId]
+                    val resolved =
+                        unavailableHistory.decodeAvailable(message.roomId) {
+                            if (message.currentRevision == 0) {
+                                decodeInitialMessage(session, graph, message, reply, authoritativePayloads, now)
+                            } else {
+                                decodeMessageRevision(session, graph, message, reply, authoritativePayloads, now)
+                            }
+                        } ?: return@mapNotNull null
+                    message.messageId to resolved
+                }.toMap()
         val reactions =
-            state.reactions.associate { reaction ->
-                val parentMessage =
-                    messages[reaction.messageId]
-                        ?: malformedPollingGraph("Reaction parent message is unavailable")
-                val envelope = graph.reactionEnvelopeByReaction.getValue(reaction.reactionId)
-                val descriptor =
-                    envelope.authoritativeDescriptor(
-                        kind = PrivateCachedPayloadKind.REACTION,
-                        recordId = reaction.reactionId,
-                        revision = 0,
-                        roomId = parentMessage.record.roomId,
-                        parentMessageId = reaction.messageId,
-                        expiresAt = reaction.expiresAt,
-                    )
-                val payload =
-                    resolvePayload(session, graph, envelope, descriptor, now) { decoded ->
-                        val reactionPayload =
-                            decoded as? PrivateChatPlaintextPayload.Reaction
-                                ?: malformedPollingGraph("Reaction envelope contains the wrong payload kind")
-                        if (
-                            reactionPayload.accountId.canonical != reaction.senderAccountId.toString() ||
-                            reactionPayload.roomId.canonical != parentMessage.record.roomId.toString() ||
-                            reactionPayload.mutationId.canonical != reaction.clientMutationId.toString() ||
-                            reactionPayload.messageId.canonical != reaction.messageId.toString()
-                        ) {
-                            malformedPollingGraph("Encrypted reaction context does not match its server record")
-                        }
-                    } as PrivateChatPlaintextPayload.Reaction
-                authoritativePayloads += descriptor
-                reaction.reactionId to PrivateResolvedReaction(reaction, payload.reaction)
-            }
+            state.reactions
+                .mapNotNull { reaction ->
+                    val parentMessage =
+                        messages[reaction.messageId]
+                            ?: return@mapNotNull null
+                    val envelope = graph.reactionEnvelopeByReaction.getValue(reaction.reactionId)
+                    val descriptor =
+                        envelope.authoritativeDescriptor(
+                            kind = PrivateCachedPayloadKind.REACTION,
+                            recordId = reaction.reactionId,
+                            revision = 0,
+                            roomId = parentMessage.record.roomId,
+                            parentMessageId = reaction.messageId,
+                            expiresAt = reaction.expiresAt,
+                        )
+                    val payload =
+                        unavailableHistory.decodeAvailable(parentMessage.record.roomId) {
+                            resolvePayload(session, graph, envelope, descriptor, now) { decoded ->
+                                val reactionPayload =
+                                    decoded as? PrivateChatPlaintextPayload.Reaction
+                                        ?: malformedPollingGraph("Reaction envelope contains the wrong payload kind")
+                                if (
+                                    reactionPayload.accountId.canonical != reaction.senderAccountId.toString() ||
+                                    reactionPayload.roomId.canonical != parentMessage.record.roomId.toString() ||
+                                    reactionPayload.mutationId.canonical != reaction.clientMutationId.toString() ||
+                                    reactionPayload.messageId.canonical != reaction.messageId.toString()
+                                ) {
+                                    malformedPollingGraph("Encrypted reaction context does not match its server record")
+                                }
+                            } as PrivateChatPlaintextPayload.Reaction
+                        } ?: return@mapNotNull null
+                    authoritativePayloads += descriptor
+                    reaction.reactionId to PrivateResolvedReaction(reaction, payload.reaction)
+                }.toMap()
         payloadCache.reconcileAuthoritativePayloads(session, authoritativePayloads, now)
         val authoritativeEnvelopes =
             state.roomMetadataEnvelopes +
@@ -218,6 +233,7 @@ internal class PrivateChatPollingDecoder(
             messages = messages,
             reactions = reactions,
             loadedAt = now,
+            unavailableHistoryByRoom = unavailableHistory.countsByRoom(),
         )
     }
 

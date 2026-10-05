@@ -13,12 +13,12 @@ internal class PrivateChatSessionResolver(
         val now = clock.instant()
         if (
             session == null ||
-            session.accountId != accountId ||
-            !session.isUsableAt(now)
+            session.accountId != accountId
         ) {
             payloadCache.clearForSessionInvalidation()
             return null
         }
-        return session
+        // Token renewal is not account revocation; Signal payloads cannot be decrypted twice.
+        return session.takeIf { it.isUsableAt(now) }
     }
 }

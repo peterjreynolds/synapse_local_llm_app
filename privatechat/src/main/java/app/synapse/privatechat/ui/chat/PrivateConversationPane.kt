@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import app.synapse.privatechat.domain.chat.PrivateMessageId
+import app.synapse.privatechat.ui.call.PrivateCallUiActions
 import app.synapse.privatechat.ui.theme.SynapsePrivateDesignSystem
 
 @Composable
@@ -29,6 +30,7 @@ internal fun PrivateConversationPane(
     messageActions: PrivateMessageUiActions,
     roomActions: PrivateRoomUiActions,
     modifier: Modifier = Modifier,
+    callActions: PrivateCallUiActions? = null,
 ) {
     when (val conversation = state.conversation) {
         is PrivateConversationUiState.Available ->
@@ -40,6 +42,7 @@ internal fun PrivateConversationPane(
                 messageActions = messageActions,
                 roomActions = roomActions,
                 modifier = modifier,
+                callActions = callActions,
             )
 
         PrivateConversationUiState.Loading ->
@@ -86,6 +89,7 @@ private fun AvailableConversation(
     messageActions: PrivateMessageUiActions,
     roomActions: PrivateRoomUiActions,
     modifier: Modifier,
+    callActions: PrivateCallUiActions?,
 ) {
     val tokens = SynapsePrivateDesignSystem.tokens
     val actionRunning = state.operation is PrivateChatOperationUiState.Running
@@ -106,11 +110,19 @@ private fun AvailableConversation(
             invitationCreating = state.roomInvitation is PrivateRoomInvitationUiState.Creating,
             navigationActions = navigationActions,
             roomActions = roomActions,
+            callActions = callActions,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (conversation.connectionState == PrivateChatConnectionUiState.RECONNECTING) {
             PrivateChatReconnectingBanner(
                 modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.small),
+            )
+        }
+        if (snapshot.room.unavailableHistoryCount > 0) {
+            Text(
+                "${snapshot.room.unavailableHistoryCount} encrypted history items cannot be opened on this device.",
+                modifier = Modifier.padding(horizontal = tokens.spacing.large, vertical = tokens.spacing.small),
+                style = MaterialTheme.typography.bodySmall,
             )
         }
         PrivateMessageTimeline(

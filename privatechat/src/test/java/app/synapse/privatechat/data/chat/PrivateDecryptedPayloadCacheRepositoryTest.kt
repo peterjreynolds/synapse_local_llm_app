@@ -48,7 +48,7 @@ class PrivateDecryptedPayloadCacheRepositoryTest {
     }
 
     @Test
-    fun expiredSessionCryptographicallyErasesStateAndCannotWriteReplacement() {
+    fun expiredTokenDeniesAccessButRenewalRetainsAlreadyDecryptedPayloads() {
         val storage = RecordingPayloadCacheStorage()
         val repository = PrivateDecryptedPayloadCacheRepository(storage)
         val session = authenticatedSession(expiresAt = NOW.plusSeconds(10))
@@ -56,11 +56,24 @@ class PrivateDecryptedPayloadCacheRepositoryTest {
         repository.persistPlaintext(session, descriptor, "temporary".encodeToByteArray(), NOW)
 
         assertNull(repository.loadPlaintext(session, descriptor, NOW.plusSeconds(10)))
-        assertNull(storage.encodedState)
         assertThrows(PrivateDecryptedPayloadCacheUnavailableException::class.java) {
             repository.persistPlaintext(session, descriptor, "forbidden".encodeToByteArray(), NOW.plusSeconds(10))
         }
-        assertEquals(2, storage.purgeReplaceCount)
+        assertEquals(0, storage.purgeReplaceCount)
+        val resolver =
+            PrivateChatSessionResolver(
+                PrivateChatAuthenticatedSessionProvider { session },
+                repository,
+                java.time.Clock.fixed(NOW.plusSeconds(10), java.time.ZoneOffset.UTC),
+            )
+        assertNull(resolver.resolve(session.accountId))
+        assertArrayEquals(
+            "temporary".encodeToByteArray(),
+            PrivateDecryptedPayloadCacheRepository(storage).loadPlaintext(authenticatedSession(), descriptor, NOW.plusSeconds(11)),
+        )
+        repository.clearForSessionInvalidation()
+        assertNull(repository.loadPlaintext(authenticatedSession(), descriptor, NOW.plusSeconds(11)))
+        assertNull(storage.encodedState)
     }
 
     @Test

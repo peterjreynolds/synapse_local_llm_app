@@ -26,10 +26,13 @@ internal interface DeviceLocalContentEnvelopeCipher {
     fun clearForSessionInvalidation()
 }
 
-internal class DeviceLocalContentEnvelopeUnavailableException(
+internal open class DeviceLocalContentEnvelopeUnavailableException(
     message: String,
     cause: Throwable? = null,
 ) : IllegalStateException(message, cause)
+
+internal class DeviceLocalContentEnvelopeKeyErasedException :
+    DeviceLocalContentEnvelopeUnavailableException("Device-local content envelope key was erased")
 
 internal class PerEnvelopeDeviceLocalContentEnvelopeCipher(
     private val keyRepository: DeviceLocalEnvelopeKeyRepository,
@@ -84,7 +87,7 @@ internal class PerEnvelopeDeviceLocalContentEnvelopeCipher(
         val parsed = parseEnvelope(ciphertext)
         val keyBytes =
             keyRepository.loadKey(parsed.keyId)
-                ?: throw DeviceLocalContentEnvelopeUnavailableException("Device-local content envelope key was erased")
+                ?: throw DeviceLocalContentEnvelopeKeyErasedException()
         return try {
             val cipher = Cipher.getInstance(AES_TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), GCMParameterSpec(GCM_TAG_BITS, parsed.nonce))

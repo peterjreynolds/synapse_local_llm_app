@@ -46,6 +46,7 @@ class PrivateChatViewModel(
             stateStore = stateStore,
         )
     private var activeAccountId: PrivateAccountId? = null
+    private var foreground = false
     private var roomFeedJob: Job? = null
     private var conversationJob: Job? = null
     private val activitySharingCoordinator =
@@ -137,12 +138,25 @@ class PrivateChatViewModel(
     }
 
     fun enterForeground() {
+        foreground = true
+        activeAccountId?.let { actor ->
+            if (roomFeedJob?.isActive != true) observeRoomFeed(actor)
+            stateStore.current.selectedRoomId?.let { room ->
+                if (conversationJob?.isActive != true) observeConversation(actor, room)
+            }
+        }
         expiringContentCoordinator.enterForeground()
         socialCoordinator.enterForeground()
         peopleCoordinator.enterForeground()
     }
 
     fun leaveForeground() {
+        foreground = false
+        roomFeedJob?.cancel()
+        roomFeedJob = null
+        conversationJob?.cancel()
+        conversationJob = null
+        activitySharingCoordinator.reset()
         roomActions.cancelPendingInvitation()
         socialCoordinator.leaveForeground()
         peopleCoordinator.leaveForeground()
@@ -271,6 +285,7 @@ class PrivateChatViewModel(
     }
 
     private fun observeRoomFeed(accountId: PrivateAccountId) {
+        if (!foreground) return
         roomFeedJob =
             viewModelScope.launch {
                 try {
@@ -318,6 +333,7 @@ class PrivateChatViewModel(
         accountId: PrivateAccountId,
         roomId: PrivateRoomId,
     ) {
+        if (!foreground) return
         conversationJob =
             viewModelScope.launch {
                 try {

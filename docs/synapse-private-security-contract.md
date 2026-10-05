@@ -17,15 +17,17 @@ keys, decrypted presentation, and local expiration.
 
 ## Current Rolling Release Scope
 
-The current rolling build is a text-chat alpha. It includes invite-only
+The rolling build is a human-chat alpha. It includes invite-only
 pseudonymous accounts, profiles, direct and group rooms, one-use room invites,
 pairwise encrypted message fan-out, replies, reactions, edits,
 delete-for-everyone, four timed-retention policies, archive, pin, mute, optional
-presence, optional typing indicators, and optional read receipts.
+presence, optional typing indicators, optional read receipts, and opt-in direct
+voice/video calls under the calling acceptance boundary below.
 
 The current build deliberately does **not** include attachments, voice notes,
-voice/video calls, TURN configuration, push notifications, server-side or
-persistent plaintext search, or an end-user safety-number verification screen.
+TURN configuration, push notifications, server-side or persistent plaintext
+search, or a persistent message-peer verification screen. Calls expose the
+participant devices' safety numbers for explicit out-of-band verification.
 These features must remain disabled rather than use a weaker fallback. A newly
 joined device also shows a generic encrypted-room title until an authorized
 current device publishes a new metadata envelope; automatic metadata backfill
@@ -101,9 +103,11 @@ transport and must not be inferred from content encryption.
 - Group rooms fan each message out through authenticated pairwise device
   sessions. A removed member receives no later envelope, and RLS denies later
   room rows. Shared group sender/epoch keys are not used in this release.
-- The library can calculate identity fingerprints, but the current rolling
-  release has no end-user safety-number verification surface and must not claim
-  verified peer identity.
+- Calling requires an explicit per-call safety-number comparison against a
+  trusted independent channel before capture starts. The app cannot prove that
+  a participant actually performed that comparison. Messaging has no persistent
+  end-user verification workflow and must not claim independently verified
+  peer identity.
 - The server stores versioned encrypted envelopes. It never receives message
   plaintext, notification previews, or plaintext search tokens.
 - Encrypted room creation metadata is accepted only when its room, owner, and
@@ -228,25 +232,60 @@ enabled later, all of the following become release gates:
   unless a later privacy review proves that its payload and retention meet this
   contract.
 
-## Future Calls
+## Direct Calls And Future Relay Mode
 
-Calling is disabled in the current rolling release. It may be enabled only
-after a trusted TURN service is configured and all of the following pass:
+The user-approved direct mode is a narrow exception to the original relay-only
+plan. Its owner is the Private calling boundary. It exists because no trusted
+TURN relay is configured; remove the exception or replace it with an explicit
+relay mode when an operated relay is available. It is not anonymous calling and
+must never be selected as a silent fallback from a requested relay-only mode.
+
+Calling may be released only after all of the following pass:
 
 - Call invitations and WebRTC session descriptions are encrypted for the
   participant devices before entering Supabase.
-- Media uses authenticated DTLS-SRTP and the UI exposes the verified peer
-  identity associated with the messaging session.
-- Anonymous call mode uses `relay` ICE transport policy. Host and server-
-  reflexive candidates are not published because direct peer-to-peer WebRTC can
-  reveal participant network addresses.
-- If no trusted TURN relay is available, anonymous call setup fails closed. It
-  must not silently fall back to direct candidates.
-- TURN credentials are short-lived and issued to current room members. Logs do
-  not retain session descriptions, candidates, participant identifiers, or
-  network addresses beyond the infrastructure minimum.
+- Media uses SHA-256 fingerprint-authenticated DTLS-SRTP; SDP and ICE are
+  authenticated through the same pinned libsignal owner as messages. The
+  encrypted payload binds call, room, membership epoch, sender, recipient,
+  sequence, kind, and expiry; altered context is rejected before media use.
+- Both participants explicitly acknowledge peer-IP disclosure and compare
+  device safety numbers before starting or answering each call. A changed
+  recipient device/identity set invalidates preparation. A call never answers
+  automatically or starts capture merely because runtime permission was granted.
+- Direct calls can expose local/public network addresses to the other
+  participant and to any configured STUN service. Restrictive NAT/mobile
+  networks may prevent connection. No relay reliability or anonymity claim is
+  permitted.
+- Incoming calls are polled only while the authenticated app is foregrounded.
+  Closed, force-stopped, background-idle, or disconnected apps do not reliably
+  ring. There is no hidden always-on listener, startup receiver, or push wakeup.
+- User-started active calls may continue in the background only with visible
+  Android foreground status and a Hang up action. Microphone/camera permissions
+  are requested at call time; notification permission/status is required where
+  applicable. Media teardown completes before foreground status is removed.
+- Decline, cancel, hangup, answered-elsewhere, access loss, setup failure, and
+  bounded ringing/network timeouts stop ringing locally. Hangup stops local
+  capture without waiting for a backend receipt. A lost terminal request leaves
+  remote state only until its bounded lease expires.
+- Only current two-member direct rooms may call. One device wins acceptance
+  atomically; each active device has at most one call. Ringing lasts at most
+  60 seconds, active heartbeat leases last 45 seconds, and a call lasts at most
+  60 minutes. Group calling is not implemented.
+- Call signaling and retry state are process-local and bounded, not stored in
+  the durable message outbox. Process death cannot resume a call; stale server
+  state expires by lease. Server signals expire within 60 seconds and are
+  deleted on confirmed termination. Terminal status becomes unreadable after
+  120 seconds and physical purge follows the next minute sweep while the hosted
+  scheduler runs. Hosted pauses/backups retain the same caveats as messaging.
+- Native WebRTC is hash-pinned, ABI-allowlisted, and tested in the minified APK
+  on API 25. Native logging and diagnostic signaling dumps remain disabled.
 - Call records are ephemeral status, not durable conversation history, and are
   purged after their bounded terminal window.
+
+A future privacy-oriented relay mode must use `relay` ICE policy, issue
+short-lived credentials only to authorized participants, and fail closed when
+TURN is unavailable. It must not publish direct candidates or retain network
+addresses beyond its reviewed infrastructure minimum.
 
 ## Supabase Authorization Boundary
 
@@ -274,7 +313,7 @@ after a trusted TURN service is configured and all of the following pass:
 
 ## Current Rolling Alpha Acceptance Proof
 
-The text-only rolling alpha may be published only when automated or
+The rolling alpha may be published only when automated or
 reproducible checks prove all of the following for the exact commit:
 
 1. Libsignal session establishment, out-of-order delivery, exact encrypted
@@ -303,8 +342,8 @@ reproducible checks prove all of the following for the exact commit:
 
 A production-grade or independently audited E2EE claim remains blocked on
 multi-device adversarial field testing, an end-user identity-verification UX,
-and independent review. Attachments and calls require their respective future
-sections to pass before either feature can be enabled or advertised.
+and independent review. Attachments and calls require their respective
+acceptance sections to pass before either feature can be enabled or advertised.
 
 ## Deliberate Non-Goals
 

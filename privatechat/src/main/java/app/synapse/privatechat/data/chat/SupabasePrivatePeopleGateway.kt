@@ -7,6 +7,8 @@ import app.synapse.privatechat.domain.chat.PrivateDirectConversationReceipt
 import app.synapse.privatechat.domain.chat.PrivateDirectoryPerson
 import app.synapse.privatechat.domain.chat.PrivatePeopleGateway
 import app.synapse.privatechat.domain.chat.PrivateRoomId
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.Clock
@@ -18,7 +20,10 @@ internal class SupabasePrivatePeopleGateway(
     private val transport: SupabasePrivateChatMutationTransport,
     private val invalidateRoomFeed: suspend () -> Unit,
     private val clock: Clock,
+    private val directoryChanges: (PrivateAccountId) -> Flow<Unit> = { emptyFlow() },
 ) : PrivatePeopleGateway {
+    override fun observeDirectoryChanges(accountId: PrivateAccountId) = directoryChanges(accountId)
+
     override suspend fun loadPeople(accountId: PrivateAccountId): PrivateChatObservation<List<PrivateDirectoryPerson>> =
         execution.observe(accountId) { session ->
             val people = LinkedHashMap<UUID, PrivateDirectoryPerson>()

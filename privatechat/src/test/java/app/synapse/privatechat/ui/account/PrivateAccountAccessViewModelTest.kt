@@ -224,23 +224,60 @@ class PrivateAccountAccessViewModelTest {
             assertSame(PrivateAccountSubmissionState.Idle, viewModel.uiState.value.submission)
         }
 
+    @Test
+    fun failedAutomaticRefreshRestoresConnectionWithoutAnotherTap() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val gateway = StubPrivateAccountGateway(refreshOutcome = PrivateAccountSessionOutcome.TransportUnavailable)
+            val viewModel = PrivateAccountAccessViewModel(gateway, TEST_CLOCK)
+            runCurrent()
+            advanceTimeBy(1_001L)
+            assertSame(PrivateAccountSessionUiState.TransportUnavailable, viewModel.uiState.value.session)
+            gateway.restoreOutcome = PrivateAccountSessionOutcome.Active(REFRESHED_RECEIPT)
+            advanceTimeBy(5_000L)
+            runCurrent()
+            assertEquals(PrivateAccountSessionUiState.Active(REFRESHED_RECEIPT), viewModel.uiState.value.session)
+            viewModel.signOutPrivateAccount()
+            runCurrent()
+        }
+
+    @Test
+    fun failedInitialRestoreRetriesButAuthorizationFailureDoesNotLoop() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val gateway = StubPrivateAccountGateway(restoreOutcome = PrivateAccountSessionOutcome.TransportUnavailable)
+            val viewModel = PrivateAccountAccessViewModel(gateway, TEST_CLOCK)
+            runCurrent()
+            assertSame(PrivateAccountSessionUiState.TransportUnavailable, viewModel.uiState.value.session)
+            gateway.restoreOutcome = PrivateAccountSessionOutcome.VerificationRejected("Session revoked")
+            advanceTimeBy(5_001L)
+            assertEquals(PrivateAccountSessionUiState.VerificationRejected("Session revoked"), viewModel.uiState.value.session)
+            val attempts = gateway.restoreRequestCount
+            advanceTimeBy(120_000L)
+            assertEquals(attempts, gateway.restoreRequestCount)
+        }
+
     private class StubPrivateAccountGateway(
         private val signOutOutcome: PrivateAccountSignOutOutcome =
             PrivateAccountSignOutOutcome.LocallySignedOut(PrivateRemoteSessionRevocationStatus.Confirmed),
-        private val restoreOutcome: PrivateAccountSessionOutcome = PrivateAccountSessionOutcome.Active(ACTIVE_RECEIPT),
+        var restoreOutcome: PrivateAccountSessionOutcome = PrivateAccountSessionOutcome.Active(ACTIVE_RECEIPT),
         private val refreshOutcome: PrivateAccountSessionOutcome = PrivateAccountSessionOutcome.Active(REFRESHED_RECEIPT),
         private val signOutOperation: suspend () -> PrivateAccountSignOutOutcome = { signOutOutcome },
         private val accountAccessOperation: suspend (PrivateAccountAccessCommand) -> PrivateAccountAccessOutcome = {
             error("Account access is not part of this test")
         },
     ) : PrivateAccountGateway {
+        var restoreRequestCount = 0
         var refreshRequestCount: Int = 0
             private set
 
         override suspend fun requestPrivateAccountAccess(command: PrivateAccountAccessCommand): PrivateAccountAccessOutcome =
             accountAccessOperation(command)
 
-        override suspend fun restorePrivateAccountSession(): PrivateAccountSessionOutcome = restoreOutcome
+        override suspend fun restorePrivateAccountSession(): PrivateAccountSessionOutcome {
+            restoreRequestCount++
+            return restoreOutcome
+        }
 
         override suspend fun refreshPrivateAccountSession(): PrivateAccountSessionOutcome {
             refreshRequestCount += 1

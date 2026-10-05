@@ -19,15 +19,16 @@ import kotlinx.coroutines.flow.Flow
 
 internal class SupabasePrivateSocialGateway(
     private val execution: PrivateChatGatewayExecution,
-    private val pollingRepository: PrivateChatPollingRepository,
+    private val pollingApi: SupabasePrivateChatPollingApi,
     private val snapshotAssembler: PrivateChatSnapshotAssembler,
     private val mutations: PrivateSocialMutationCoordinator,
+    private val clock: java.time.Clock = java.time.Clock.systemUTC(),
     private val waitForNextPoll: suspend (Long) -> Unit = { delay(it) },
 ) : PrivateSocialGateway {
     override fun observeSocial(accountId: PrivateAccountId): Flow<PrivateChatObservation<PrivateSocialSnapshot>> =
         observePrivateChatSnapshots(waitForNextPoll) {
             execution.observe(accountId) { session ->
-                snapshotAssembler.social(pollingRepository.load(session))
+                snapshotAssembler.social(session, pollingApi.loadSocialState(session, clock.instant()))
             }
         }
 

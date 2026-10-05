@@ -89,27 +89,81 @@ internal class SupabasePrivateChatPollingApi(
             val messageRecords = messages.await()
             val revisionRecords = messageRevisions.await()
             val reactionRecords = reactions.await()
+            val replyRecords = replies.await()
+            val receiptRecords = messageReceipts.await()
+            val messageEnvelopeRecords = joinMessageEnvelopes(messageRecords, messageEnvelopeRows.await())
+            val revisionEnvelopeRecords =
+                joinMessageRevisionEnvelopes(revisionRecords, messageRevisionEnvelopeRows.await())
+            val reactionEnvelopeRecords = joinReactionEnvelopes(reactionRecords, reactionEnvelopeRows.await())
+            val messageEnvelopeIds = messageEnvelopeRecords.mapTo(HashSet(), PrivateBackendEnvelopeRecord::parentRecordId)
+            val revisionEnvelopeIds = revisionEnvelopeRecords.mapTo(HashSet(), PrivateBackendEnvelopeRecord::parentRecordId)
+            val revisionByMessage = revisionRecords.associateBy(PrivateBackendMessageRevisionRecord::messageId)
+            // Membership exposes routing rows created before this device joined. Only render
+            // records encrypted for this device; missing historical envelopes are not an outage.
+            val visibleMessageIds =
+                messageRecords
+                    .filter { message ->
+                        message.currentRevision == 0 &&
+                            message.messageId in messageEnvelopeIds ||
+                            message.currentRevision > 0 &&
+                            revisionByMessage[message.messageId]?.let { revision ->
+                                revision.revisionNumber == message.currentRevision &&
+                                    revision.revisionId in revisionEnvelopeIds
+                            } == true
+                    }.mapTo(HashSet(), PrivateBackendMessageRecord::messageId)
+            var removed: Boolean
+            do {
+                val invalid =
+                    replyRecords
+                        .filter { reply ->
+                            reply.messageId in visibleMessageIds && reply.repliedToMessageId !in visibleMessageIds
+                        }.mapTo(HashSet(), PrivateBackendReplyRecord::messageId)
+                removed = visibleMessageIds.removeAll(invalid)
+            } while (removed)
+            val visibleRevisions = revisionRecords.filter { it.messageId in visibleMessageIds }
+            val visibleRevisionIds = visibleRevisions.mapTo(HashSet(), PrivateBackendMessageRevisionRecord::revisionId)
+            val reactionEnvelopeIds =
+                reactionEnvelopeRecords.mapTo(HashSet(), PrivateBackendEnvelopeRecord::parentRecordId)
+            val visibleReactions =
+                reactionRecords.filter { it.messageId in visibleMessageIds && it.reactionId in reactionEnvelopeIds }
+            val visibleReactionIds = visibleReactions.mapTo(HashSet(), PrivateBackendReactionRecord::reactionId)
             PrivateBackendPollingState(
                 profiles = profiles.await(),
                 rooms = rooms.await(),
                 roomMembers = roomMembers.await(),
                 roomPreferences = roomPreferences.await(),
                 devices = devices.await(),
-                messages = messageRecords,
-                messageEnvelopes = joinMessageEnvelopes(messageRecords, messageEnvelopeRows.await()),
-                messageRevisions = revisionRecords,
-                messageRevisionEnvelopes =
-                    joinMessageRevisionEnvelopes(revisionRecords, messageRevisionEnvelopeRows.await()),
-                replies = replies.await(),
-                reactions = reactionRecords,
-                reactionEnvelopes = joinReactionEnvelopes(reactionRecords, reactionEnvelopeRows.await()),
+                messages = messageRecords.filter { it.messageId in visibleMessageIds },
+                messageEnvelopes = messageEnvelopeRecords.filter { it.parentRecordId in visibleMessageIds },
+                messageRevisions = visibleRevisions,
+                messageRevisionEnvelopes = revisionEnvelopeRecords.filter { it.parentRecordId in visibleRevisionIds },
+                replies = replyRecords.filter { it.messageId in visibleMessageIds && it.repliedToMessageId in visibleMessageIds },
+                reactions = visibleReactions,
+                reactionEnvelopes = reactionEnvelopeRecords.filter { it.parentRecordId in visibleReactionIds },
                 roomMetadataEnvelopes = roomMetadataEnvelopes.await(),
-                messageReceipts = messageReceipts.await(),
+                messageReceipts = receiptRecords.filter { it.messageId in visibleMessageIds },
                 typing = typing.await(),
                 presence = presence.await(),
             ).also { pollingState ->
                 requireCompleteCurrentDeviceEnvelopeSet(pollingState, session)
             }
+        }
+
+    // Profile access must not depend on message decryption or pending-send recovery.
+    suspend fun loadSocialState(
+        session: PrivateChatAuthenticatedSession,
+        now: Instant,
+    ): PrivateBackendSocialState =
+        coroutineScope {
+            val profiles = async { getTable(session, "profiles", PROFILE_COLUMNS).parseProfiles() }
+            val devices = async { getTable(session, "devices", DEVICE_COLUMNS).parseDevices() }
+            val presence =
+                async {
+                    loadActivityFeed {
+                        getExpiringTable(session, "presence_state", PRESENCE_COLUMNS, now).parsePresence(now)
+                    }
+                }
+            PrivateBackendSocialState(profiles.await(), devices.await(), presence.await())
         }
 
     override suspend fun listRoomRecipientDevices(

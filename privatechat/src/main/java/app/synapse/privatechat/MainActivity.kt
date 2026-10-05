@@ -9,6 +9,7 @@ import androidx.core.view.WindowCompat
 import app.synapse.privatechat.data.update.AndroidPrivateAppInstaller
 import app.synapse.privatechat.ui.PrivateChatApp
 import app.synapse.privatechat.ui.account.PrivateAccountAccessViewModel
+import app.synapse.privatechat.ui.call.PrivateCallViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
 import app.synapse.privatechat.ui.theme.SynapsePrivateTheme
 import app.synapse.privatechat.ui.update.PrivateAppUpdateViewModel
@@ -24,6 +25,9 @@ class MainActivity : ComponentActivity() {
     private val appUpdateViewModel: PrivateAppUpdateViewModel by viewModels {
         compositionRoot.appUpdateViewModelFactory
     }
+    private val callViewModel: PrivateCallViewModel by viewModels {
+        compositionRoot.callViewModelFactory
+    }
     private val appInstaller by lazy { AndroidPrivateAppInstaller(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,7 +40,10 @@ class MainActivity : ComponentActivity() {
                     accountAccessViewModel = accountAccessViewModel,
                     chatViewModel = chatViewModel,
                     appUpdateViewModel = appUpdateViewModel,
+                    callViewModel = callViewModel,
+                    backgroundConnection = compositionRoot.backgroundConnection,
                     onOpenAppInstaller = appInstaller::openInstaller,
+                    exportConnectionDiagnostics = compositionRoot::exportConnectionDiagnostics,
                 )
             }
         }
@@ -44,10 +51,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        compositionRoot.backgroundConnection.setForeground(true)
         accountAccessViewModel.onAppForegrounded()
     }
 
     override fun onStop() {
+        compositionRoot.backgroundConnection.setForeground(false)
         accountAccessViewModel.onAppBackgrounded()
         super.onStop()
     }

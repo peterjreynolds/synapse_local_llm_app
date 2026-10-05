@@ -8,6 +8,7 @@ import app.synapse.privatechat.domain.chat.PrivateDirectoryPerson
 import app.synapse.privatechat.domain.chat.PrivatePeopleGateway
 import app.synapse.privatechat.domain.chat.PrivateRoomId
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -119,17 +120,43 @@ class PrivatePeopleCoordinatorTest {
             coordinator.deactivateAccount()
         }
 
+    @Test
+    fun realtimeInvalidationReloadsDirectoryBeforePollingDeadline() =
+        runTest {
+            val gateway = RecordingPeopleGateway()
+            val coordinator = PrivatePeopleCoordinator(gateway, backgroundScope, CLOCK) {}
+            coordinator.activateAccount(ACTOR)
+            coordinator.enterForeground()
+            runCurrent()
+            assertEquals(1, gateway.directoryReads)
+            gateway.changes.emit(Unit)
+            advanceTimeBy(251L)
+            runCurrent()
+            assertEquals(2, gateway.directoryReads)
+            coordinator.leaveForeground()
+            gateway.changes.emit(Unit)
+            advanceTimeBy(1_000L)
+            assertEquals(2, gateway.directoryReads)
+        }
+
     private class RecordingPeopleGateway : PrivatePeopleGateway {
         var publications = 0
+        var directoryReads = 0
+        val changes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+        override fun observeDirectoryChanges(accountId: PrivateAccountId) = changes
+
         var unavailable = false
         var wrongTarget = false
 
-        override suspend fun loadPeople(accountId: PrivateAccountId): PrivateChatObservation<List<PrivateDirectoryPerson>> =
-            if (unavailable) {
+        override suspend fun loadPeople(accountId: PrivateAccountId): PrivateChatObservation<List<PrivateDirectoryPerson>> {
+            directoryReads++
+            return if (unavailable) {
                 PrivateChatObservation.TransportUnavailable
             } else {
                 PrivateChatObservation.Available(listOf(PrivateDirectoryPerson(PEER, "Peer", NOW.plusSeconds(60))))
             }
+        }
 
         override suspend fun publishActivity(accountId: PrivateAccountId): PrivateChatMutationOutcome<Instant> {
             publications++

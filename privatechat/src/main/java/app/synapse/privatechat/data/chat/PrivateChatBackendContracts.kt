@@ -141,6 +141,12 @@ internal data class PrivateBackendEnvelopeRecord(
     val createdAt: Instant,
 )
 
+internal data class PrivateBackendSocialState(
+    val profiles: List<PrivateBackendProfileRecord>,
+    val devices: List<PrivateBackendDeviceRecord>,
+    val presence: PrivateBackendActivityFeed<PrivateBackendPresenceRecord>,
+)
+
 internal data class PrivateBackendPollingState(
     val profiles: List<PrivateBackendProfileRecord>,
     val rooms: List<PrivateBackendRoomRecord>,

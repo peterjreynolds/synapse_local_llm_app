@@ -14,6 +14,12 @@ import app.synapse.privatechat.data.account.LocalStateUnavailablePrivateAccountG
 import app.synapse.privatechat.data.account.PrivateSignalDeviceBootstrapper
 import app.synapse.privatechat.data.account.SupabasePrivateAccountApi
 import app.synapse.privatechat.data.account.SupabasePrivateAccountGateway
+import app.synapse.privatechat.data.call.SupabasePrivateCallBackend
+import app.synapse.privatechat.data.call.SupabasePrivateCallSignalingGateway
+import app.synapse.privatechat.data.call.UnavailablePrivateCallSignalingGateway
+import app.synapse.privatechat.data.call.media.AndroidPrivateCallAlertGateway
+import app.synapse.privatechat.data.call.media.AndroidPrivateCallForegroundController
+import app.synapse.privatechat.data.call.media.AndroidPrivateCallMediaGateway
 import app.synapse.privatechat.data.chat.LibSignalPrivateChatCipher
 import app.synapse.privatechat.data.chat.PendingTransportPrivateChatGateway
 import app.synapse.privatechat.data.chat.PrivateChatEnvelopeCipher
@@ -37,6 +43,10 @@ import app.synapse.privatechat.data.chat.SupabasePrivatePeopleGateway
 import app.synapse.privatechat.data.chat.SupabasePrivateRoomMutationApi
 import app.synapse.privatechat.data.chat.SupabasePrivateSocialGateway
 import app.synapse.privatechat.data.chat.SupabasePrivateSocialMutationApi
+import app.synapse.privatechat.data.connection.PrivateBackgroundConnection
+import app.synapse.privatechat.data.connection.SupabasePrivateDirectoryRealtime
+import app.synapse.privatechat.data.diagnostics.DiagnosticSupabaseHttpTransport
+import app.synapse.privatechat.data.diagnostics.PrivateConnectionDiagnostics
 import app.synapse.privatechat.data.session.AndroidPrivateSessionRepositoryFactory
 import app.synapse.privatechat.data.session.PrivateSessionStateUnavailableException
 import app.synapse.privatechat.data.supabase.SupabaseHttpTransport
@@ -46,15 +56,19 @@ import app.synapse.privatechat.data.update.AndroidPrivateAppUpdateDownloader
 import app.synapse.privatechat.data.update.GitHubPrivateAppUpdateRepository
 import app.synapse.privatechat.data.update.UrlConnectionPrivateUpdateSource
 import app.synapse.privatechat.domain.account.PrivateAccountGateway
+import app.synapse.privatechat.domain.call.PrivateCallSignalingGateway
 import app.synapse.privatechat.domain.chat.PrivateChatGateway
 import app.synapse.privatechat.domain.chat.PrivateClientMutationId
 import app.synapse.privatechat.domain.chat.PrivatePeopleGateway
 import app.synapse.privatechat.domain.chat.PrivateSocialGateway
 import app.synapse.privatechat.domain.chat.UnavailablePrivatePeopleGateway
 import app.synapse.privatechat.ui.account.PrivateAccountAccessViewModel
+import app.synapse.privatechat.ui.call.PrivateCallViewModel
 import app.synapse.privatechat.ui.chat.PrivateChatViewModel
 import app.synapse.privatechat.ui.update.PrivateAppUpdateViewModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import java.time.Clock
 import java.util.UUID
 
@@ -63,10 +77,40 @@ class PrivateChatCompositionRoot private constructor(
     chatGateway: PrivateChatGateway,
     socialGateway: PrivateSocialGateway,
     peopleGateway: PrivatePeopleGateway,
+    callGateway: PrivateCallSignalingGateway,
+    appContext: Context,
     updateRepository: GitHubPrivateAppUpdateRepository,
     updateDownloader: AndroidPrivateAppUpdateDownloader,
     clock: Clock,
+    private val diagnostics: PrivateConnectionDiagnostics,
 ) {
+    internal val backgroundConnection =
+        PrivateBackgroundConnection(
+            accountGateway,
+            peopleGateway,
+            chatGateway,
+            CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            diagnostics,
+        )
+
+    fun exportConnectionDiagnostics(): String =
+        diagnostics.exportReport(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, Build.VERSION.SDK_INT)
+
+    val callViewModelFactory: ViewModelProvider.Factory =
+        viewModelFactory {
+            initializer {
+                val media = AndroidPrivateCallMediaGateway(appContext)
+                PrivateCallViewModel(
+                    signaling = callGateway,
+                    media = media,
+                    alerts = AndroidPrivateCallAlertGateway(appContext, clock),
+                    foreground = AndroidPrivateCallForegroundController(appContext),
+                    clock = clock,
+                    videoRenderer = media,
+                )
+            }
+        }
+
     val accountAccessViewModelFactory: ViewModelProvider.Factory =
         viewModelFactory {
             initializer {
@@ -98,7 +142,12 @@ class PrivateChatCompositionRoot private constructor(
         }
 
     companion object {
-        fun create(context: Context): PrivateChatCompositionRoot {
+        @Volatile private var instance: PrivateChatCompositionRoot? = null
+
+        @Synchronized
+        fun create(context: Context): PrivateChatCompositionRoot = instance ?: build(context.applicationContext).also { instance = it }
+
+        private fun build(context: Context): PrivateChatCompositionRoot {
             val clock = Clock.systemUTC()
             val config =
                 SynapsePrivateBackendConfig.requireValid(
@@ -106,8 +155,9 @@ class PrivateChatCompositionRoot private constructor(
                     publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY,
                 )
             val appContext = context.applicationContext
-            val transport = UrlConnectionSupabaseHttpTransport(config)
-            val runtime = createRuntime(appContext, transport, clock)
+            val diagnostics = PrivateConnectionDiagnostics(clock)
+            val transport = DiagnosticSupabaseHttpTransport(UrlConnectionSupabaseHttpTransport(config), diagnostics)
+            val runtime = createRuntime(appContext, transport, clock, diagnostics, config)
             val updateTransferSource = UrlConnectionPrivateUpdateSource()
             val deviceSupportedAbis = Build.SUPPORTED_ABIS.toSet()
             return PrivateChatCompositionRoot(
@@ -115,6 +165,8 @@ class PrivateChatCompositionRoot private constructor(
                 chatGateway = runtime.chatGateway,
                 socialGateway = runtime.socialGateway,
                 peopleGateway = runtime.peopleGateway,
+                callGateway = runtime.callGateway,
+                appContext = appContext,
                 updateRepository =
                     GitHubPrivateAppUpdateRepository(
                         transferSource = updateTransferSource,
@@ -131,6 +183,7 @@ class PrivateChatCompositionRoot private constructor(
                         deviceSupportedAbis = deviceSupportedAbis,
                     ),
                 clock = clock,
+                diagnostics = diagnostics,
             )
         }
 
@@ -138,9 +191,11 @@ class PrivateChatCompositionRoot private constructor(
             context: Context,
             transport: SupabaseHttpTransport,
             clock: Clock,
+            diagnostics: PrivateConnectionDiagnostics,
+            config: SynapsePrivateBackendConfig,
         ): PrivateChatRuntime =
             try {
-                createAvailableRuntime(context, transport, clock)
+                createAvailableRuntime(context, transport, clock, diagnostics, config)
             } catch (_: PrivateSessionStateUnavailableException) {
                 unavailableRuntime()
             } catch (_: SignalProtocolStateCorruptedException) {
@@ -151,6 +206,8 @@ class PrivateChatCompositionRoot private constructor(
             context: Context,
             transport: SupabaseHttpTransport,
             clock: Clock,
+            diagnostics: PrivateConnectionDiagnostics,
+            config: SynapsePrivateBackendConfig,
         ): PrivateChatRuntime {
             val sessionRepository = AndroidPrivateSessionRepositoryFactory.create(context)
             val signalAdapterOwner =
@@ -183,7 +240,7 @@ class PrivateChatCompositionRoot private constructor(
                     payloadCache = payloadCache,
                     clock = clock,
                 )
-            val execution = PrivateChatGatewayExecution(sessionResolver)
+            val execution = PrivateChatGatewayExecution(sessionResolver, diagnostics)
             val encryptedMutationOutbox = PrivateEncryptedMutationOutbox(envelopeCipher, chatBackend, clock)
             val pollingRepository =
                 PrivateChatPollingRepository(
@@ -192,6 +249,7 @@ class PrivateChatCompositionRoot private constructor(
                     payloadCache = payloadCache,
                     pendingMutationRecovery = encryptedMutationOutbox,
                     clock = clock,
+                    diagnostics = diagnostics,
                 )
             val snapshotAssembler = PrivateChatSnapshotAssembler()
             val chatMutations =
@@ -212,6 +270,14 @@ class PrivateChatCompositionRoot private constructor(
                     pollingRepository = pollingRepository,
                 )
             return PrivateChatRuntime(
+                callGateway =
+                    SupabasePrivateCallSignalingGateway(
+                        sessionResolver = sessionResolver,
+                        chatPollingBackend = chatBackend,
+                        callBackend = SupabasePrivateCallBackend(requestExecutor),
+                        adapterOwner = signalAdapterOwner,
+                        clock = clock,
+                    ),
                 accountGateway =
                     SupabasePrivateAccountGateway(
                         backend = SupabasePrivateAccountApi(transport, clock),
@@ -238,11 +304,13 @@ class PrivateChatCompositionRoot private constructor(
                         mutationTransport,
                         pollingRepository::invalidateRecentState,
                         clock,
+                        SupabasePrivateDirectoryRealtime(config, sessionResolver, diagnostics)::changes,
                     ),
                 socialGateway =
                     SupabasePrivateSocialGateway(
                         execution = execution,
-                        pollingRepository = pollingRepository,
+                        pollingApi = pollingApi,
+                        clock = clock,
                         snapshotAssembler = snapshotAssembler,
                         mutations = socialMutations,
                     ),
@@ -254,6 +322,7 @@ class PrivateChatCompositionRoot private constructor(
                 accountGateway = LocalStateUnavailablePrivateAccountGateway,
                 chatGateway = PendingTransportPrivateChatGateway,
                 socialGateway = PendingTransportPrivateChatGateway,
+                callGateway = UnavailablePrivateCallSignalingGateway,
             )
     }
 }
@@ -264,4 +333,5 @@ private data class PrivateChatRuntime(
     val socialGateway: PrivateSocialGateway,
     val peopleGateway: PrivatePeopleGateway =
         UnavailablePrivatePeopleGateway,
+    val callGateway: PrivateCallSignalingGateway,
 )

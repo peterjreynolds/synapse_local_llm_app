@@ -41,7 +41,6 @@ internal class PrivateDecryptedPayloadCacheRepository(
     ) {
         synchronized(monitor) {
             if (!session.isUsableAt(now)) {
-                clearForSessionInvalidation()
                 throw PrivateDecryptedPayloadCacheUnavailableException(
                     "An unusable authenticated session cannot write the decrypted cache",
                 )
@@ -160,7 +159,7 @@ internal class PrivateDecryptedPayloadCacheRepository(
         now: Instant,
     ): PrivateDecryptedPayloadCacheState? {
         if (!session.isUsableAt(now)) {
-            clearForSessionInvalidation()
+            // Deny access until renewal without destroying already-consumed Signal payloads.
             return null
         }
         loadStateIfNeeded()

@@ -82,9 +82,11 @@ data class PrivateRoomSummary(
     val unreadMessageCount: Int,
     val latestMessagePreview: PrivateMessagePreview?,
     val metadataState: PrivateRoomMetadataState = PrivateRoomMetadataState.AVAILABLE,
+    val unavailableHistoryCount: Int = 0,
 ) {
     init {
         requireValidPrivateDisplayText(title, "Room title", PRIVATE_ROOM_TITLE_LIMIT)
+        require(unavailableHistoryCount >= 0) { "Unavailable history count cannot be negative." }
         require(unreadMessageCount >= 0) { "Unread message count cannot be negative." }
         when (kind) {
             PrivateRoomKind.DIRECT ->

@@ -51,7 +51,7 @@ internal fun PrivateMessageTimeline(
     Column(modifier = modifier.fillMaxSize()) {
         if (snapshot.messages.isEmpty()) {
             PrivateConversationStatus(
-                title = "No current messages",
+                title = if (snapshot.room.unavailableHistoryCount > 0) "History unavailable on this device" else "No current messages",
                 detail = "Confirmed messages appear here only until this conversation's retention window expires.",
                 modifier = Modifier.weight(1f),
             )

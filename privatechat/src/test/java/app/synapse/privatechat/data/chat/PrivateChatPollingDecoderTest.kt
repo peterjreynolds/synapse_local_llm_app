@@ -7,7 +7,7 @@ import app.synapse.privatechat.crypto.SignalPendingOutboundMutationKey
 import app.synapse.privatechat.crypto.SignalPublicPreKeyBundle
 import app.synapse.privatechat.crypto.StoredSignalPendingOutboundMutation
 import app.synapse.privatechat.crypto.local.DeviceLocalContentEnvelopeCipher
-import app.synapse.privatechat.crypto.local.DeviceLocalContentEnvelopeUnavailableException
+import app.synapse.privatechat.crypto.local.DeviceLocalContentEnvelopeKeyErasedException
 import app.synapse.privatechat.crypto.local.DeviceLocalEncryptedPayloadCacheStorage
 import app.synapse.privatechat.domain.account.PrivateAccountId
 import app.synapse.privatechat.domain.chat.PrivateActivitySharingPreferences
@@ -52,6 +52,51 @@ class PrivateChatPollingDecoderTest {
         val room = resolved.rooms.getValue(ROOM_ID)
         assertEquals("Encrypted conversation", room.title)
         assertEquals(PrivateRoomMetadataState.UNAVAILABLE_ON_DEVICE, room.metadataState)
+    }
+
+    @Test
+    fun erasedMessageKeyDoesNotTurnHealthyRoomFeedIntoTransportFailure() {
+        val address = SignalDeviceAddress(OWNER_ID, DEVICE_ID, SignalDeviceId.fromWire(7))
+        val session =
+            PrivateChatAuthenticatedSession.fromAuthenticatedDevice(
+                OWNER_ID,
+                DEVICE_ID,
+                address.protocolDeviceId,
+                "peter_01",
+                "header.payload.signature",
+                NOW.plusSeconds(3600),
+            )
+        val messageId = UUID.fromString("61000000-0000-4000-8000-000000000001")
+        val original = pollingState(address)
+        val state =
+            original.copy(
+                messages =
+                    listOf(
+                        PrivateBackendMessageRecord(
+                            messageId = messageId,
+                            roomId = ROOM_ID,
+                            senderAccountId = OWNER_ID,
+                            senderDeviceId = DEVICE_ID,
+                            clientMutationId = OTHER_MUTATION_ID,
+                            membershipEpoch = 1,
+                            currentRevision = 0,
+                            createdAt = NOW,
+                            expiresAt = NOW.plusSeconds(300),
+                        ),
+                    ),
+                messageEnvelopes = listOf(envelopeRecord(OWNER_ID).copy(parentRecordId = messageId, serverRevision = 0)),
+            )
+        val resolved =
+            PrivateChatPollingDecoder(
+                PrivateChatEnvelopeCipher(LocalAddressOnlySignalCipher(address), MissingLocalEnvelopeKeyCipher),
+                PrivateDecryptedPayloadCacheRepository(EmptyPayloadCacheStorage),
+            ).decode(session, state, NOW)
+        val snapshots = PrivateChatSnapshotAssembler()
+        assertEquals(1, snapshots.roomFeed(resolved).rooms.size)
+        val conversation = requireNotNull(snapshots.conversation(resolved, ROOM_ID))
+        assertEquals(2, conversation.room.unavailableHistoryCount)
+        assertEquals(emptyList<app.synapse.privatechat.domain.chat.PrivateMessageSnapshot>(), conversation.messages)
+        assertEquals(PrivateRoomMetadataState.UNAVAILABLE_ON_DEVICE, conversation.room.metadataState)
     }
 
     @Test
@@ -277,8 +322,7 @@ private class LocalAddressOnlySignalCipher(
 private object MissingLocalEnvelopeKeyCipher : DeviceLocalContentEnvelopeCipher {
     override fun encryptLocalEnvelope(plaintext: ByteArray): ByteArray = error("Not used")
 
-    override fun decryptLocalEnvelope(ciphertext: ByteArray): ByteArray =
-        throw DeviceLocalContentEnvelopeUnavailableException("Device-local content envelope key was erased")
+    override fun decryptLocalEnvelope(ciphertext: ByteArray): ByteArray = throw DeviceLocalContentEnvelopeKeyErasedException()
 
     override fun markEnvelopeDurablyReferenced(ciphertext: ByteArray) = error("Not used")
 

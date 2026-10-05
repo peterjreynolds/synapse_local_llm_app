@@ -33,7 +33,12 @@ These instructions narrow the repository-level `AGENTS.md` for everything under
 
 - Keep the manifest permission-minimal. Add a permission only when an owned
   feature requires it and extend the boundary test with the reason.
-- Keep native build blocks, JNI artifacts, model files, and model/runtime
-  dependencies out of this module.
+- Keep owned native build blocks, bundled JNI artifacts, model files, and
+  model/runtime dependencies out of this module. Narrow dependency exception:
+  the Private encryption/media owners may package hash-pinned libsignal,
+  WebRTC, and AndroidX graphics libraries, with exact APK ABI/native allowlists
+  and packaged API-25 probes. These libraries implement encryption, user-started
+  calls, and Compose graphics, not model execution. Remove an exception when
+  its owning feature or native dependency is retired.
 - Run `:privatechat:test`, `:privatechat:ktlintCheck`, `:privatechat:lintDebug`,
   and `:privatechat:assembleDebug` for every retained module change.
