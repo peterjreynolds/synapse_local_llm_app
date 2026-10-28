@@ -30,6 +30,8 @@ was edited. Canonical untracked `NUL` and
 | Published original APK | verified | `apk-latest/APK/Synapse-AI.apk`, 33,366,026 bytes, versionCode 2041, versionName 0.1.2041, package `app.synapse.localllm.debug`, min SDK 28, target SDK 36. Downloaded copy passed `apksigner verify`. |
 | Published APK digest | verified | SHA-256 `871ab2543cddefe7f7f5b76d925acf05f966b2632da73f35dfa1ea5d2941877d`, matches GitHub release asset digest. |
 | Published signer | verified | Certificate SHA-256 `6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b`. No private signing key accessed. |
+| Published source | verified | Release notes identify `c8e582ccfd4feedfea995251c333de10861c9f33`; `git diff 6a4fad7 c8e582c -- app firebase` is empty. |
+| App Check configuration | blocked | Admin service-list request returned HTTP 403 PERMISSION_DENIED; current enforcement is unverified. |
 | Installed phone build | blocked | ADB completed with no devices attached. Installed version, signer, build SHA, update compatibility and fatal stack trace cannot be established. |
 | Google project | verified | `gcloud projects describe` reports ACTIVE. |
 | Billing link | verified | `gcloud billing projects describe` reports billingEnabled=true. This does not certify payment account standing or budgets. |
@@ -66,10 +68,41 @@ can overwrite a subsequent SignedOut state with InvalidSession. This is a
 separate reproducible candidate defect; it must not be presented as proof of
 the reported phone crash.
 
-The intended local fix is confined to the authentication adapter's cancellation
-semantics. Claim parsing, roles, provisioning and remote authorization stay
-fail closed. Regression tests must establish failure before the change and
-pass afterward. Validation results will be recorded below when available.
+The local fix rethrows `CancellationException` before mapping operational
+failures in restored-session resolution and all suspending authentication
+operations. Claim parsing, roles, provisioning and remote authorization stay
+fail closed. No imports cross a new module boundary.
+
+Regression proof: before the patch, `signingOutDuringRestoredTokenFetchDoesNotPublishInvalidSession`
+failed with expected `SignedOut`, actual `InvalidSession(userMessage=Could not
+verify account access. Check the connection and try again.)`. Four existing
+claim-contract tests passed in that same run. After the patch, 14 targeted
+tests passed (zero failures/errors): authentication adapter 4, claim contracts
+4, logout 3, account restriction 1, session synchronizer 2. Added tests also
+verify transport failure remains closed, explicit refresh recovers, missing
+claims do not grant access, and refresh cancellation propagates.
+
+Validation command (JDK 21, existing Android SDK):
+
+```sh
+./gradlew :app:testDebugUnitTest \
+  --tests '*FirebaseRemoteAuthenticationGatewayTest' \
+  --tests '*RemoteAuthenticationContractsTest' \
+  --tests '*RemoteChatViewModelAccountAccessTest' \
+  --tests '*RemoteChatViewModelLogoutTest' \
+  --tests '*RemoteChatSessionSynchronizerTest' \
+  -Pkotlin.compiler.execution.strategy=in-process --max-workers=2 --console=plain
+```
+
+Kotlin and Java compilation passed as dependencies of this task. `:app:ktlintCheck`
+and `:app:lintDebug` passed (combined Gradle run: BUILD SUCCESSFUL).
+`git diff --check` passed. Full unit suite, native APK packaging, minified
+APK verification and physical acceptance have not been run for this patch.
+Host logs: `/tmp/synapse-recovery-auth-before.log`,
+`/tmp/synapse-recovery-auth-after.log`, `/tmp/synapse-recovery-lint.log`.
+Gradle XML reports are under `app/build/test-results/testDebugUnitTest/` in the
+recovery worktree. These host artifacts are ephemeral; this committed report
+preserves their conclusions.
 
 Initial Gradle attempts stalled while connecting to stale Kotlin daemon
 loopback endpoints (thread-dump evidence). Only this task's Gradle processes
