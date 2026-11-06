@@ -1,4 +1,4 @@
-name: Build Synapse AI APK
+name: Build Synapse Chat APK
 
 on:
   push:
@@ -23,8 +23,9 @@ jobs:
       APK_PATH: app/build/outputs/apk/synapse/Synapse-AI.apk
       APK_BRANCH: apk-latest
       RELEASE_TAG: synapse-ai
+      SYNAPSE_MINIMUM_VERSION_CODE: "2043"
       EXPECTED_APPLICATION_ID: app.synapse.localllm.debug
-      EXPECTED_MINIMUM_ANDROID_API: "28"
+      EXPECTED_MINIMUM_ANDROID_API: "26"
       EXPECTED_APK_ABIS: arm64-v8a armeabi-v7a x86_64
       EXPECTED_SIGNING_CERTIFICATE_SHA256: 6f762970e8c29b2c810cb790c1e08dbebf80e40f60a03516b7ca665964a14e7b
       APK_BRANCH_MAX_BYTES: "104857600"
@@ -196,6 +197,27 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Enable Android 8 emulator acceleration
+        run: sudo chmod a+rw /dev/kvm
+
+      - name: Smoke test Android 8.0 launch before publishing
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 26
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install -r "$APK_PATH"
+            adb shell am start -W -n "$EXPECTED_APPLICATION_ID/app.synapse.localllm.MainActivity"
+            sleep 10
+            app_pid="$(adb shell pidof "$EXPECTED_APPLICATION_ID" | tr -d '\r')"
+            if [ -z "$app_pid" ]; then
+              echo "Synapse Chat exited during the Android 8.0 launch smoke test." >&2
+              adb logcat -d -s AndroidRuntime:E | tail -n 70
+              exit 1
+            fi
+
       - name: Publish rolling release
         shell: bash
         env:
@@ -206,7 +228,7 @@ jobs:
           application_id="$(cat apk-application-id.txt)"
           signer_sha256="$(cat apk-signer-sha256.txt)"
           release_notes="$(printf '%s\n\n' \
-            "Latest automated Synapse AI APK from commit $GITHUB_SHA." \
+            "Latest automated Synapse Chat APK from commit $GITHUB_SHA." \
             "Version code: $version_code. Package: $application_id." \
             "Minimum Android API: $EXPECTED_MINIMUM_ANDROID_API." \
             "APK ABIs: arm64-v8a, armeabi-v7a, x86_64." \
@@ -226,13 +248,13 @@ jobs:
               bash scripts/ci/run-idempotent-release-command-with-retry.sh \
               gh release edit "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
-              --title "Synapse AI APK" \
+              --title "Synapse Chat APK (Android 8+)" \
               --notes "$release_notes" \
               --latest
           else
             gh release create "$RELEASE_TAG" "$APK_PATH#Synapse-AI.apk" \
               --target "$GITHUB_SHA" \
-              --title "Synapse AI APK" \
+              --title "Synapse Chat APK (Android 8+)" \
               --notes "$release_notes" \
               --latest
           fi
@@ -248,7 +270,7 @@ jobs:
           apk_sha256="$(cut -d ' ' -f 1 apk-sha256.txt)"
           printf '%s  Synapse-AI.apk\n' "$apk_sha256" > "$publish_root/APK/Synapse-AI.apk.sha256"
           {
-            printf '# Synapse AI APK\n\n'
+            printf '# Synapse Chat APK\n\n'
             printf '%s\n\n' '`Synapse-AI.apk` is the latest APK produced by the approved rolling release workflow.'
             printf -- '- Source commit: `%s`\n' "$GITHUB_SHA"
             printf -- '- Version code: `%s`\n' "$SYNAPSE_VERSION_CODE"
@@ -265,7 +287,7 @@ jobs:
           git -C "$publish_root" config user.name "github-actions[bot]"
           git -C "$publish_root" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$publish_root" add APK/README.md APK/Synapse-AI.apk APK/Synapse-AI.apk.sha256
-          git -C "$publish_root" commit -m "publish latest Synapse AI APK"
+          git -C "$publish_root" commit -m "publish latest Synapse Chat APK"
           git -C "$publish_root" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           SYNAPSE_RELEASE_OPERATION="publish rolling APK branch" \
             bash "$GITHUB_WORKSPACE/scripts/ci/run-idempotent-release-command-with-retry.sh" \
@@ -328,7 +350,7 @@ jobs:
           printf '%s\n' "$release_body" | grep -F "Minimum Android API: $EXPECTED_MINIMUM_ANDROID_API." >/dev/null
           printf '%s\n' "$release_body" | grep -F 'APK ABIs: arm64-v8a, armeabi-v7a, x86_64.' >/dev/null
           git show FETCH_HEAD:APK/README.md | grep -F "$GITHUB_SHA" >/dev/null
-          git show FETCH_HEAD:APK/README.md | grep -F 'Minimum Android API: `28`' >/dev/null
+          git show FETCH_HEAD:APK/README.md | grep -F 'Minimum Android API: `26`' >/dev/null
           git show FETCH_HEAD:APK/README.md | grep -F 'APK ABIs: `arm64-v8a, armeabi-v7a, x86_64`' >/dev/null
           {
             printf '\n### Rolling distribution receipt\n\n'

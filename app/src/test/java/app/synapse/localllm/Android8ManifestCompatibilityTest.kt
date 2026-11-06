@@ -15,11 +15,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
-class Android9ManifestCompatibilityTest {
+@Config(sdk = [26])
+class Android8ManifestCompatibilityTest {
     @Test
     @Suppress("DEPRECATION")
-    fun manifestKeepsApi28InstallFloorAndSecureNotificationRouting() {
+    fun manifestKeepsApi26InstallFloorAndSecureNotificationRouting() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val packageInfo = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_ACTIVITIES)
         val applicationInfo = requireNotNull(packageInfo.applicationInfo)
@@ -28,7 +28,7 @@ class Android9ManifestCompatibilityTest {
             0,
         )
 
-        assertEquals(28, applicationInfo.minSdkVersion)
+        assertEquals(26, applicationInfo.minSdkVersion)
         assertEquals(36, applicationInfo.targetSdkVersion)
         assertNotNull(packageInfo.activities)
         assertFalse(remoteRouterInfo.exported)
@@ -37,7 +37,7 @@ class Android9ManifestCompatibilityTest {
 
     @Test
     @Suppress("DEPRECATION")
-    fun api28ManifestKeepsVideoCallingOptional() {
+    fun api26ManifestKeepsVideoCallingOptional() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val packageInfo = context.packageManager.getPackageInfo(
             context.packageName,

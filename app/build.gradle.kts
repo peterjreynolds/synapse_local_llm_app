@@ -41,7 +41,7 @@ android {
 
     defaultConfig {
         applicationId = "app.synapse.localllm"
-        minSdk = 28
+        minSdk = 26
         targetSdk = 36
         versionCode = synapseVersionCode
         versionName = synapseVersionName

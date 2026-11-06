@@ -8,7 +8,9 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
+import androidx.annotation.RequiresApi
 import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import app.synapse.localllm.domain.remote.RemoteAttachmentId
@@ -341,24 +343,37 @@ private fun Bitmap.scaleToMaximumEdge(maximumEdge: Int): Bitmap {
 private fun decodeRemoteImageBitmap(
     sourceFile: File,
     maximumEdge: Int,
-): Bitmap = runCatching {
-    ImageDecoder.decodeBitmap(ImageDecoder.createSource(sourceFile)) { decoder, info, _ ->
-        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-        val sourceWidth = info.size.width
-        val sourceHeight = info.size.height
-        require(sourceWidth > 0 && sourceHeight > 0) { "The selected image has invalid dimensions." }
-        val scale = minOf(
-            1f,
-            maximumEdge.toFloat() / maxOf(sourceWidth, sourceHeight).toFloat(),
-        )
-        decoder.setTargetSize(
-            maxOf(1, (sourceWidth * scale).toInt()),
-            maxOf(1, (sourceHeight * scale).toInt()),
-        )
+): Bitmap {
+    // ImageDecoder starts at API 28; Android 8 uses the bounded BitmapFactory decoder.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+        return decodeRemoteImageWithBitmapFactory(sourceFile, maximumEdge)
+            ?: throw RemoteChatException("Android could not decode the selected image.")
     }
-}.getOrElse { imageDecoderFailure ->
-    decodeRemoteImageWithBitmapFactory(sourceFile, maximumEdge)
-        ?: throw RemoteChatException("Android could not decode the selected image.", imageDecoderFailure)
+    return runCatching {
+        decodeRemoteImageWithImageDecoder(sourceFile, maximumEdge)
+    }.getOrElse { imageDecoderFailure ->
+        decodeRemoteImageWithBitmapFactory(sourceFile, maximumEdge)
+            ?: throw RemoteChatException("Android could not decode the selected image.", imageDecoderFailure)
+    }
+}
+
+@RequiresApi(Build.VERSION_CODES.P)
+private fun decodeRemoteImageWithImageDecoder(
+    sourceFile: File,
+    maximumEdge: Int,
+): Bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(sourceFile)) { decoder, info, _ ->
+    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+    val sourceWidth = info.size.width
+    val sourceHeight = info.size.height
+    require(sourceWidth > 0 && sourceHeight > 0) { "The selected image has invalid dimensions." }
+    val scale = minOf(
+        1f,
+        maximumEdge.toFloat() / maxOf(sourceWidth, sourceHeight).toFloat(),
+    )
+    decoder.setTargetSize(
+        maxOf(1, (sourceWidth * scale).toInt()),
+        maxOf(1, (sourceHeight * scale).toInt()),
+    )
 }
 
 private fun decodeRemoteImageWithBitmapFactory(

@@ -7,6 +7,7 @@ import android.media.Ringtone
 import android.media.RingtoneManager
 import android.media.ToneGenerator
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import app.synapse.localllm.domain.calling.DirectCallAlertGateway
@@ -83,8 +84,10 @@ class AndroidDirectCallAlertGateway(
                 .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
-            ringtone.isLooping = true
-            ringtone.volume = MAXIMUM_RINGTONE_VOLUME
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                ringtone.isLooping = true
+                ringtone.volume = MAXIMUM_RINGTONE_VOLUME
+            }
             ringtone.play()
         }.isSuccess
         if (started) return ringtone
