@@ -25,6 +25,7 @@ class AndroidRemoteAttachmentSelectionStagerTest {
     private val attachmentId = RemoteAttachmentId("attachment-123e4567-e89b-42d3-a456-426614174000")
 
     @Test
+    @Config(sdk = [26])
     fun `selected provider content is copied once into a durable private upload source`() = runTest {
         val jpegBytes = createJpegBytes(width = 32, height = 24)
         var openCount = 0
@@ -60,6 +61,7 @@ class AndroidRemoteAttachmentSelectionStagerTest {
     }
 
     @Test
+    @Config(sdk = [26])
     fun `large one-shot JPEG screenshot is resized and compressed before upload`() = runTest {
         val jpegBytes = createJpegBytes(width = 1_440, height = 3_200, quality = 100)
         var openCount = 0
@@ -181,6 +183,7 @@ class AndroidRemoteAttachmentSelectionStagerTest {
     }
 
     @Test
+    @Config(sdk = [26])
     fun `thumbnail encoder bounds a staged image without rereading its provider uri`() {
         val source = File(context.cacheDir, "thumbnail-source.png")
         Bitmap.createBitmap(1_600, 1_200, Bitmap.Config.ARGB_8888).use { bitmap ->

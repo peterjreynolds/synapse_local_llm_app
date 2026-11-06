@@ -20,6 +20,7 @@ import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.functions.FirebaseFunctionsException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +61,8 @@ class FirebaseRemoteAuthenticationGateway(
             )
             mutableAuthenticationState.value = RemoteAuthenticationState.SignedIn(account)
             account
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: RemoteChatException) {
             throw exception
         } catch (exception: Exception) {
@@ -89,6 +92,8 @@ class FirebaseRemoteAuthenticationGateway(
             ) {
                 throw RemoteChatException(REGISTRATION_FAILURE_MESSAGE)
             }
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: RemoteChatException) {
             throw exception
         } catch (exception: Exception) {
@@ -106,6 +111,8 @@ class FirebaseRemoteAuthenticationGateway(
                 ?: throw RemoteChatException("The account session is invalid. Sign out and try again.")
             mutableAuthenticationState.value = RemoteAuthenticationState.SignedIn(account)
             account
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: RemoteChatException) {
             mutableAuthenticationState.value = RemoteAuthenticationState.InvalidSession(exception.userMessage)
             throw exception
@@ -131,6 +138,8 @@ class FirebaseRemoteAuthenticationGateway(
                 .call(emptyMap<String, Any>())
                 .await()
             refreshAccount()
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: RemoteChatException) {
             throw exception
         } catch (exception: Exception) {
@@ -147,6 +156,8 @@ class FirebaseRemoteAuthenticationGateway(
         try {
             currentUser.reauthenticate(EmailAuthProvider.getCredential(email, password)).await()
             currentUser.getIdToken(true).await()
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: RemoteChatException) {
             throw exception
         } catch (exception: Exception) {
@@ -172,6 +183,8 @@ class FirebaseRemoteAuthenticationGateway(
                     ?: RemoteAuthenticationState.InvalidSession(
                         "The account session is invalid. Sign out and try again.",
                     )
+            } catch (exception: CancellationException) {
+                throw exception
             } catch (_: Exception) {
                 RemoteAuthenticationState.InvalidSession(
                     "Could not verify account access. Check the connection and try again.",
