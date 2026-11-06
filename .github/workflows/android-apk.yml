@@ -213,12 +213,7 @@ jobs:
             adb install -r "$APK_PATH"
             adb shell am start -W -n "$EXPECTED_APPLICATION_ID/app.synapse.localllm.MainActivity"
             sleep 10
-            app_pid="$(adb shell pidof "$EXPECTED_APPLICATION_ID" | tr -d '\r')"
-            if [ -z "$app_pid" ]; then
-              echo "Synapse Chat exited during the Android 8.0 launch smoke test." >&2
-              adb logcat -d -s AndroidRuntime:E | tail -n 70
-              exit 1
-            fi
+            adb shell pidof "$EXPECTED_APPLICATION_ID" | tr -d '\r' | grep -Eq '^[0-9]+( [0-9]+)*$' || { echo "Synapse Chat exited during the Android 8.0 launch smoke test." >&2; adb logcat -d -s AndroidRuntime:E | tail -n 70; exit 1; }
 
       - name: Publish rolling release
         shell: bash
