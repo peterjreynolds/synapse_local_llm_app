@@ -321,10 +321,37 @@ class DirectCallViewModelTest {
     }
 
     @Test
+    fun freshLoginClosesUnexpiredActiveVideoCallWithoutForeground() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway(
+            initialSession = directCallSession(
+                state = RemoteDirectCallState.ACTIVE,
+                mediaKind = RemoteDirectCallMediaKind.VIDEO,
+            ),
+        )
+        val mediaGateway = RecordingMediaGateway()
+        val foregroundController = RecordingForegroundController()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            mediaGateway,
+            RecordingAlertGateway(),
+            foregroundController,
+            RecordingTerminalNotificationStore(),
+        )
+
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+
+        assertEquals(RemoteDirectCallState.ENDED, gateway.session.value?.state)
+        assertFalse(mediaGateway.started)
+        assertFalse(foregroundController.started)
+    }
+
+    @Test
     fun stalledMediaConnectionEndsCallAndClearsForeground() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val gateway = RecordingCallGateway(
-            initialSession = directCallSession(state = RemoteDirectCallState.ACTIVE),
+            initialSession = directCallSession(callerUid = TRISH_UID, calleeUid = PETER_UID),
         )
         val mediaGateway = RecordingMediaGateway(connectImmediately = false)
         val foregroundController = RecordingForegroundController()
@@ -337,6 +364,8 @@ class DirectCallViewModelTest {
         )
 
         viewModel.bindAccount(PETER_UID)
+        runCurrent()
+        viewModel.acceptCall()
         runCurrent()
         assertEquals(DirectCallUiPhase.CONNECTING, viewModel.uiState.value.phase)
         assertTrue(foregroundController.started)

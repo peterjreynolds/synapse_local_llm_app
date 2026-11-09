@@ -72,6 +72,7 @@ class DirectCallViewModel(
     private var localVideoPreviewCallId: RemoteDirectCallId? = null
     private var mediaCallId: RemoteDirectCallId? = null
     private var mediaConnectionWatchdogJob: Job? = null
+    private var participatingCallId: RemoteDirectCallId? = null
     private var foregroundCallId: RemoteDirectCallId? = null
     private var pendingNotificationCallId: RemoteDirectCallId? = null
     private val processedSignalIds = mutableSetOf<RemoteDirectCallSignalId>()
@@ -79,6 +80,7 @@ class DirectCallViewModel(
     fun bindAccount(updatedAccountUid: RemoteAccountUid?) {
         if (accountUid == updatedAccountUid) return
         accountUid = updatedAccountUid
+        participatingCallId = null
         accountCallJob?.cancel()
         callSessionJob?.cancel()
         callExpiryJob?.cancel()
@@ -118,6 +120,7 @@ class DirectCallViewModel(
         val activeAccountUid = requireNotNull(accountUid) { "Sign in before starting a call." }
         mutableUiState.update { state -> state.copy(phase = DirectCallUiPhase.STARTING, notice = null) }
         val session = callGateway.startCall(activeAccountUid, roomId, mediaKind)
+        participatingCallId = session.callId
         observeCall(activeAccountUid, session.callId)
         presentSession(activeAccountUid, session)
     }
@@ -125,6 +128,7 @@ class DirectCallViewModel(
     fun acceptCall() = launchAction {
         val activeAccountUid = requireNotNull(accountUid) { "Sign in before answering a call." }
         val session = requireNotNull(mutableUiState.value.session) { "The call is no longer available." }
+        participatingCallId = session.callId
         val updated = callGateway.respondToCall(
             activeAccountUid,
             session.callId,
@@ -258,6 +262,14 @@ class DirectCallViewModel(
             }
             RemoteDirectCallState.ACTIVE -> {
                 callExpiryJob?.cancel()
+                if (
+                    participatingCallId != session.callId &&
+                    mutableUiState.value.phase != DirectCallUiPhase.STARTING
+                ) {
+                    mutableUiState.update { state -> state.copy(session = session) }
+                    failAndEndCall("A previous call was closed instead of reopened.")
+                    return
+                }
                 if (session.expiresAtMillis <= nowEpochMillis()) {
                     mutableUiState.update { state -> state.copy(session = session) }
                     failAndEndCall("The previous call expired.")
@@ -416,6 +428,7 @@ class DirectCallViewModel(
 
     private fun failCall(message: String) {
         stopMedia()
+        participatingCallId = null
         mutableUiState.update { state ->
             state.copy(phase = DirectCallUiPhase.FAILED, isActionRunning = false, notice = message)
         }
@@ -431,6 +444,7 @@ class DirectCallViewModel(
             foregroundController.dismissIncomingNotification(callId)
         }
         stopMedia()
+        participatingCallId = null
         mutableUiState.value = DirectCallUiState(notice = notice)
     }
 
