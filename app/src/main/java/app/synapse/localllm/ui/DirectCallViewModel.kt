@@ -71,6 +71,7 @@ class DirectCallViewModel(
     private var localVideoPreviewJob: Job? = null
     private var localVideoPreviewCallId: RemoteDirectCallId? = null
     private var mediaCallId: RemoteDirectCallId? = null
+    private var mediaConnectionWatchdogJob: Job? = null
     private var foregroundCallId: RemoteDirectCallId? = null
     private var pendingNotificationCallId: RemoteDirectCallId? = null
     private val processedSignalIds = mutableSetOf<RemoteDirectCallSignalId>()
@@ -257,6 +258,11 @@ class DirectCallViewModel(
             }
             RemoteDirectCallState.ACTIVE -> {
                 callExpiryJob?.cancel()
+                if (session.expiresAtMillis <= nowEpochMillis()) {
+                    mutableUiState.update { state -> state.copy(session = session) }
+                    failAndEndCall("The previous call expired.")
+                    return
+                }
                 alertGateway.stop()
                 mutableUiState.update { state ->
                     state.copy(phase = DirectCallUiPhase.CONNECTING, session = session, notice = null)
@@ -277,6 +283,7 @@ class DirectCallViewModel(
         cancelLocalVideoPreviewJob()
         mediaCallId = session.callId
         processedSignalIds.clear()
+        scheduleMediaConnectionWatchdog(session.callId)
         viewModelScope.launch {
             try {
                 ensureCallForeground(session)
@@ -358,11 +365,14 @@ class DirectCallViewModel(
     private fun onMediaConnectionStateChanged(connectionState: DirectCallMediaConnectionState) {
         when (connectionState) {
             DirectCallMediaConnectionState.CONNECTING -> Unit
-            DirectCallMediaConnectionState.CONNECTED -> mutableUiState.update { state ->
-                state.copy(phase = DirectCallUiPhase.ACTIVE, notice = null)
+            DirectCallMediaConnectionState.CONNECTED -> {
+                mediaConnectionWatchdogJob?.cancel()
+                mutableUiState.update { state -> state.copy(phase = DirectCallUiPhase.ACTIVE, notice = null) }
             }
-            DirectCallMediaConnectionState.DISCONNECTED ->
+            DirectCallMediaConnectionState.DISCONNECTED -> {
                 mutableUiState.update { state -> state.copy(notice = "Call connection interrupted. Reconnecting…") }
+                mutableUiState.value.session?.callId?.let(::scheduleMediaConnectionWatchdog)
+            }
             DirectCallMediaConnectionState.FAILED ->
                 failAndEndCall("The call connection failed on this network. Try Wi-Fi or another network.")
         }
@@ -425,6 +435,8 @@ class DirectCallViewModel(
     }
 
     private fun stopMedia() {
+        mediaConnectionWatchdogJob?.cancel()
+        mediaConnectionWatchdogJob = null
         val hadMediaResources = mediaCallId != null || localVideoPreviewCallId != null
         val hadCallSession = mutableUiState.value.session != null
         cancelLocalVideoPreviewJob()
@@ -442,6 +454,19 @@ class DirectCallViewModel(
         foregroundCallId = null
         mediaCallId = null
         processedSignalIds.clear()
+    }
+
+    private fun scheduleMediaConnectionWatchdog(callId: RemoteDirectCallId) {
+        mediaConnectionWatchdogJob?.cancel()
+        mediaConnectionWatchdogJob = viewModelScope.launch {
+            delay(CALL_MEDIA_CONNECTION_TIMEOUT_MILLIS)
+            if (
+                mutableUiState.value.session?.callId == callId &&
+                mutableUiState.value.phase in setOf(DirectCallUiPhase.CONNECTING, DirectCallUiPhase.ACTIVE)
+            ) {
+                failAndEndCall("Call connection timed out.")
+            }
+        }
     }
 
     private fun cancelLocalVideoPreviewJob() {
@@ -488,6 +513,7 @@ class DirectCallViewModel(
 }
 
 private const val CALL_EXPIRY_RETRY_MILLIS = 1_000L
+private const val CALL_MEDIA_CONNECTION_TIMEOUT_MILLIS = 60_000L
 
 class DirectCallViewModelFactory(
     private val graph: SynapseApplicationGraph,

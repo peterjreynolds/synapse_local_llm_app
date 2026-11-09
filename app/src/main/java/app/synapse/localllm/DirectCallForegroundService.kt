@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import app.synapse.localllm.domain.remote.RemoteDirectCallMediaKind
@@ -57,7 +58,13 @@ class DirectCallForegroundService : Service() {
             .setSilent(true)
             .build()
         val foregroundTypes = directCallForegroundServiceTypes(mediaKind)
-        ServiceCompat.startForeground(this, ACTIVE_CALL_NOTIFICATION_ID, notification, foregroundTypes)
+        try {
+            ServiceCompat.startForeground(this, ACTIVE_CALL_NOTIFICATION_ID, notification, foregroundTypes)
+        } catch (exception: RuntimeException) {
+            Log.w(TAG, "Android rejected foreground call startup.", exception)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         return START_NOT_STICKY
     }
 
@@ -68,6 +75,7 @@ class DirectCallForegroundService : Service() {
         const val EXTRA_CALL_ID = "app.synapse.localllm.extra.DIRECT_CALL_ID"
         const val EXTRA_MEDIA_KIND = "app.synapse.localllm.extra.DIRECT_CALL_MEDIA_KIND"
         private const val CHANNEL_ID = "synapse_active_voice_call"
+        private const val TAG = "SynapseCallForeground"
         private const val ACTIVE_CALL_NOTIFICATION_ID = 4_303
     }
 }
