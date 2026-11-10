@@ -244,6 +244,15 @@ class DirectCallViewModel(
                 } else {
                     DirectCallUiPhase.INCOMING_RINGING
                 }
+                if (
+                    phase == DirectCallUiPhase.OUTGOING_RINGING &&
+                    participatingCallId != session.callId &&
+                    mutableUiState.value.phase != DirectCallUiPhase.STARTING
+                ) {
+                    mutableUiState.update { state -> state.copy(session = session) }
+                    failAndEndCall("A previous outgoing call was closed instead of reopened.")
+                    return
+                }
                 mutableUiState.update { state -> state.copy(phase = phase, session = session, notice = null) }
                 if (phase == DirectCallUiPhase.OUTGOING_RINGING) {
                     alertGateway.startOutgoingRingback(session.expiresAtMillis)

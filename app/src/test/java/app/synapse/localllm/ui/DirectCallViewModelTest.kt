@@ -268,7 +268,11 @@ class DirectCallViewModelTest {
     fun authoritativeDeadlineExpiresUnansweredCallAfterTwelveRingCycles() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val gateway = RecordingCallGateway(
-            initialSession = directCallSession(expiresAtMillis = TWELVE_RING_CYCLES_MILLIS),
+            initialSession = directCallSession(
+                callerUid = TRISH_UID,
+                calleeUid = PETER_UID,
+                expiresAtMillis = TWELVE_RING_CYCLES_MILLIS,
+            ),
         )
         val alertGateway = RecordingAlertGateway()
         val viewModel = DirectCallViewModel(
@@ -288,7 +292,7 @@ class DirectCallViewModelTest {
         assertEquals(1, gateway.expirationCount)
         assertEquals(RemoteDirectCallState.MISSED, gateway.session.value?.state)
         assertEquals(DirectCallUiPhase.IDLE, viewModel.uiState.value.phase)
-        assertFalse(alertGateway.ringbackPlaying)
+        assertFalse(alertGateway.incomingRingtonePlaying)
     }
 
     @Test
@@ -318,6 +322,35 @@ class DirectCallViewModelTest {
         assertEquals(RemoteDirectCallState.ENDED, gateway.session.value?.state)
         assertFalse(mediaGateway.started)
         assertFalse(foregroundController.started)
+    }
+
+    @Test
+    fun freshLoginClosesUnexpiredOutgoingVideoRingWithoutForegroundOrPreview() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway(
+            initialSession = directCallSession(
+                mediaKind = RemoteDirectCallMediaKind.VIDEO,
+            ),
+        )
+        val mediaGateway = RecordingMediaGateway()
+        val foregroundController = RecordingForegroundController()
+        val alertGateway = RecordingAlertGateway()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            mediaGateway,
+            alertGateway,
+            foregroundController,
+            RecordingTerminalNotificationStore(),
+        )
+
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+
+        assertEquals(RemoteDirectCallState.CANCELED, gateway.session.value?.state)
+        assertEquals(0, mediaGateway.localVideoPreviewStartCount)
+        assertFalse(mediaGateway.started)
+        assertFalse(foregroundController.started)
+        assertFalse(alertGateway.ringbackPlaying)
     }
 
     @Test
