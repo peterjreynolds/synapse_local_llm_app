@@ -31,27 +31,38 @@ class GitHubReleaseAppUpdateRepository(
                             "The GitHub release must be public for in-app checks.",
                     )
                 }
-                val release = json.decodeFromString(GitHubRelease.serializer(), response.body.string())
-                val apkAsset = release.assets.firstOrNull { asset -> asset.name == APK_ASSET_NAME }
-                    ?: return AppUpdateCheckResult.Unavailable("Release does not include $APK_ASSET_NAME.")
-                val releaseVersionCode = parseReleaseVersionCode(release.body)
-                    ?: return AppUpdateCheckResult.Unavailable("Release notes do not include a version code.")
-                if (releaseVersionCode <= currentVersionCode) {
-                    return AppUpdateCheckResult.UpToDate
-                }
+                val releases = json.decodeFromString<List<GitHubRelease>>(response.body.string())
+                val candidate = releases
+                    .asSequence()
+                    .filterNot(GitHubRelease::draft)
+                    .mapNotNull { release ->
+                        val versionCode = releaseVersionCode(release) ?: return@mapNotNull null
+                        val apkAsset = release.assets.firstOrNull { asset -> asset.name == APK_ASSET_NAME }
+                            ?: return@mapNotNull null
+                        if (versionCode <= currentVersionCode) return@mapNotNull null
+                        ReleaseCandidate(release, apkAsset, versionCode)
+                    }
+                    .maxByOrNull(ReleaseCandidate::versionCode)
+                    ?: return AppUpdateCheckResult.UpToDate
+
+                val release = candidate.release
                 val minimumAndroidApi = parseMinimumAndroidApi(release.body)
-                    ?: return AppUpdateCheckResult.Unavailable(
-                        "Release notes do not include the minimum Android API.",
-                    )
+                    ?: if (android8TagPattern.matches(release.tagName)) ANDROID_8_API else {
+                        return AppUpdateCheckResult.Unavailable(
+                            "Release notes do not include the minimum Android API.",
+                        )
+                    }
                 if (deviceAndroidApiLevel < minimumAndroidApi) {
                     return AppUpdateCheckResult.Unavailable(
                         "This update requires Android API $minimumAndroidApi or newer.",
                     )
                 }
                 val releaseSupportedAbis = parseSupportedAbis(release.body)
-                    ?: return AppUpdateCheckResult.Unavailable(
-                        "Release notes do not include the supported APK ABIs.",
-                    )
+                    ?: if (android8TagPattern.matches(release.tagName)) ANDROID_8_APK_ABIS else {
+                        return AppUpdateCheckResult.Unavailable(
+                            "Release notes do not include the supported APK ABIs.",
+                        )
+                    }
                 if (releaseSupportedAbis.none(deviceSupportedAbis::contains)) {
                     return AppUpdateCheckResult.Unavailable(
                         "This update does not support this device's ABIs: " +
@@ -61,12 +72,12 @@ class GitHubReleaseAppUpdateRepository(
 
                 AppUpdateCheckResult.Available(
                     AvailableAppUpdate(
-                        versionCode = releaseVersionCode,
-                        releaseName = release.name.ifBlank { "Synapse AI APK" },
+                        versionCode = candidate.versionCode,
+                        releaseName = release.name.ifBlank { "Synapse Chat" },
                         releaseUrl = release.htmlUrl,
-                        apkUrl = apkAsset.browserDownloadUrl,
-                        apkSha256 = parseAssetSha256(apkAsset.digest) ?: parseReleaseSha256(release.body),
-                        byteCount = apkAsset.size.takeIf { size -> size > 0L },
+                        apkUrl = candidate.apkAsset.browserDownloadUrl,
+                        apkSha256 = parseAssetSha256(candidate.apkAsset.digest) ?: parseReleaseSha256(release.body),
+                        byteCount = candidate.apkAsset.size.takeIf { size -> size > 0L },
                         minimumAndroidApi = minimumAndroidApi,
                         supportedAbis = releaseSupportedAbis,
                     ),
@@ -76,6 +87,13 @@ class GitHubReleaseAppUpdateRepository(
             AppUpdateCheckResult.Unavailable(exception.message ?: "Update check failed.")
         }
     }
+
+    private fun releaseVersionCode(release: GitHubRelease): Int? =
+        if (release.tagName == CANONICAL_RELEASE_TAG) {
+            parseReleaseVersionCode(release.body)
+        } else {
+            android8TagPattern.matchEntire(release.tagName)?.groupValues?.get(1)?.toIntOrNull()
+        }
 
     private fun parseReleaseVersionCode(body: String): Int? =
         versionCodePattern.find(body)?.groupValues?.get(1)?.toIntOrNull()
@@ -111,7 +129,15 @@ class GitHubReleaseAppUpdateRepository(
         val name: String = "",
         val body: String = "",
         val assets: List<GitHubReleaseAsset> = emptyList(),
+        @SerialName("tag_name") val tagName: String = "",
+        val draft: Boolean = false,
         @SerialName("html_url") val htmlUrl: String = "",
+    )
+
+    private data class ReleaseCandidate(
+        val release: GitHubRelease,
+        val apkAsset: GitHubReleaseAsset,
+        val versionCode: Int,
     )
 
     @Serializable
@@ -124,9 +150,16 @@ class GitHubReleaseAppUpdateRepository(
 
     private companion object {
         const val RELEASE_API_URL =
-            "https://api.github.com/repos/peterjreynolds/synapse_local_llm_app/releases/tags/synapse-ai"
+            "https://api.github.com/repos/peterjreynolds/synapse_local_llm_app/releases?per_page=50"
+        const val CANONICAL_RELEASE_TAG = "synapse-ai"
         const val APK_ASSET_NAME = "Synapse-AI.apk"
-        val json = Json { ignoreUnknownKeys = true }
+        const val ANDROID_8_API = 26
+        val ANDROID_8_APK_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        val android8TagPattern = Regex("^synapse-chat-android8-v0\\.1\\.(\\d+)(?:-.*)?$")
+        val json = Json {
+            ignoreUnknownKeys = true
+            coerceInputValues = true
+        }
         val versionCodePattern = Regex("Version code:\\s*(\\d+)")
         val minimumAndroidApiPattern = Regex("Minimum Android API:\\s*(\\d+)")
         val apkAbisPattern = Regex("^APK ABIs:\\s*([^\\r\\n]+)$", RegexOption.MULTILINE)

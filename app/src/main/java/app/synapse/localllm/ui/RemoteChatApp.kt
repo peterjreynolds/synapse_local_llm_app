@@ -847,6 +847,24 @@ private fun RemoteSignedInShell(
             }
         }
     }
+    if (selectedSection != RemoteAppSection.LOCAL_AI && directCallState.phase == DirectCallUiPhase.IDLE) {
+        ChatAppUpdateDialog(
+            appUpdate = localState.appUpdate,
+            onDownload = {
+                localViewModel.downloadAvailableAppUpdate { updateUri ->
+                    if (!launchAppUpdateInstaller(context, updateUri)) {
+                        localViewModel.publishNotice("Android could not open the update installer.")
+                    }
+                }
+            },
+            onInstall = { updateUri ->
+                if (!launchAppUpdateInstaller(context, updateUri)) {
+                    localViewModel.publishNotice("Android could not open the update installer.")
+                }
+            },
+            onLater = localViewModel::dismissAppUpdate,
+        )
+    }
 }
 
 internal fun remoteLoginSubmissionEnabled(

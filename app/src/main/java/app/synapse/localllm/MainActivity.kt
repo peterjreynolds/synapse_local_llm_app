@@ -105,6 +105,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        localViewModel.checkForAppUpdate(automatic = true)
         requireSynapseApplication().graph.remoteRoomVisibilityTracker.setAppForegrounded(true)
     }
 

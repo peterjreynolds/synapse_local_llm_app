@@ -33,7 +33,9 @@ class GitHubReleaseAppUpdateRepositoryTest {
                 .setResponseCode(200)
                 .setBody(
                     """
+                    [
                     {
+                      "tag_name": "synapse-chat-android8-v0.1.2401",
                       "name": "Synapse AI",
                       "body": "Version code: 2401\nMinimum Android API: 28\nAPK ABIs: arm64-v8a, armeabi-v7a, x86_64.\nSHA-256: $sha256",
                       "html_url": "https://github.com/peterjreynolds/synapse_local_llm_app/releases/tag/synapse-ai",
@@ -46,6 +48,7 @@ class GitHubReleaseAppUpdateRepositoryTest {
                         }
                       ]
                     }
+                    ]
                     """.trimIndent(),
                 ),
         )
@@ -69,7 +72,9 @@ class GitHubReleaseAppUpdateRepositoryTest {
                 .setResponseCode(200)
                 .setBody(
                     """
+                    [
                     {
+                      "tag_name": "synapse-chat-android8-v0.1.2400",
                       "name": "Synapse AI",
                       "body": "Version code: 2400",
                       "html_url": "https://github.com/peterjreynolds/synapse_local_llm_app/releases/tag/synapse-ai",
@@ -81,6 +86,7 @@ class GitHubReleaseAppUpdateRepositoryTest {
                         }
                       ]
                     }
+                    ]
                     """.trimIndent(),
                 ),
         )
@@ -128,13 +134,79 @@ class GitHubReleaseAppUpdateRepositoryTest {
         assertTrue(result.reason.contains("armeabi-v7a"))
     }
 
+    @Test
+    fun selectsNewestPublishedAndroid8PrereleaseWithoutVersionMetadataInNotes() = runTest {
+        val sha256 = "b".repeat(64)
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(
+                    """
+                    [
+                      {
+                        "tag_name": "synapse-chat-android8-v0.1.2050",
+                        "name": "Older call fix",
+                        "assets": [
+                          {"name": "Synapse-AI.apk", "size": 100,
+                           "browser_download_url": "https://github.com/peterjreynolds/synapse_local_llm_app/releases/download/synapse-chat-android8-v0.1.2050/Synapse-AI.apk"}
+                        ]
+                      },
+                      {
+                        "tag_name": "synapse-chat-android8-v0.1.2051",
+                        "name": "Call-answer test build",
+                        "body": null,
+                        "assets": [
+                          {"name": "Synapse-AI.apk", "size": 29330590,
+                           "digest": "sha256:$sha256",
+                           "browser_download_url": "https://github.com/peterjreynolds/synapse_local_llm_app/releases/download/synapse-chat-android8-v0.1.2051/Synapse-AI.apk"}
+                        ]
+                      },
+                      {
+                        "tag_name": "synapse-chat-android8-v0.1.2052",
+                        "draft": true,
+                        "assets": [
+                          {"name": "Synapse-AI.apk",
+                           "browser_download_url": "https://github.com/peterjreynolds/synapse_local_llm_app/releases/download/synapse-chat-android8-v0.1.2052/Synapse-AI.apk"}
+                        ]
+                      },
+                      {
+                        "tag_name": "synapse-private",
+                        "body": "Version code: 9999",
+                        "assets": [
+                          {"name": "Synapse-AI.apk",
+                           "browser_download_url": "https://github.com/peterjreynolds/synapse_local_llm_app/releases/download/synapse-private/Synapse-AI.apk"}
+                        ]
+                      }
+                    ]
+                    """.trimIndent(),
+                ),
+        )
+
+        val result = repository(
+            currentVersionCode = 2050,
+            deviceAndroidApiLevel = 37,
+            deviceSupportedAbis = setOf("arm64-v8a"),
+        ).checkForAppUpdate()
+
+        require(result is AppUpdateCheckResult.Available)
+        assertEquals(2051, result.update.versionCode)
+        assertEquals("Call-answer test build", result.update.releaseName)
+        assertEquals(sha256, result.update.apkSha256)
+        assertEquals(29330590L, result.update.byteCount)
+        assertEquals(26, result.update.minimumAndroidApi)
+        assertEquals(listOf("arm64-v8a", "armeabi-v7a", "x86_64"), result.update.supportedAbis)
+        assertTrue(result.update.apkUrl.contains("v0.1.2051/"))
+    }
+
     private fun enqueueRelease(body: String) {
         server.enqueue(
             MockResponse()
                 .setResponseCode(200)
                 .setBody(
                     """
+                    [
                     {
+                      "tag_name": "synapse-chat-android8-v0.1.2401",
                       "name": "Synapse AI",
                       "body": ${jsonString(body)},
                       "html_url": "https://github.com/peterjreynolds/synapse_local_llm_app/releases/tag/synapse-ai",
@@ -146,6 +218,7 @@ class GitHubReleaseAppUpdateRepositoryTest {
                         }
                       ]
                     }
+                    ]
                     """.trimIndent(),
                 ),
         )
@@ -177,6 +250,6 @@ class GitHubReleaseAppUpdateRepositoryTest {
             currentVersionCode = currentVersionCode,
             deviceAndroidApiLevel = deviceAndroidApiLevel,
             deviceSupportedAbis = deviceSupportedAbis,
-            releaseApiUrl = server.url("/repos/synapse/releases/tags/synapse-ai").toString(),
+            releaseApiUrl = server.url("/repos/synapse/releases?per_page=50").toString(),
         )
 }

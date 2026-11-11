@@ -258,9 +258,6 @@ fun SynapseApp(
             voiceModeSpeechController.stop()
         }
     }
-    LaunchedEffect(Unit) {
-        viewModel.checkForAppUpdate(automatic = true)
-    }
 
     SynapseScreen(
         state = uiState,
@@ -2197,7 +2194,7 @@ private fun sharePdfExport(context: Context, pdfUri: Uri) {
     context.startActivity(Intent.createChooser(sendIntent, "Share Synapse PDF"))
 }
 
-private fun launchAppUpdateInstaller(context: Context, apkUri: Uri): Boolean =
+internal fun launchAppUpdateInstaller(context: Context, apkUri: Uri): Boolean =
     runCatching {
         val installIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
