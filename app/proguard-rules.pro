@@ -8,3 +8,15 @@
 
 # WebRTC JNI_OnLoad resolves this class by name; R8 cannot see the native reference.
 -keep class org.jni_zero.JniInit { *; }
+
+# WebRTC native code looks up Java callbacks and methods outside R8's static call graph.
+# Preserve JNI method descriptors and native-to-Java entry points for call setup.
+-keepclasseswithmembernames,includedescriptorclasses class org.webrtc.** {
+    native <methods>;
+}
+-keepclasseswithmembers,includedescriptorclasses class * {
+    @org.webrtc.CalledByNative <methods>;
+}
+-keepclasseswithmembers,includedescriptorclasses class * {
+    @org.webrtc.CalledByNativeUnchecked <methods>;
+}

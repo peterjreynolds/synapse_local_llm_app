@@ -13,8 +13,10 @@ import app.synapse.localllm.domain.remote.RemoteDirectCallResponse
 import app.synapse.localllm.domain.remote.RemoteDirectCallRole
 import app.synapse.localllm.domain.remote.RemoteDirectCallSession
 import app.synapse.localllm.domain.remote.RemoteDirectCallSignal
+import app.synapse.localllm.domain.remote.RemoteDirectCallSignalId
 import app.synapse.localllm.domain.remote.RemoteDirectCallState
 import app.synapse.localllm.domain.remote.RemoteRoomId
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -215,6 +217,97 @@ class DirectCallViewModelTest {
         assertTrue(mediaGateway.started)
         assertEquals(RemoteDirectCallRole.CALLEE, mediaGateway.role)
         assertEquals(0, mediaGateway.localVideoPreviewStartCount)
+    }
+
+    @Test
+    fun rapidVideoSignalSnapshotsDoNotCancelAnInFlightOffer() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway(
+            initialSession = directCallSession(
+                callerUid = TRISH_UID,
+                calleeUid = PETER_UID,
+                mediaKind = RemoteDirectCallMediaKind.VIDEO,
+            ),
+        )
+        val firstSignalStarted = CompletableDeferred<Unit>()
+        val resumeFirstSignal = CompletableDeferred<Unit>()
+        val mediaGateway = RecordingMediaGateway(
+            firstSignalStarted = firstSignalStarted,
+            resumeFirstSignal = resumeFirstSignal,
+        )
+        val viewModel = DirectCallViewModel(
+            gateway,
+            mediaGateway,
+            RecordingAlertGateway(),
+            RecordingForegroundController(),
+            RecordingTerminalNotificationStore(),
+        )
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+        viewModel.acceptCall()
+        runCurrent()
+
+        val offer = RemoteDirectCallSignal.Offer(
+            signalId = RemoteDirectCallSignalId("signal_cccccccccccccccccccccccccccccccc"),
+            senderUid = TRISH_UID,
+            sessionDescription = "v=0",
+        )
+        val candidate = RemoteDirectCallSignal.IceCandidate(
+            signalId = RemoteDirectCallSignalId("signal_dddddddddddddddddddddddddddddddd"),
+            senderUid = TRISH_UID,
+            candidate = "candidate:1 1 udp 1 127.0.0.1 1234 typ host",
+            mediaStreamIdentification = "audio",
+            mediaLineIndex = 0,
+        )
+        gateway.signals.value = listOf(offer)
+        runCurrent()
+        assertTrue(firstSignalStarted.isCompleted)
+
+        gateway.signals.value = listOf(offer, candidate)
+        runCurrent()
+        resumeFirstSignal.complete(Unit)
+        runCurrent()
+        gateway.signals.value = listOf(offer, candidate)
+        runCurrent()
+
+        assertEquals(listOf(offer.signalId, candidate.signalId), mediaGateway.appliedSignalIds)
+        assertEquals(DirectCallUiPhase.ACTIVE, viewModel.uiState.value.phase)
+    }
+
+    @Test
+    fun invalidRemoteCallSignalEndsTheCallWithoutAnUncaughtCoroutineFailure() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val gateway = RecordingCallGateway(
+            initialSession = directCallSession(callerUid = TRISH_UID, calleeUid = PETER_UID),
+        )
+        val mediaGateway = RecordingMediaGateway(
+            remoteSignalFailure = IllegalStateException("Android rejected the remote SDP."),
+        )
+        val foregroundController = RecordingForegroundController()
+        val viewModel = DirectCallViewModel(
+            gateway,
+            mediaGateway,
+            RecordingAlertGateway(),
+            foregroundController,
+            RecordingTerminalNotificationStore(),
+        )
+        viewModel.bindAccount(PETER_UID)
+        runCurrent()
+        viewModel.acceptCall()
+        runCurrent()
+
+        gateway.signals.value = listOf(
+            RemoteDirectCallSignal.Offer(
+                signalId = RemoteDirectCallSignalId("signal_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+                senderUid = TRISH_UID,
+                sessionDescription = "invalid",
+            ),
+        )
+        runCurrent()
+
+        assertEquals(RemoteDirectCallState.ENDED, gateway.session.value?.state)
+        assertFalse(mediaGateway.started)
+        assertFalse(foregroundController.started)
     }
 
     @Test
@@ -546,6 +639,9 @@ class DirectCallViewModelTest {
 
     private class RecordingMediaGateway(
         private val connectImmediately: Boolean = true,
+        private val firstSignalStarted: CompletableDeferred<Unit>? = null,
+        private val resumeFirstSignal: CompletableDeferred<Unit>? = null,
+        private val remoteSignalFailure: Exception? = null,
     ) : DirectCallMediaGateway {
         var started = false
         var localVideoPreviewStarted = false
@@ -556,6 +652,7 @@ class DirectCallViewModelTest {
         var role: RemoteDirectCallRole? = null
         var speakerEnabledValue = false
         var stopCount = 0
+        val appliedSignalIds = mutableListOf<RemoteDirectCallSignalId>()
 
         override suspend fun startLocalVideoPreview() {
             localVideoPreviewStarted = true
@@ -578,7 +675,14 @@ class DirectCallViewModelTest {
             }
         }
 
-        override suspend fun applyRemoteSignal(signal: RemoteDirectCallSignal) = Unit
+        override suspend fun applyRemoteSignal(signal: RemoteDirectCallSignal) {
+            if (firstSignalStarted != null && !firstSignalStarted.isCompleted) {
+                firstSignalStarted.complete(Unit)
+                resumeFirstSignal?.await()
+            }
+            remoteSignalFailure?.let { throw it }
+            appliedSignalIds += signal.signalId
+        }
 
         override fun setMicrophoneMuted(muted: Boolean) = Unit
 

@@ -27,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -328,12 +329,21 @@ class DirectCallViewModel(
                 }
                 callSignalJob?.cancel()
                 callSignalJob = viewModelScope.launch {
-                    callGateway.observeSignals(activeAccountUid, session.callId).collectLatest { signals ->
-                        signals
-                            .asSequence()
-                            .filter { signal -> signal.senderUid != activeAccountUid }
-                            .filter { signal -> processedSignalIds.add(signal.signalId) }
-                            .forEach { signal -> mediaGateway.applyRemoteSignal(signal) }
+                    try {
+                        callGateway.observeSignals(activeAccountUid, session.callId).collect { signals ->
+                            signals
+                                .asSequence()
+                                .filter { signal -> signal.senderUid != activeAccountUid }
+                                .filterNot { signal -> signal.signalId in processedSignalIds }
+                                .forEach { signal ->
+                                    mediaGateway.applyRemoteSignal(signal)
+                                    processedSignalIds.add(signal.signalId)
+                                }
+                        }
+                    } catch (exception: CancellationException) {
+                        throw exception
+                    } catch (exception: Exception) {
+                        failAndEndCall(exception.message ?: "Could not apply call setup data.")
                     }
                 }
             } catch (exception: CancellationException) {
